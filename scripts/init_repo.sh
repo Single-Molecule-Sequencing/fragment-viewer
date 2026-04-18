@@ -89,7 +89,9 @@ if [[ "$DO_PUSH" == "no" ]]; then
   exit 0
 fi
 
-REMOTE_URL="git@github.com:${ORG}/${REPO}.git"
+# Default to HTTPS — works with `gh auth login` credential storage out of the box.
+# Override with: REMOTE_URL="git@github.com:${ORG}/${REPO}.git" bash scripts/init_repo.sh
+REMOTE_URL="${REMOTE_URL:-https://github.com/${ORG}/${REPO}.git}"
 
 if git remote get-url origin >/dev/null 2>&1; then
   echo "[init] remote 'origin' already set"
