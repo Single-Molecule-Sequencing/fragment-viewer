@@ -701,7 +701,7 @@ export function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, 
 
 export const LAB_GRNA_CATALOG = [
   // --- Active fragment analysis construct (V059_gRNA3) ---
-  { name: "V059_gRNA3",             spacer: "",                         source: "SnapGene V059_gRNA3 file",  target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset; exact spacer TBD by user." },
+  { name: "V059_gRNA3",             spacer: "AGTCCTGTGGTGAGGTGACG", source: "User-supplied 2026-04-18; bot-strand match in V059 target window (RC = CGTCACCTCACCACAGGACT on top)", target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset. Bot-strand PAM (CCT on top, AGG on bot)." },
 
   // --- CYP2D6 pilot panel (chr22, GRCh38) ---
   // Coordinates from pilot_grna_positions.bed; sequences to be filled in from the GRCh38 reference
@@ -843,6 +843,28 @@ export function LabInventoryPanel({ candidates = [] }) {
   );
 }
 
+// Cas9 nomenclature for a single ssDNA cut product.
+// Two forms are produced so the renderer can keep inline labels readable
+// while the full annotation is available on hover (JSX <title>) or in a
+// caption block (matplotlib).
+//
+// Compact: "{lab}{gname} {FRAG}/{strand}/{dye} {chem}"
+// Full:    "{lab}{gname} | {strand}-strand PAM {PAM} cut@{X} | {FRAG} ssDNA
+//          {strand}/{dye} ({template}, PAM-{pam_side}) | {chem} | {length} nt"
+export function cas9NomenclatureLabel({ grna, dye, dyeProduct, overhang_nt, labMark = "" }) {
+  const gname = grna.name || `cand-${grna.id}`;
+  const chem = overhang_nt === 0
+    ? "blunt"
+    : (overhang_nt > 0 ? `+${overhang_nt}nt 5'OH` : `${overhang_nt}nt 3'OH`);
+  const compact =
+    `${labMark}${gname} ${dyeProduct.fragment}/${dyeProduct.strand}/${dye} ${chem}`;
+  const full =
+    `${labMark}${gname} | ${grna.strand}-strand PAM ${grna.pam_seq} cut@${grna.cut_construct}` +
+    ` | ${dyeProduct.fragment} ssDNA ${dyeProduct.strand}/${dye} (${dyeProduct.template}, PAM-${dyeProduct.pam_side})` +
+    ` | ${chem} | ${dyeProduct.length} nt`;
+  return { compact, full };
+}
+
 // ----------------------------------------------------------------------
 // Expected species enumerator (used by the electropherogram overlay).
 // Returns every species the dye CAN show, sorted by ascending bp:
@@ -852,7 +874,8 @@ export function LabInventoryPanel({ candidates = [] }) {
 //   * Adapter monomers (pre-ligation single oligos carrying one dye each)
 //     per BIOLOGY.md §3.3.
 //   * Cas9 cut products for any gRNAs passed in, at the chemistries
-//     passed in (blunt by default).
+//     passed in (blunt by default). Cut labels carry the full Cas9
+//     nomenclature via cas9NomenclatureLabel().
 // Each entry: { size: number_bp, label: string, kind: "assembly"|"monomer"|"cut" }
 // ----------------------------------------------------------------------
 export function expectedSpeciesForDye(dye, components, constructSize = 226, gRNAs = [], overhangs = [0]) {
@@ -875,25 +898,38 @@ export function expectedSpeciesForDye(dye, components, constructSize = 226, gRNA
     out.push({ size: monomers[dye].size, label: monomers[dye].label, kind: "monomer" });
   }
 
-  // Cas9 cut products for the selected gRNA(s) at the chosen chemistries
+  // Cas9 cut products with both compact and full Cas9 nomenclature
   for (const g of gRNAs) {
     if (!g) continue;
+    const inv = inventoryStatus(g);
+    const labMark = inv.status === "exact" ? "LAB✓ " : (inv.status === "name" ? "name~ " : "");
     for (const oh of overhangs) {
       const products = predictCutProducts(g, constructSize, oh);
       const p = products[dye];
       if (!p) continue;
-      const ohLbl = oh === 0 ? "blunt" : (oh > 0 ? `+${oh} nt 5'` : `${oh} nt 3'`);
-      const gname = g.name || `cand-${g.id}`;
+      const labels = cas9NomenclatureLabel({ grna: g, dye, dyeProduct: p, overhang_nt: oh, labMark });
       out.push({
         size: p.length,
-        label: `${gname} ${p.fragment} (${ohLbl})`,
+        label: labels.compact,
+        fullLabel: labels.full,
         kind: "cut",
       });
     }
   }
 
-  return out.sort((a, b) => a.size - b.size);
+  // Default fullLabel = label for non-cut entries so consumers can blindly read it.
+  return out
+    .map(s => (s.fullLabel ? s : { ...s, fullLabel: s.label }))
+    .sort((a, b) => a.size - b.size);
 }
+
+// Stroke pattern per kind. Color comes from the lane's dye so all marks read
+// as belonging to that channel; the dash pattern conveys the kind information.
+export const SPECIES_DASH = {
+  assembly: "1.5 2.5",   // short dash
+  monomer:  "0.6 1.6",   // dotted
+  cut:      "5 2",       // long dash
+};
 
 export function componentSizesFrom(construct) {
   const map = {};
@@ -1320,9 +1356,12 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const [labelPeaks, setLabelPeaks] = useState(true);
   const [showExpected, setShowExpected] = useState(true);
   const [showSpecies, setShowSpecies] = useState(false);
-  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(-1);  // index into LAB_GRNA_CATALOG; -1 = none
+  // Default to V059_gRNA3 (index 0 in LAB_GRNA_CATALOG, populated 2026-04-18).
+  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(0);
   const [speciesOverhangs, setSpeciesOverhangs] = useState([0, 4]);  // chemistries to overlay when a gRNA is selected
   const [showLadder, setShowLadder] = useState(true);
+  // Peak hover-dot circles cover the trace heavily; off by default, toggle on demand.
+  const [showPeakDots, setShowPeakDots] = useState(false);
   const [hover, setHover] = useState(null);
 
   const peaks = DATA.peaks[sample] || {};
@@ -1466,6 +1505,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
             <input type="checkbox" checked={showSpecies} onChange={e => setShowSpecies(e.target.checked)} className="w-3.5 h-3.5 accent-sky-600" />
             Expected species
           </label>
+          <label className="flex items-center gap-1 ml-2 cursor-pointer" title="Render small white-fill circles on every called peak (helpful for hover; can clutter the trace)">
+            <input type="checkbox" checked={showPeakDots} onChange={e => setShowPeakDots(e.target.checked)} className="w-3.5 h-3.5 accent-zinc-700" />
+            Peak dots
+          </label>
         </div>
       </div>
 
@@ -1474,9 +1517,21 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         <div className="bg-sky-50 border border-sky-200 rounded-lg p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs no-print">
           <div className="flex items-center gap-2">
             <span className="font-semibold uppercase tracking-wide text-sky-700">Species overlay</span>
-            <Pill tone="neutral">assembly</Pill>
-            <Pill tone="amber">monomer</Pill>
-            {speciesGrnaIdx >= 0 && <Pill tone="sky">cut</Pill>}
+            {/* Lines colored by lane dye; pattern conveys kind */}
+            <span className="inline-flex items-center gap-1 text-zinc-700">
+              <svg width="22" height="6" aria-hidden><line x1="0" y1="3" x2="22" y2="3" stroke="currentColor" strokeWidth="1.4" strokeDasharray={SPECIES_DASH.assembly} /></svg>
+              assembly
+            </span>
+            <span className="inline-flex items-center gap-1 text-zinc-700">
+              <svg width="22" height="6" aria-hidden><line x1="0" y1="3" x2="22" y2="3" stroke="currentColor" strokeWidth="1.4" strokeDasharray={SPECIES_DASH.monomer} /></svg>
+              monomer
+            </span>
+            <span className="inline-flex items-center gap-1 text-zinc-700">
+              <svg width="22" height="6" aria-hidden><line x1="0" y1="3" x2="22" y2="3" stroke="currentColor" strokeWidth="1.4" strokeDasharray={SPECIES_DASH.cut} /></svg>
+              cut
+            </span>
+            <span className="text-zinc-400">·</span>
+            <span className="text-zinc-500 text-[11px]">colored by lane dye (B/Y/G/R)</span>
           </div>
           <div className="h-5 w-px bg-sky-200" />
           <label className="flex items-center gap-1.5">
@@ -1633,7 +1688,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   );
                 })}
 
-                {/* Expected SPECIES overlay (assembly + monomer + cut) */}
+                {/* Expected SPECIES overlay (assembly + monomer + cut) — colored by dye, kind via dash pattern */}
                 {showSpecies && lane.dyes.map(dye => {
                   if (dye === "O") return null;
                   // Resolve the gRNA the user picked (if any) so cut products can be enumerated.
@@ -1641,7 +1696,6 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   if (speciesGrnaIdx >= 0 && speciesGrnaIdx < 1000) {
                     const labEntry = LAB_GRNA_CATALOG[speciesGrnaIdx];
                     if (labEntry && normalizeSpacer(labEntry.spacer).length === 20) {
-                      // Find the matching candidate in this construct so we get cut_construct + strand
                       const norm = normalizeSpacer(labEntry.spacer);
                       const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
                       pickedGrna = candidateGrnas.find(g => g.protospacer === norm || g.protospacer === rc) || null;
@@ -1654,10 +1708,11 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   const species = expectedSpeciesForDye(dye, componentSizes, constructSize, pickedGrna ? [pickedGrna] : [], overhangs)
                     .filter(sp => sp.size >= range[0] && sp.size <= range[1]);
                   if (species.length === 0) return null;
-                  // Assign each species to a stack row to avoid label collision (label width ~ 7px per char × ~20 chars ≈ 140 px in svg coords; converted via xScale.delta).
-                  const minLabelDx = (range[1] - range[0]) / Math.max(1, plotW / 90);  // ~90 px per label slot
-                  const rows = [];  // last x assigned to each row
-                  const nRows = 4;
+                  // Stack labels across rows. More rows now because cut labels are longer
+                  // (full Cas9 nomenclature) so they need more vertical headroom.
+                  const minLabelDx = (range[1] - range[0]) / Math.max(1, plotW / 110);
+                  const rows = [];
+                  const nRows = 6;
                   const place = (size) => {
                     for (let r = 0; r < nRows; r++) {
                       if (rows[r] === undefined || size - rows[r] >= minLabelDx) { rows[r] = size; return r; }
@@ -1665,20 +1720,33 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                     rows[nRows - 1] = size;
                     return nRows - 1;
                   };
-                  const palette = { assembly: "#52525b", monomer: "#d97706", cut: "#0284c7" };
+                  // Color from dye palette so the overlay reads as belonging to that channel.
+                  // Kind is conveyed by stroke-dash pattern (assembly=short dash, monomer=dotted, cut=long dash).
+                  const dyeColor = DYE[dye].color;
                   return (
                     <g key={`spec-${li}-${dye}`} pointerEvents="none">
                       {species.map((sp, idx) => {
                         const x = xScale(sp.size);
                         const row = place(sp.size);
-                        const stroke = palette[sp.kind] || "#71717a";
                         const labelY = lane.top + 22 + row * 11;
                         return (
                           <g key={`sp-${idx}`}>
-                            <line x1={x} x2={x} y1={lane.top} y2={lane.top + lane.h} stroke={stroke} strokeWidth="0.7" strokeDasharray="1.5 2.5" opacity="0.55" />
-                            <line x1={x - 1} x2={x - 1} y1={labelY - 6} y2={labelY + 1} stroke={stroke} strokeWidth="2" />
-                            <text x={x + 2} y={labelY} fontSize="8" fill={stroke} fontWeight="600" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 2.5 }}>
-                              {sp.label} · {sp.size}
+                            <line
+                              x1={x} x2={x} y1={lane.top} y2={lane.top + lane.h}
+                              stroke={dyeColor} strokeWidth="0.85"
+                              strokeDasharray={SPECIES_DASH[sp.kind] || "1 2"}
+                              opacity="0.7"
+                            />
+                            <line x1={x - 1} x2={x - 1} y1={labelY - 6} y2={labelY + 1} stroke={dyeColor} strokeWidth="2" />
+                            <text
+                              x={x + 2} y={labelY}
+                              fontSize="8"
+                              fill={dyeColor}
+                              fontWeight="600"
+                              style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 2.5 }}
+                            >
+                              <title>{sp.fullLabel || sp.label}</title>
+                              {`${sp.label} · ${sp.size} bp`}
                             </text>
                           </g>
                         );
@@ -1739,8 +1807,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   });
                 })()}
 
-                {/* Hover dots */}
-                {lane.dyes.map(dye =>
+                {/* Per-peak hover dots (off by default; clutter when many peaks) */}
+                {showPeakDots && lane.dyes.map(dye =>
                   (peaksByChannel[dye] || [])
                     .filter(p => p.size >= range[0] && p.size <= range[1])
                     .map((p, i) => {
@@ -2726,7 +2794,7 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
   const [normalize, setNormalize] = useState(true);
   const [smoothing, setSmoothing] = useState(1);
   const [showSpecies, setShowSpecies] = useState(false);
-  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(-1);
+  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(0);  // V059_gRNA3 (lab catalog idx 0)
   const [speciesOverhangs, setSpeciesOverhangs] = useState([0, 4]);
 
   const candidateGrnas = useMemo(() => {
@@ -2835,9 +2903,21 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
         {showSpecies && (
           <div className="mt-2 pt-2 border-t border-zinc-100 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
             <span className="font-semibold uppercase tracking-wide text-sky-700">Species</span>
-            <Pill tone="neutral">assembly</Pill>
-            <Pill tone="amber">monomer</Pill>
-            {pickedGrna && <Pill tone="sky">cut</Pill>}
+            <span className="inline-flex items-center gap-1 text-zinc-700">
+              <svg width="22" height="6" aria-hidden><line x1="0" y1="3" x2="22" y2="3" stroke="currentColor" strokeWidth="1.4" strokeDasharray={SPECIES_DASH.assembly} /></svg>
+              assembly
+            </span>
+            <span className="inline-flex items-center gap-1 text-zinc-700">
+              <svg width="22" height="6" aria-hidden><line x1="0" y1="3" x2="22" y2="3" stroke="currentColor" strokeWidth="1.4" strokeDasharray={SPECIES_DASH.monomer} /></svg>
+              monomer
+            </span>
+            {pickedGrna && (
+              <span className="inline-flex items-center gap-1 text-zinc-700">
+                <svg width="22" height="6" aria-hidden><line x1="0" y1="3" x2="22" y2="3" stroke="currentColor" strokeWidth="1.4" strokeDasharray={SPECIES_DASH.cut} /></svg>
+                cut
+              </span>
+            )}
+            <span className="text-zinc-500 text-[11px]">colored by selected dye ({DYE[dye].label})</span>
             <div className="h-4 w-px bg-zinc-200 mx-1" />
             <label className="flex items-center gap-1.5">
               <span className="text-zinc-600">gRNA:</span>
@@ -2977,10 +3057,9 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
               pickedGrna ? speciesOverhangs : []
             ).filter(sp => sp.size >= range[0] && sp.size <= range[1]);
             if (!species.length) return null;
-            const palette = { assembly: "#52525b", monomer: "#d97706", cut: "#0284c7" };
-            // Stack labels across rows to avoid collision (more rows than the
-            // electropherogram because the CompareTab plot is taller).
-            const minLabelDx = (range[1] - range[0]) / Math.max(1, plotW / 110);
+            // Color comes from the active dye; kind via stroke-dash pattern.
+            const dyeColor = DYE[dye].color;
+            const minLabelDx = (range[1] - range[0]) / Math.max(1, plotW / 130);
             const rows = [];
             const nRows = 6;
             const place = size => {
@@ -2990,21 +3069,23 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
               rows[nRows - 1] = size;
               return nRows - 1;
             };
-            const inv = pickedGrna ? inventoryStatus(pickedGrna) : null;
-            const labMark = inv && inv.status === "exact" ? "✓ " : (inv && inv.status === "name" ? "~ " : "");
             return (
               <g pointerEvents="none">
                 {species.map((sp, idx) => {
                   const x = xScale(sp.size);
                   const row = place(sp.size);
-                  const stroke = palette[sp.kind] || "#71717a";
                   const labelY = m.t + 14 + row * 12;
-                  const isCut = sp.kind === "cut";
                   return (
                     <g key={`spec-${idx}`}>
-                      <line x1={x} x2={x} y1={m.t} y2={m.t + plotH} stroke={stroke} strokeWidth="0.7" strokeDasharray="1.5 2.5" opacity="0.55" />
-                      <text x={x + 3} y={labelY} fontSize="9" fill={stroke} fontWeight="600" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 3 }}>
-                        {isCut ? labMark : ""}{sp.label} · {sp.size}
+                      <line
+                        x1={x} x2={x} y1={m.t} y2={m.t + plotH}
+                        stroke={dyeColor} strokeWidth="0.85"
+                        strokeDasharray={SPECIES_DASH[sp.kind] || "1 2"}
+                        opacity="0.65"
+                      />
+                      <text x={x + 3} y={labelY} fontSize="9" fill={dyeColor} fontWeight="600" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 3 }}>
+                        <title>{sp.fullLabel || sp.label}</title>
+                        {sp.label} · {sp.size} bp
                       </text>
                     </g>
                   );

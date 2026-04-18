@@ -38,11 +38,43 @@ ASSEMBLY_PRODUCTS = [
 ]
 
 
+# Stroke patterns per kind. Color comes from the dye palette; pattern conveys kind.
+SPECIES_DASH = {
+    "assembly": (0, (1.5, 2.5)),   # short dash
+    "monomer":  (0, (0.6, 1.6)),   # dotted
+    "cut":      (0, (5, 2)),       # long dash
+}
+
+
+def cas9_nomenclature_label(grna, dye, dye_product, overhang_nt, lab_mark=""):
+    """Mirror of cas9NomenclatureLabel() in the JSX.
+
+    Returns dict {compact, full}. Compact is for inline rendering on the trace
+    where space is tight; full is the canonical Cas9 nomenclature for caption /
+    legend / hover.
+    """
+    gname = grna.get("name") or f"cand-{grna.get('id', '?')}"
+    if overhang_nt == 0:
+        chem = "blunt"
+    elif overhang_nt > 0:
+        chem = f"+{overhang_nt}nt 5'OH"
+    else:
+        chem = f"{overhang_nt}nt 3'OH"
+    compact = f"{lab_mark}{gname} {dye_product['fragment']}/{dye_product['strand']}/{dye} {chem}"
+    full = (
+        f"{lab_mark}{gname} | {grna['strand']}-strand PAM {grna['pam_seq']} cut@{grna['cut_construct']}"
+        f" | {dye_product['fragment']} ssDNA {dye_product['strand']}/{dye} ({dye_product['template']}, PAM-{dye_product['pam_side']})"
+        f" | {chem} | {dye_product['length']} nt"
+    )
+    return {"compact": compact, "full": full}
+
+
 def expected_species_for_dye(dye, components, construct_size=226, gRNAs=None, overhangs=None):
     """Mirror of expectedSpeciesForDye in fragment-viewer/src/FragmentViewer.jsx.
 
     Returns list of dicts {size, label, kind} sorted by ascending bp.
     components: dict mapping component key -> size in bp.
+    Cut entries carry the full Cas9 nomenclature.
     """
     out = []
     for p in ASSEMBLY_PRODUCTS:
@@ -65,13 +97,15 @@ def expected_species_for_dye(dye, components, construct_size=226, gRNAs=None, ov
             p = products.get(dye)
             if not p:
                 continue
-            ohlbl = "blunt" if oh == 0 else (f"+{oh} nt 5'" if oh > 0 else f"{oh} nt 3'")
-            gname = g.get("name") or f"cand-{g.get('id', '?')}"
+            labels = cas9_nomenclature_label(g, dye, p, oh)
             out.append({
                 "size": p["length"],
-                "label": f"{gname} {p['fragment']} ({ohlbl})",
+                "label": labels["compact"],
+                "fullLabel": labels["full"],
                 "kind": "cut",
             })
+    # Default fullLabel = label for non-cut entries
+    out = [({**s, "fullLabel": s["label"]} if "fullLabel" not in s else s) for s in out]
     return sorted(out, key=lambda s: s["size"])
 from genemapper_parser import parse_genemapper_path  # noqa: E402
 
@@ -138,8 +172,6 @@ def plot_electropherogram(peaks, sample, *, dyes=SAMPLE_DYES, x_range=(0, 260),
     if len(dyes) == 1:
         axes = [axes]
 
-    species_palette = {"assembly": "#52525b", "monomer": "#d97706", "cut": "#0284c7"}
-
     x = np.linspace(x_range[0], x_range[1], 1200)
     for ax, dye in zip(axes, dyes):
         rows = sample_data.get(dye) or []
@@ -158,7 +190,9 @@ def plot_electropherogram(peaks, sample, *, dyes=SAMPLE_DYES, x_range=(0, 260),
         if expected and dye in expected:
             ax.axvline(expected[dye], color="#a1a1aa", linestyle="--", linewidth=0.7)
 
-        # Species overlay
+        # Species overlay (lines colored by lane dye; pattern conveys kind)
+        # Inline labels use the compact form to stay readable; the full Cas9
+        # nomenclature is emitted as a caption block below the figure.
         if species_overlay is not None:
             if isinstance(species_overlay, dict) and dye in species_overlay and isinstance(species_overlay[dye], list):
                 species = species_overlay[dye]
@@ -173,22 +207,21 @@ def plot_electropherogram(peaks, sample, *, dyes=SAMPLE_DYES, x_range=(0, 260),
             else:
                 species = []
             visible = [sp for sp in species if x_range[0] <= sp["size"] <= x_range[1]]
-            # Stack labels across N rows so they don't collide
             n_rows = 4
-            label_dx = (x_range[1] - x_range[0]) / 14   # ~14 label slots per row
+            label_dx = (x_range[1] - x_range[0]) / 14
             row_x = [None] * n_rows
             ymin, ymax = ax.get_ylim()
             for sp in visible:
                 row = next((r for r in range(n_rows) if row_x[r] is None or sp["size"] - row_x[r] >= label_dx), n_rows - 1)
                 row_x[row] = sp["size"]
-                stroke = species_palette.get(sp["kind"], "#71717a")
-                ax.axvline(sp["size"], color=stroke, linewidth=0.6, linestyle=(0, (1.5, 2.5)), alpha=0.6)
-                ax.annotate(
+                ax.axvline(sp["size"], color=color, linewidth=0.7,
+                           linestyle=SPECIES_DASH.get(sp["kind"], "--"), alpha=0.7)
+                ax.text(
+                    sp["size"], ymax * (0.78 - 0.13 * row),
                     f"{sp['label']} · {sp['size']}",
-                    xy=(sp["size"], ymax * (0.78 - 0.10 * row)),
-                    fontsize=6.5, color=stroke, fontweight="600",
+                    fontsize=6, color=color, fontweight="600",
                     rotation=90, va="top", ha="left",
-                    annotation_clip=True,
+                    clip_on=True,
                 )
 
     axes[-1].set_xlabel("size (bp)", fontsize=9)
@@ -196,6 +229,29 @@ def plot_electropherogram(peaks, sample, *, dyes=SAMPLE_DYES, x_range=(0, 260),
     if species_overlay is not None:
         title += "  ·  expected-species overlay on"
     fig.suptitle(title, fontsize=11, fontweight="600", y=1.02)
+
+    # Caption block: print the full Cas9 nomenclature for every cut species
+    # below the figure so the on-trace inline labels can stay compact.
+    if species_overlay is not None and isinstance(species_overlay, dict) and "components" in species_overlay and species_overlay.get("gRNAs"):
+        lines = ["Cas9 cut species (full nomenclature):"]
+        seen = set()
+        for d in dyes:
+            for sp in expected_species_for_dye(
+                d,
+                species_overlay["components"],
+                species_overlay.get("construct_size", 226),
+                species_overlay.get("gRNAs", []),
+                species_overlay.get("overhangs", [0]),
+            ):
+                if sp["kind"] != "cut":
+                    continue
+                full = sp.get("fullLabel", sp["label"])
+                if full in seen:
+                    continue
+                seen.add(full)
+                lines.append(f"  • {full}")
+        fig.text(0.02, -0.08, "\n".join(lines), fontsize=7, color="#3f3f46", family="monospace",
+                 ha="left", va="top")
     return fig
 
 
@@ -323,7 +379,10 @@ def cmd_electropherogram(args):
             grnas = find_grnas(construct["sequence"], construct["target_start"], construct["target_end"])
             hit = find_by_spacer(grnas, args.spacer)
             if hit:
-                gRNAs = [{**hit, "name": "selected"}]
+                # Try to look up the catalog entry name so the inline + caption
+                # labels read with the canonical lab gRNA name.
+                gname = args.grna_name or "user-supplied"
+                gRNAs = [{**hit, "name": gname}]
         species_overlay = {
             "components": components,
             "construct_size": construct["total_bp"],
@@ -398,6 +457,7 @@ def main() -> int:
     p_e.add_argument("--construct", default="V059_gRNA3",
                      help="Construct id from the registry (used when --species is set)")
     p_e.add_argument("--spacer", help="20-nt gRNA spacer to overlay cut products for; omit for assembly + monomer only")
+    p_e.add_argument("--grna-name", help="Display name for the spacer in inline + caption labels (e.g. V059_gRNA3)")
     p_e.add_argument("--overhangs", type=int, nargs="+", default=[0, 4],
                      help="Overhang chemistries to overlay when --spacer is given (default: 0 4)")
     p_e.set_defaults(func=cmd_electropherogram)
