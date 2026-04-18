@@ -5,7 +5,7 @@
 // .svg downloads when opened in Illustrator.
 
 import { describe, it, expect, vi } from "vitest";
-import { exportSvgNative, exportSvgAsPng, exportSvgAsJpg } from "../src/FragmentViewer.jsx";
+import { exportSvgNative, exportSvgAsPng, exportSvgAsJpg, exportSvgAsWebp } from "../src/FragmentViewer.jsx";
 
 // Minimal DOM shim so the helpers don't crash when invoked in Node. We only
 // need enough surface for them to call .cloneNode / .setAttribute / the
@@ -49,6 +49,18 @@ describe("export helpers — guard behavior", () => {
 
   it("exportSvgAsJpg is a no-op when svgEl is null/undefined", () => {
     expect(() => exportSvgAsJpg(null, "x.jpg", 2, 0.92)).not.toThrow();
+  });
+
+  it("exportSvgAsWebp is a no-op when svgEl is null/undefined", () => {
+    expect(() => exportSvgAsWebp(null, "x.webp", 4, 0.92)).not.toThrow();
+  });
+
+  it("exportSvgAsPng accepts transparent-background option without throwing", () => {
+    expect(() => exportSvgAsPng(null, "x.png", 4, { transparent: true })).not.toThrow();
+  });
+
+  it("exportSvgAsWebp accepts transparent-background option without throwing", () => {
+    expect(() => exportSvgAsWebp(null, "x.webp", 4, 0.92, { transparent: true })).not.toThrow();
   });
 });
 

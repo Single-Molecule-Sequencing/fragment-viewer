@@ -1450,9 +1450,12 @@ export function exportSvgNative(svgEl, filename) {
   downloadBlob(blob, filename || "fragment-viewer.svg");
 }
 
-// Rasterize SVG → Canvas → Blob, then download. Shared by PNG + JPG paths;
-// they only differ in mime type + quality, not in the draw pipeline.
-function rasterizeSvgToCanvas(svgEl, scale, onCanvas) {
+// Rasterize SVG → Canvas → Blob, then download. Shared by PNG + JPG + WebP
+// paths; they only differ in mime type + quality + background treatment.
+// When `transparent` is true the canvas skips the white fill — produces a
+// PNG/WebP with transparent background for compositing. JPG ignores it
+// (JPEG has no alpha channel).
+function rasterizeSvgToCanvas(svgEl, scale, onCanvas, { transparent = false } = {}) {
   const xml = serializeSvg(svgEl);
   const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(svgBlob);
@@ -1465,10 +1468,12 @@ function rasterizeSvgToCanvas(svgEl, scale, onCanvas) {
     canvas.width  = Math.round(w * scale);
     canvas.height = Math.round(h * scale);
     const ctx = canvas.getContext("2d");
-    // White background always — transparent PNGs read as ugly grey on
-    // journal templates; JPGs require an opaque background anyway.
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!transparent) {
+      // Opaque white background — journals expect white, JPGs require
+      // opaque, and transparent PNGs read as ugly grey on many templates.
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(url);
     onCanvas(canvas);
@@ -1477,20 +1482,23 @@ function rasterizeSvgToCanvas(svgEl, scale, onCanvas) {
   img.src = url;
 }
 
-// High-res PNG (scale ≥ 1; 2 = default, 4 = poster/print, 6 = slide zoom).
-export function exportSvgAsPng(svgEl, filename, scale = 2) {
+// High-res PNG (scale ≥ 1; 2 = default, 4 = poster/print, 6 = slide zoom,
+// 8 = giant poster / zoom crop). Set { transparent: true } for alpha-channel
+// output suitable for Illustrator / PowerPoint compositing.
+export function exportSvgAsPng(svgEl, filename, scale = 2, opts = {}) {
   if (!svgEl) return;
   rasterizeSvgToCanvas(svgEl, scale, (canvas) => {
     canvas.toBlob(blob => {
       if (!blob) return;
       downloadBlob(blob, filename || "fragment-viewer.png");
     }, "image/png");
-  });
+  }, opts);
 }
 
 // JPEG with configurable quality (0.92 high, 0.80 standard, 0.60 compact).
 // Useful for emailing figures where PNG would be too large — at 0.92 the
-// visual cost is negligible and file size drops 3-5x.
+// visual cost is negligible and file size drops 3-5x. JPEG is always
+// opaque (no alpha channel).
 export function exportSvgAsJpg(svgEl, filename, scale = 2, quality = 0.92) {
   if (!svgEl) return;
   rasterizeSvgToCanvas(svgEl, scale, (canvas) => {
@@ -1499,6 +1507,20 @@ export function exportSvgAsJpg(svgEl, filename, scale = 2, quality = 0.92) {
       downloadBlob(blob, filename || "fragment-viewer.jpg");
     }, "image/jpeg", quality);
   });
+}
+
+// WebP — modern lossy format that beats JPEG on file-size-per-quality by
+// 25–40%. Supported by all current browsers, Illustrator 2022+, and most
+// scientific publishing pipelines (check journal submission specs first).
+// Accepts { transparent: true } like PNG.
+export function exportSvgAsWebp(svgEl, filename, scale = 4, quality = 0.92, opts = {}) {
+  if (!svgEl) return;
+  rasterizeSvgToCanvas(svgEl, scale, (canvas) => {
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      downloadBlob(blob, filename || "fragment-viewer.webp");
+    }, "image/webp", quality);
+  }, opts);
 }
 
 // Export menu: a single FileDown button that opens a small popover listing
@@ -1510,7 +1532,13 @@ export function exportSvgAsJpg(svgEl, filename, scale = 2, quality = 0.92) {
 //   basename — filename stem; the format-specific suffix is appended.
 //   formats  — array of format keys to show. Defaults to all five below.
 //              Order controls menu order.
-export function ExportMenu({ svgRef, basename = "figure", formats = ["png2", "png4", "png6", "svg", "jpg_hi", "jpg_std"], variant = "secondary", label = "Export" }) {
+export function ExportMenu({
+  svgRef,
+  basename = "figure",
+  formats = ["svg", "png2", "png4", "png6", "png8", "png4_alpha", "jpg_hi", "jpg_std", "webp_hi"],
+  variant = "secondary",
+  label = "Export",
+}) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef(null);
   useEffect(() => {
@@ -1525,45 +1553,68 @@ export function ExportMenu({ svgRef, basename = "figure", formats = ["png2", "pn
     const el = svgRef?.current;
     if (!el) return;
     switch (kind) {
-      case "svg":    exportSvgNative(el, `${basename}.svg`); break;
-      case "png2":   exportSvgAsPng(el, `${basename}@2x.png`, 2); break;
-      case "png4":   exportSvgAsPng(el, `${basename}@4x.png`, 4); break;
-      case "png6":   exportSvgAsPng(el, `${basename}@6x.png`, 6); break;
-      case "jpg_hi": exportSvgAsJpg(el, `${basename}@4x_q92.jpg`, 4, 0.92); break;
-      case "jpg_std":exportSvgAsJpg(el, `${basename}@2x_q80.jpg`, 2, 0.80); break;
+      case "svg":        exportSvgNative(el, `${basename}.svg`); break;
+      case "png2":       exportSvgAsPng(el, `${basename}@2x.png`, 2); break;
+      case "png4":       exportSvgAsPng(el, `${basename}@4x.png`, 4); break;
+      case "png6":       exportSvgAsPng(el, `${basename}@6x.png`, 6); break;
+      case "png8":       exportSvgAsPng(el, `${basename}@8x.png`, 8); break;
+      case "png4_alpha": exportSvgAsPng(el, `${basename}@4x_alpha.png`, 4, { transparent: true }); break;
+      case "jpg_hi":     exportSvgAsJpg(el, `${basename}@4x_q92.jpg`, 4, 0.92); break;
+      case "jpg_std":    exportSvgAsJpg(el, `${basename}@2x_q80.jpg`, 2, 0.80); break;
+      case "webp_hi":    exportSvgAsWebp(el, `${basename}@4x_q92.webp`, 4, 0.92); break;
+      case "webp_alpha": exportSvgAsWebp(el, `${basename}@4x_alpha.webp`, 4, 0.92, { transparent: true }); break;
       default: break;
     }
     setOpen(false);
   };
   const entries = {
-    svg:     { label: "SVG · vector, editable", hint: "Best for publication figures (Illustrator / Inkscape)" },
-    png2:    { label: "PNG @ 2×", hint: "Screens, slides" },
-    png4:    { label: "PNG @ 4×", hint: "Posters, print" },
-    png6:    { label: "PNG @ 6×", hint: "Zoom-in crops, very large formats" },
-    jpg_hi:  { label: "JPG @ 4× · high quality", hint: "Q92; ~3-5× smaller than PNG" },
-    jpg_std: { label: "JPG @ 2× · standard", hint: "Q80; email-friendly size" },
+    svg:        { group: "Vector",     label: "SVG · vector, editable",   hint: "Best for publication figures (Illustrator / Inkscape)" },
+    png2:       { group: "Raster",     label: "PNG @ 2×",                 hint: "Screens, slides · ~1840 px wide" },
+    png4:       { group: "Raster",     label: "PNG @ 4×",                 hint: "Publication, 300 DPI single column · ~3680 px" },
+    png6:       { group: "Raster",     label: "PNG @ 6×",                 hint: "Posters, 300 DPI double column · ~5520 px" },
+    png8:       { group: "Raster",     label: "PNG @ 8×",                 hint: "Giant prints, zoom-in crops · ~7360 px" },
+    png4_alpha: { group: "Transparent",label: "PNG @ 4× · transparent",   hint: "Alpha channel for compositing in Illustrator / PowerPoint" },
+    jpg_hi:     { group: "Compact",    label: "JPG @ 4× · high quality",  hint: "Q92; ~3-5× smaller than PNG" },
+    jpg_std:    { group: "Compact",    label: "JPG @ 2× · standard",      hint: "Q80; email-friendly size" },
+    webp_hi:    { group: "Compact",    label: "WebP @ 4× · high quality", hint: "Q92; ~25-40% smaller than JPG at equal quality" },
+    webp_alpha: { group: "Transparent",label: "WebP @ 4× · transparent",  hint: "Q92 + alpha; best-in-class size for alpha-channel output" },
   };
+  // Group for rendered section headers. Preserves `formats` order within
+  // each group so callers can still fully control the menu contents.
+  const groups = [];
+  const seen = new Set();
+  for (const k of formats) {
+    const g = entries[k]?.group || "Other";
+    if (!seen.has(g)) { groups.push(g); seen.add(g); }
+  }
   return (
     <div ref={anchorRef} className="relative inline-block">
-      <ToolButton icon={FileDown} variant={variant} onClick={() => setOpen(v => !v)} title="Export this figure — PNG/SVG/JPG at multiple resolutions">
+      <ToolButton icon={FileDown} variant={variant} onClick={() => setOpen(v => !v)} title="Export this figure — SVG / PNG / JPG / WebP at multiple resolutions, with optional transparent background">
         {label} {open ? "▾" : "▸"}
       </ToolButton>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-40 w-64 bg-white border border-zinc-200 rounded-lg shadow-xl overflow-hidden no-print">
-          <ul className="divide-y divide-zinc-100">
-            {formats.map(k => (
-              <li key={k}>
-                <button onClick={() => doExport(k)}
-                  className="w-full px-3 py-2 flex items-start gap-2 text-left hover:bg-zinc-50 focus:bg-zinc-100 focus:outline-none">
-                  <FileDown size={13} className="text-zinc-400 mt-0.5 shrink-0" />
-                  <span className="min-w-0">
-                    <span className="block text-xs font-medium text-zinc-800">{entries[k].label}</span>
-                    <span className="block text-[11px] text-zinc-500">{entries[k].hint}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="absolute right-0 top-full mt-1 z-40 w-72 bg-white border border-zinc-200 rounded-lg shadow-xl overflow-hidden no-print max-h-[80vh] overflow-y-auto">
+          {groups.map(g => (
+            <div key={g}>
+              <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-100">
+                {g}
+              </div>
+              <ul className="divide-y divide-zinc-100">
+                {formats.filter(k => (entries[k]?.group || "Other") === g).map(k => (
+                  <li key={k}>
+                    <button onClick={() => doExport(k)}
+                      className="w-full px-3 py-2 flex items-start gap-2 text-left hover:bg-zinc-50 focus:bg-zinc-100 focus:outline-none">
+                      <FileDown size={13} className="text-zinc-400 mt-0.5 shrink-0" />
+                      <span className="min-w-0">
+                        <span className="block text-xs font-medium text-zinc-800">{entries[k].label}</span>
+                        <span className="block text-[11px] text-zinc-500">{entries[k].hint}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -3068,7 +3119,11 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const W = 920;
   const lanesCount = stackChannels ? Math.max(1, activeChannels.length) : 1;
   const laneH = stackChannels ? 108 : 380;
-  const m = { l: 64, r: 16, t: 14, b: 40 };
+  // When a reference sample is active, reserve 22 extra px at the top for
+  // the dotted-vs-solid legend strip so the convention is readable and the
+  // exported SVG/PNG/JPG tells the whole story without caption chrome.
+  const showPairLegend = pairMode !== "none" && !!resolvedReference;
+  const m = { l: 64, r: 16, t: showPairLegend ? 36 : 14, b: 40 };
   const laneGap = stackChannels ? 6 : 0;
   const H = m.t + m.b + lanesCount * laneH + (lanesCount - 1) * laneGap;
   const plotW = W - m.l - m.r;
@@ -3649,6 +3704,33 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
           onMouseUp={onUp}
           onMouseLeave={() => { setDrag(null); setHover(null); }}
         >
+          {/* Dotted-vs-solid legend — rendered INSIDE the SVG so exported
+              figures self-describe: dotted line = reference (uncut) sample,
+              solid line = current (cut) sample. Swatches show actual dash
+              patterns using neutral slate so the dye lanes below remain the
+              visual anchor; the sample names are rendered in mono so
+              filenames like V059_4-5 and gRNA3_1-1 read cleanly. */}
+          {showPairLegend && (
+            <g>
+              <rect x={m.l} y="6" width={plotW} height="24" rx="3"
+                    fill="#f8fafc" stroke="#e2e8f0" strokeWidth="0.8" />
+              <g transform={`translate(${m.l + 10}, 18)`}>
+                <line x1="0" y1="0" x2="28" y2="0"
+                      stroke="#334155" strokeWidth="1.3"
+                      strokeDasharray="1 3" strokeLinecap="round" />
+                <text x="34" y="3" fontSize="10" fill="#334155" fontWeight="600">uncut</text>
+                <text x="70" y="3" fontSize="9.5" fill="#64748b"
+                      fontFamily="ui-monospace, JetBrains Mono, monospace">{resolvedReference}</text>
+              </g>
+              <g transform={`translate(${m.l + plotW / 2 + 10}, 18)`}>
+                <line x1="0" y1="0" x2="28" y2="0"
+                      stroke="#334155" strokeWidth="1.6" />
+                <text x="34" y="3" fontSize="10" fill="#334155" fontWeight="600">cut</text>
+                <text x="60" y="3" fontSize="9.5" fill="#64748b"
+                      fontFamily="ui-monospace, JetBrains Mono, monospace">{sample}</text>
+              </g>
+            </g>
+          )}
           {lanes.map((lane, li) => {
             const yScale = h => {
               const norm = logY ? Math.log10(Math.max(1, h + 1)) / Math.log10(Math.max(2, lane.yMax + 1)) : h / lane.yMax;
@@ -3816,27 +3898,32 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   const lrp = (refPeaks[dye] || [])
                     .filter(p => p[0] >= range[0] - 5 && p[0] <= range[1] + 5);
                   if (!lrp.length) return null;
+                  // Reference (uncut) uses the DYE color with a dotted pattern
+                  // and the current sample (cut) uses the same dye color with
+                  // a solid line. That way the per-channel shift in peak
+                  // positions is visually direct — the dotted blue moves to
+                  // solid blue in the same lane. `strokeLinecap="round"` +
+                  // `strokeDasharray="1 3"` yields true dots in SVG.
+                  const refColor = colorFor(dye);
+                  const refFill  = colorFor(dye);
                   if (pairMode === "mirror") {
-                    // Render in the bottom half of the lane, reflected.
                     const halfGeom = { laneTop: lane.top + lane.h / 2, laneH: lane.h / 2, mLeft: m.l, plotW };
                     const path = buildGaussianPath(
                       lrp.map(p => [p[0], p[1], p[2], p[3]]),
                       range, lane.yMax, halfGeom, smoothing, false
                     );
-                    // Flip vertically around the lane midline by mirroring Y
-                    // coordinates in the string (cheap: reparse not needed —
-                    // we simply draw a second path with an inverted y transform
-                    // by passing a rebuilt peak set via negative heights? No —
-                    // easier: apply a CSS transform.
                     return (
                       <g key={`refmir-${li}-${dye}`}
                          transform={`matrix(1 0 0 -1 0 ${2 * (lane.top + lane.h / 2)})`}>
-                        <path d={path.fill}   fill="#6366f1" opacity="0.12" />
-                        <path d={path.stroke} fill="none" stroke="#4f46e5" strokeWidth="1.1" opacity="0.7" />
+                        <path d={path.fill}   fill={refFill} opacity="0.10" />
+                        <path d={path.stroke} fill="none" stroke={refColor} strokeWidth="1.2"
+                              opacity="0.95" strokeDasharray="1 3" strokeLinecap="round"
+                              vectorEffect="non-scaling-stroke" />
                       </g>
                     );
                   }
-                  // Overlay mode: ghost trace at full lane height, gray-indigo.
+                  // Overlay mode: uncut reference at full lane height,
+                  // dye-colored, dotted (vs solid cut sample below).
                   const laneGeom = { laneTop: lane.top, laneH: lane.h, mLeft: m.l, plotW };
                   const path = buildGaussianPath(
                     lrp.map(p => [p[0], p[1], p[2], p[3]]),
@@ -3844,9 +3931,9 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   );
                   return (
                     <g key={`refovl-${li}-${dye}`}>
-                      <path d={path.fill}   fill="#94a3b8" opacity="0.14" />
-                      <path d={path.stroke} fill="none" stroke="#475569" strokeWidth="1.1"
-                            opacity="0.72" strokeDasharray="4 2"
+                      <path d={path.fill}   fill={refFill} opacity="0.07" />
+                      <path d={path.stroke} fill="none" stroke={refColor} strokeWidth="1.3"
+                            opacity="0.95" strokeDasharray="1 3" strokeLinecap="round"
                             vectorEffect="non-scaling-stroke" />
                     </g>
                   );
