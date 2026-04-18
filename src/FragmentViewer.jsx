@@ -1,4 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import {
+  Activity, Crosshair, Scissors, Layers, GitCompare,
+  Upload, Database, Microscope, FileDown, RotateCcw,
+} from "lucide-react";
 
 // ----------------------------------------------------------------------
 // GeneMapper TSV parser (browser-side; mirrors scripts/build_artifact.py)
@@ -46,12 +50,13 @@ export function parseGenemapperTSV(text) {
 
 // ----------------------------------------------------------------------
 // Drag-drop zone for new GeneMapper TSV exports.
-// On a successful drop, calls onData with the parsed peaks object.
+// Listens for drag events anywhere in the window and lights up only while
+// a file is being dragged. On drop, parses the TSV and calls onData. The
+// toolbar Upload button uses the same handleFiles via a ref; see Toolbar.
 // ----------------------------------------------------------------------
-function DropZone({ onData, currentSampleCount }) {
-  const [hover, setHover] = useState(false);
+function DropOverlay({ onData }) {
+  const [active, setActive] = useState(false);
   const [error, setError] = useState(null);
-  const inputRef = useRef(null);
 
   const handleFiles = async (files) => {
     setError(null);
@@ -60,9 +65,8 @@ function DropZone({ onData, currentSampleCount }) {
     try {
       const text = await f.text();
       const parsed = parseGenemapperTSV(text);
-      const n = Object.keys(parsed.peaks).length;
-      if (n === 0) {
-        setError("No samples found in file. Check that it is a GeneMapper TSV export.");
+      if (Object.keys(parsed.peaks).length === 0) {
+        setError("No samples found. Is this a GeneMapper TSV export?");
         return;
       }
       onData(parsed.peaks);
@@ -71,34 +75,86 @@ function DropZone({ onData, currentSampleCount }) {
     }
   };
 
+  useEffect(() => {
+    let depth = 0;
+    const onEnter = (e) => { e.preventDefault(); depth++; if (e.dataTransfer?.types?.includes("Files")) setActive(true); };
+    const onLeave = (e) => { e.preventDefault(); depth--; if (depth <= 0) { setActive(false); depth = 0; } };
+    const onOver  = (e) => { e.preventDefault(); };
+    const onDrop  = (e) => { e.preventDefault(); depth = 0; setActive(false); handleFiles(e.dataTransfer?.files); };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
+
+  // Auto-clear errors after 4 s
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 4000);
+    return () => clearTimeout(t);
+  }, [error]);
+
   return (
-    <div
-      onDragOver={(e) => { e.preventDefault(); setHover(true); }}
-      onDragLeave={() => setHover(false)}
-      onDrop={(e) => { e.preventDefault(); setHover(false); handleFiles(e.dataTransfer.files); }}
-      className={`mb-2 px-3 py-2 rounded border-2 border-dashed text-xs transition ${hover ? "border-sky-500 bg-sky-50" : "border-slate-300 bg-white"} no-print`}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-slate-600">
-          <strong>Drag a GeneMapper TSV here</strong> to swap in a new dataset (currently {currentSampleCount} samples).
-        </span>
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="px-2 py-1 text-xs bg-slate-900 text-white rounded hover:bg-slate-700"
-        >
-          Choose file…
-        </button>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".txt,.tsv,.csv"
-          onChange={(e) => handleFiles(e.target.files)}
-          className="hidden"
-        />
-      </div>
-      {error && <div className="mt-1 text-rose-600">{error}</div>}
-    </div>
+    <>
+      {active && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none no-print">
+          <div className="absolute inset-0 bg-sky-500/15" />
+          <div className="relative px-6 py-4 rounded-lg border-2 border-dashed border-sky-500 bg-white shadow-2xl">
+            <div className="flex items-center gap-2 text-sky-700">
+              <Upload size={20} />
+              <span className="text-sm font-semibold">Drop GeneMapper TSV to load</span>
+            </div>
+            <div className="text-xs text-slate-500 mt-1">.txt, .tsv, or .csv exported from GeneMapper / PeakScanner</div>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div className="fixed bottom-10 right-4 z-50 px-3 py-2 rounded bg-rose-600 text-white text-xs shadow-lg no-print">
+          {error}
+        </div>
+      )}
+    </>
+  );
+}
+
+// Compact upload button used by the Toolbar. Mirrors DropOverlay's parser.
+function UploadButton({ onData }) {
+  const inputRef = useRef(null);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        title="Load a GeneMapper TSV export (drag-drop also works anywhere in the window)"
+        className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-700 rounded transition"
+      >
+        <Upload size={14} />
+        <span>Load TSV</span>
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".txt,.tsv,.csv"
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          if (!f) return;
+          try {
+            const parsed = parseGenemapperTSV(await f.text());
+            if (Object.keys(parsed.peaks).length > 0) onData(parsed.peaks);
+          } catch (err) {
+            console.error("[fragment-viewer] TSV parse failed:", err);
+          }
+          e.target.value = "";
+        }}
+        className="hidden"
+      />
+    </>
   );
 }
 
@@ -770,74 +826,172 @@ export default function FragmentViewer() {
 
   const results = useMemo(() => identifyPeaks(DATA.peaks, cfg), [cfg]);
 
+  // Total observed peaks across the loaded dataset; surfaced in the status bar.
+  const totalPeaks = useMemo(() => {
+    let n = 0;
+    for (const s of Object.keys(DATA.peaks)) {
+      const dyes = DATA.peaks[s] || {};
+      for (const d of Object.keys(dyes)) n += (dyes[d] || []).length;
+    }
+    return n;
+  }, [dataKey]);
+
+  // Whether any per-dye offset has been calibrated away from zero.
+  const calibrated = ["B", "G", "Y", "R"].some(k => Math.abs(dyeOffsets[k] || 0) > 1e-6);
+
   return (
-    <div key={dataKey} className="min-h-screen bg-slate-50 font-sans text-slate-900">
+    <div key={dataKey} className="h-screen flex flex-col bg-slate-100 text-slate-900 font-sans">
       <PrintStyles />
-      <div className="max-w-7xl mx-auto px-3 md:px-5 py-3">
-        <Header />
-        <DropZone onData={handleNewPeaks} currentSampleCount={samples.length} />
-        <TabBar tab={tab} setTab={setTab} />
-        {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
-        {tab === "peakid"  && <PeakIdTab  samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
-        {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
-        {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
-        {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} />}
+      <DropOverlay onData={handleNewPeaks} />
+      <Toolbar
+        sampleCount={samples.length}
+        onUpload={handleNewPeaks}
+        onResetCalibration={() => setDyeOffsets({ B: 0, G: 0, Y: 0, R: 0 })}
+      />
+      <div className="flex-1 flex overflow-hidden">
+        <Sidebar tab={tab} setTab={setTab} />
+        <main className="flex-1 overflow-auto bg-white border-l border-slate-200">
+          <div className="px-4 py-3 max-w-[1400px] mx-auto">
+            {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
+            {tab === "peakid"  && <PeakIdTab  samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
+            {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
+            {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
+            {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} />}
+          </div>
+        </main>
       </div>
+      <StatusBar
+        sampleCount={samples.length}
+        peakCount={totalPeaks}
+        calibrated={calibrated}
+        construct={`V059 (${constructSize} bp)`}
+      />
     </div>
   );
 }
 
-// Print stylesheet: hide UI controls (.no-print), expand any clipped panes for
-// the printed PDF, and switch backgrounds to white. Triggered by the
-// "Print to PDF" button in AutoClassifyTab via window.print().
+// Print stylesheet: hide UI chrome (.no-print), expand the main pane, and
+// switch backgrounds to white for PDF export. Triggered by Print to PDF
+// in AutoClassifyTab via window.print().
 function PrintStyles() {
   return (
     <style>{`
       @media print {
         .no-print { display: none !important; }
         body, html { background: white !important; }
-        .min-h-screen { min-height: auto !important; background: white !important; }
-        .max-w-7xl { max-width: 100% !important; }
-        button, input, select, textarea { display: none !important; }
+        .h-screen { height: auto !important; min-height: auto !important; background: white !important; }
+        main { overflow: visible !important; border: none !important; }
+        button, input[type="number"], input[type="file"], select, textarea { display: none !important; }
         .print-show { display: block !important; }
       }
     `}</style>
   );
 }
 
-function Header() {
+// Top toolbar. Holds the lab brand mark, the construct chip, and the
+// global actions. Compact (40 px) so the main pane keeps vertical room.
+function Toolbar({ sampleCount, onUpload, onResetCalibration }) {
   return (
-    <header className="mb-3">
-      <h1 className="text-xl md:text-2xl font-bold tracking-tight">Cas9 Fragment Analysis (CLC)</h1>
-      <p className="text-xs md:text-sm text-slate-600 mt-0.5">
-        Capillary electrophoresis peak table from GS500LIZ run. Reconstructed electropherograms with configurable expected peaks for cleavage ligation cycling (CLC) library prep overhang measurement.
-      </p>
+    <header className="h-10 flex items-center gap-3 px-3 bg-slate-900 text-slate-100 border-b border-slate-700 no-print">
+      <div className="flex items-center gap-2">
+        <Microscope size={16} className="text-sky-400" />
+        <span className="text-sm font-semibold tracking-tight">Fragment Viewer</span>
+        <span className="text-[10px] uppercase tracking-wider text-slate-400 ml-1">SMS / Athey Lab</span>
+      </div>
+      <div className="h-5 w-px bg-slate-700" />
+      <div className="flex items-center gap-1 text-xs text-slate-300">
+        <span className="text-slate-400">construct:</span>
+        <span className="font-mono">V059_gRNA3</span>
+        <span className="text-slate-500">·</span>
+        <span className="font-mono">{sampleCount} samples</span>
+      </div>
+      <div className="flex-1" />
+      <div className="flex items-center gap-1">
+        <UploadButton onData={onUpload} />
+        <button
+          type="button"
+          onClick={onResetCalibration}
+          title="Reset all per-dye mobility offsets to zero"
+          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-700 rounded transition"
+        >
+          <RotateCcw size={14} />
+          <span>Reset calib.</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          title="Open the browser print dialog (Save as PDF)"
+          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-700 rounded transition"
+        >
+          <FileDown size={14} />
+          <span>PDF</span>
+        </button>
+      </div>
     </header>
   );
 }
 
-function TabBar({ tab, setTab }) {
+// Left rail. Vertical icon-and-label list. Active item gets a sky accent bar
+// + white background so the eye snaps to it without color noise on others.
+function Sidebar({ tab, setTab }) {
   const tabs = [
-    { id: "trace",   label: "Electropherogram" },
-    { id: "peakid",  label: "Peak Identification" },
-    { id: "cutpred", label: "Cas9 Cut Prediction" },
-    { id: "autoclass", label: "Auto Classify" },
-    { id: "compare", label: "Cross-Sample Comparison" },
+    { id: "trace",     label: "Electropherogram",     icon: Activity,   hint: "Per-sample trace, smoothing, ladder overlay" },
+    { id: "peakid",    label: "Peak ID",              icon: Crosshair,  hint: "Match observed peaks to expected positions" },
+    { id: "cutpred",   label: "Cas9 Cut Prediction",  icon: Scissors,   hint: "Enumerate gRNAs and predict ssDNA products" },
+    { id: "autoclass", label: "Auto Classify",        icon: Layers,     hint: "Cluster + identify peaks across all dyes" },
+    { id: "compare",   label: "Cross-Sample",         icon: GitCompare, hint: "Overhang offsets and purity grid" },
   ];
   return (
-    <div className="mb-3 border-b border-slate-200 flex gap-1">
-      {tabs.map(t => (
-        <button
-          key={t.id}
-          onClick={() => setTab(t.id)}
-          className={`px-3 py-1.5 text-sm font-medium border-b-2 transition ${
-            tab === t.id ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800"
-          }`}
-        >
-          {t.label}
-        </button>
-      ))}
-    </div>
+    <nav className="w-44 shrink-0 bg-slate-100 border-r border-slate-200 py-2 no-print">
+      <ul className="flex flex-col">
+        {tabs.map(t => {
+          const Icon = t.icon;
+          const active = tab === t.id;
+          return (
+            <li key={t.id}>
+              <button
+                onClick={() => setTab(t.id)}
+                title={t.hint}
+                className={`w-full flex items-center gap-2 pl-3 pr-2 py-1.5 text-xs font-medium border-l-2 transition ${
+                  active
+                    ? "border-sky-500 bg-white text-slate-900"
+                    : "border-transparent text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                }`}
+              >
+                <Icon size={14} className={active ? "text-sky-600" : "text-slate-500"} />
+                <span className="truncate">{t.label}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-3 px-3 text-[10px] text-slate-400 leading-snug">
+        Drag a GeneMapper TSV anywhere in the window to swap datasets.
+      </div>
+    </nav>
+  );
+}
+
+// Bottom status bar. Always visible. Read it like a CLI status line.
+function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
+  return (
+    <footer className="h-6 flex items-center gap-3 px-3 bg-slate-800 text-slate-300 text-[11px] font-mono no-print">
+      <span className="flex items-center gap-1">
+        <Database size={11} className="text-slate-500" />
+        <span className="text-slate-400">samples</span>
+        <span>{sampleCount}</span>
+      </span>
+      <span className="text-slate-600">·</span>
+      <span><span className="text-slate-400">peaks </span>{peakCount.toLocaleString()}</span>
+      <span className="text-slate-600">·</span>
+      <span><span className="text-slate-400">construct </span>{construct}</span>
+      <span className="text-slate-600">·</span>
+      <span className={calibrated ? "text-emerald-400" : "text-amber-400"}>
+        {calibrated ? "calibrated" : "uncalibrated"}
+      </span>
+      <div className="flex-1" />
+      <span className="text-slate-500">v0.6.0</span>
+    </footer>
   );
 }
 
