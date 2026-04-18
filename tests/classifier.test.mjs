@@ -19,6 +19,8 @@ import {
   matchLabCatalog,
   normalizeSpacer,
   componentSizesFrom,
+  inventoryStatus,
+  expectedSpeciesForDye,
 } from "../src/FragmentViewer.jsx";
 
 describe("BIOLOGY constants", () => {
@@ -160,6 +162,85 @@ describe("matchLabCatalog", () => {
     // function is bound to module-level state, we verify its branch by
     // exercising the fallback behavior with a different candidate length.
     expect(seeded.find(e => e.spacer.length === 20)).toBeTruthy();
+  });
+});
+
+describe("inventoryStatus", () => {
+  it("returns 'none' for an unrecognized candidate", () => {
+    const cand = { protospacer: "AAAAAAAAAAAAAAAAAAAA", name: "cand-99 top-AGG" };
+    const inv = inventoryStatus(cand);
+    expect(inv.status).toBe("none");
+  });
+
+  it("matches by spacer when a catalog entry is populated", () => {
+    const seedCatalog = [
+      { name: "TEST_seed", spacer: "ACGTACGTACGTACGTACGT", source: "test", target: "test", notes: "" },
+    ];
+    const cand = { protospacer: "ACGTACGTACGTACGTACGT", name: "anything" };
+    const inv = inventoryStatus(cand, seedCatalog);
+    expect(inv.status).toBe("exact");
+    expect(inv.entry.name).toBe("TEST_seed");
+  });
+
+  it("matches by reverse-complement spacer", () => {
+    const seedCatalog = [
+      { name: "RC_seed", spacer: "ACGTACGTACGTACGTACGT", source: "test", target: "test", notes: "" },
+    ];
+    // Reverse complement of ACGTACGTACGTACGTACGT = ACGTACGTACGTACGTACGT (palindrome here);
+    // pick a non-palindrome to make it meaningful.
+    const seed2 = [{ name: "seed", spacer: "AAAAGCGCGCGCGCGCAAAA", source: "test", target: "test", notes: "" }];
+    const rc = "TTTTGCGCGCGCGCGCTTTT";
+    const inv = inventoryStatus({ protospacer: rc, name: "x" }, seed2);
+    expect(inv.status).toBe("exact");
+  });
+
+  it("falls back to name match when no spacer is populated", () => {
+    const seedCatalog = [
+      { name: "V059_gRNA3", spacer: "", source: "test", target: "test", notes: "" },
+    ];
+    const cand = { protospacer: "AAAAAAAAAAAAAAAAAAAA", name: "V059_gRNA3 candidate from sequence" };
+    const inv = inventoryStatus(cand, seedCatalog);
+    expect(inv.status).toBe("name");
+    expect(inv.entry.name).toBe("V059_gRNA3");
+  });
+});
+
+describe("expectedSpeciesForDye", () => {
+  const sizes = componentSizesFrom(CONSTRUCT);
+
+  it("returns the documented assembly species per dye filter", () => {
+    const ySpecies = expectedSpeciesForDye("Y", sizes);
+    const sizesY = ySpecies.filter(s => s.kind === "assembly").map(s => s.size).sort((a,b)=>a-b);
+    // Y is on Adapter 1; full ligation 226, missing Ad2 201, Ad1+Br1+Target 172,
+    // adapter dimer 58 should all appear; missing Ad1 should NOT.
+    expect(sizesY).toContain(226);
+    expect(sizesY).toContain(201);  // missing Ad2 carries B+Y
+    expect(sizesY).toContain(172);  // ad1+br1+target
+    expect(sizesY).toContain(58);   // adapter dimer
+    // Missing Ad1 (G+R only) must NOT appear on Y
+    const yLabels = ySpecies.filter(s => s.kind === "assembly").map(s => s.label);
+    expect(yLabels).not.toContain("Missing Adapter 1 (everything except Ad1)");
+  });
+
+  it("includes Ad1 top oligo monomer at 25 nt for Y", () => {
+    const species = expectedSpeciesForDye("Y", sizes);
+    const monomers = species.filter(s => s.kind === "monomer");
+    expect(monomers.length).toBe(1);
+    expect(monomers[0].size).toBe(25);
+  });
+
+  it("includes Ad2 top oligo monomer at 29 nt for R (29 nt ROX oligo)", () => {
+    const species = expectedSpeciesForDye("R", sizes);
+    const monomers = species.filter(s => s.kind === "monomer");
+    expect(monomers[0].size).toBe(29);
+  });
+
+  it("emits cut-product entries when gRNAs and overhangs are passed", () => {
+    const grnas = findGrnas(CONSTRUCT.seq, CONSTRUCT.targetRange.start, CONSTRUCT.targetRange.end);
+    const species = expectedSpeciesForDye("B", sizes, CONSTRUCT.total, [grnas[0]], [0, 4]);
+    const cuts = species.filter(s => s.kind === "cut");
+    // 2 chemistries x 1 gRNA -> 2 cut entries on this dye
+    expect(cuts.length).toBe(2);
   });
 });
 

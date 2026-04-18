@@ -748,6 +748,102 @@ function productSize(product, componentSizes) {
 }
 
 // ----------------------------------------------------------------------
+// Lab inventory cross-check.
+// Given a candidate gRNA (with protospacer) or a name string, decide whether
+// it matches an entry in LAB_GRNA_CATALOG. Three signals, in order:
+//   1. exact spacer match (forward or reverse-complement) when the catalog
+//      entry has a 20-nt spacer
+//   2. name-prefix match (catalog name appears in candidate name or vice versa)
+//   3. otherwise: not in inventory
+// Returns { status, entry?, signal }.
+//   status: "exact" | "name" | "none"
+// ----------------------------------------------------------------------
+export function inventoryStatus(candidate, catalog = LAB_GRNA_CATALOG) {
+  const protoNorm = candidate?.protospacer ? normalizeSpacer(candidate.protospacer) : "";
+  const protoRC = protoNorm.length === 20
+    ? protoNorm.split("").reverse().map(c => ({ A: "T", T: "A", G: "C", C: "G" })[c] || c).join("")
+    : "";
+  const cname = (candidate?.name || "").toLowerCase();
+  for (const entry of catalog) {
+    const ref = normalizeSpacer(entry.spacer);
+    if (ref.length === 20 && (ref === protoNorm || ref === protoRC)) {
+      return { status: "exact", entry, signal: "spacer" };
+    }
+  }
+  if (cname) {
+    for (const entry of catalog) {
+      const ename = (entry.name || "").toLowerCase();
+      if (ename && (cname.includes(ename) || ename.includes(cname))) {
+        return { status: "name", entry, signal: "name" };
+      }
+    }
+  }
+  return { status: "none" };
+}
+
+// Visual chip showing whether a gRNA is in the lab inventory.
+export function LabInventoryBadge({ candidate, compact = false }) {
+  const inv = inventoryStatus(candidate);
+  if (inv.status === "exact") {
+    return <Pill tone="emerald">{compact ? "LAB" : `LAB · ${inv.entry.name}`}</Pill>;
+  }
+  if (inv.status === "name") {
+    return <Pill tone="sky">{compact ? "name?" : `name match · ${inv.entry.name}`}</Pill>;
+  }
+  return <Pill tone="neutral">{compact ? "—" : "not in lab inventory"}</Pill>;
+}
+
+// Summary panel: counts, populated-vs-pending breakdown, per-entry status table.
+export function LabInventoryPanel({ candidates = [] }) {
+  const total = LAB_GRNA_CATALOG.length;
+  const populated = LAB_GRNA_CATALOG.filter(e => normalizeSpacer(e.spacer).length === 20).length;
+  const pending = total - populated;
+  const matchedExact = candidates.filter(c => inventoryStatus(c).status === "exact").length;
+  const matchedName = candidates.filter(c => inventoryStatus(c).status === "name").length;
+  return (
+    <Panel
+      title="Lab gRNA inventory"
+      subtitle={`${total} catalog entries · ${populated} with 20-nt spacer · ${pending} pending upstream data (see .project/UNBLOCK_PROMPTS.md)`}
+      className="mb-3"
+    >
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+        <Stat label="Catalog entries" value={total} />
+        <Stat label="Spacers populated" value={populated} tone={populated > 0 ? "emerald" : "amber"} hint={pending ? `${pending} pending` : null} />
+        <Stat label="Candidates matched (spacer)" value={matchedExact} tone={matchedExact > 0 ? "emerald" : "default"} />
+        <Stat label="Candidates matched (name)" value={matchedName} tone="sky" />
+      </div>
+      <div className="overflow-auto">
+        <table className="w-full text-xs num">
+          <thead>
+            <tr className="text-zinc-500 border-b border-zinc-200">
+              <th className="text-left px-2 py-1 font-medium">name</th>
+              <th className="text-left px-2 py-1 font-medium">target / region</th>
+              <th className="text-left px-2 py-1 font-medium">spacer</th>
+              <th className="text-left px-2 py-1 font-medium">status</th>
+              <th className="text-left px-2 py-1 font-medium">source</th>
+            </tr>
+          </thead>
+          <tbody>
+            {LAB_GRNA_CATALOG.map(entry => {
+              const ok = normalizeSpacer(entry.spacer).length === 20;
+              return (
+                <tr key={entry.name} className="border-b border-zinc-100">
+                  <td className="px-2 py-1 font-mono text-zinc-800">{entry.name}</td>
+                  <td className="px-2 py-1 text-zinc-600">{entry.target}</td>
+                  <td className="px-2 py-1 font-mono text-[10px] text-zinc-500">{entry.spacer || <span className="italic text-amber-700">pending</span>}</td>
+                  <td className="px-2 py-1">{ok ? <Pill tone="emerald">populated</Pill> : <Pill tone="amber">pending</Pill>}</td>
+                  <td className="px-2 py-1 text-zinc-500 text-[11px]">{entry.source}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
+
+// ----------------------------------------------------------------------
 // Expected species enumerator (used by the electropherogram overlay).
 // Returns every species the dye CAN show, sorted by ascending bp:
 //   * Assembly / partial-ligation products (full, missing Ad1/Ad2,
@@ -1019,7 +1115,7 @@ export default function FragmentViewer() {
             {tab === "peakid"  && <PeakIdTab  samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
             {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
             {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
-            {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} />}
+            {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} />}
           </div>
         </main>
       </div>
@@ -2623,12 +2719,37 @@ function CrossDyeSummary({ classification, constructSize }) {
   );
 }
 
-function CompareTab({ samples, cfg, results }) {
+function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targetStart, targetEnd }) {
   const [picked, setPicked] = useState(() => samples.slice(0, 4));
   const [dye,    setDye]    = useState("R");
   const [range,  setRange]  = useState([180, 240]);
   const [normalize, setNormalize] = useState(true);
   const [smoothing, setSmoothing] = useState(1);
+  const [showSpecies, setShowSpecies] = useState(false);
+  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(-1);
+  const [speciesOverhangs, setSpeciesOverhangs] = useState([0, 4]);
+
+  const candidateGrnas = useMemo(() => {
+    if (!constructSeq) return [];
+    return findGrnas(constructSeq, targetStart, targetEnd).map(g => ({
+      ...g, name: `cand-${g.id} ${g.strand}-${g.pam_seq}`,
+    }));
+  }, [constructSeq, targetStart, targetEnd]);
+  const constructSize = (constructSeq || "").length || 226;
+
+  // Resolve the picked gRNA (lab-catalog entry or candidate from target window).
+  const pickedGrna = useMemo(() => {
+    if (speciesGrnaIdx < 0) return null;
+    if (speciesGrnaIdx < 1000) {
+      const e = LAB_GRNA_CATALOG[speciesGrnaIdx];
+      if (!e || normalizeSpacer(e.spacer).length !== 20) return null;
+      const norm = normalizeSpacer(e.spacer);
+      const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
+      const cand = candidateGrnas.find(g => g.protospacer === norm || g.protospacer === rc);
+      return cand ? { ...cand, name: e.name } : null;
+    }
+    return candidateGrnas[speciesGrnaIdx - 1000] || null;
+  }, [speciesGrnaIdx, candidateGrnas]);
 
   const togglePick = ss => {
     setPicked(p => p.includes(ss) ? p.filter(x => x !== ss) : [...p, ss].slice(0, 8));
@@ -2698,6 +2819,10 @@ function CompareTab({ samples, cfg, results }) {
                    onChange={e => setSmoothing(parseFloat(e.target.value))} className="accent-zinc-700 w-24" />
             <span className="tabular-nums text-zinc-600 w-8">{smoothing.toFixed(1)}x</span>
           </label>
+          <label className="flex items-center gap-1 cursor-pointer" title="Overlay every species the dye CAN show on the multi-sample plot">
+            <input type="checkbox" checked={showSpecies} onChange={e => setShowSpecies(e.target.checked)} className="w-3.5 h-3.5 accent-sky-600" />
+            Expected species
+          </label>
           <div className="ml-auto flex gap-1">
             {[{ l: "Full", r: [0, 500] }, { l: "Cut 200", r: [180, 230] }, { l: "Cut 88", r: [75, 110] }].map(p => (
               <button key={p.l} onClick={() => setRange(p.r)} className="px-2 py-1 rounded border border-zinc-300 bg-white hover:bg-zinc-100">
@@ -2706,6 +2831,61 @@ function CompareTab({ samples, cfg, results }) {
             ))}
           </div>
         </div>
+        {/* Species overlay sub-controls (only when toggle is on) */}
+        {showSpecies && (
+          <div className="mt-2 pt-2 border-t border-zinc-100 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+            <span className="font-semibold uppercase tracking-wide text-sky-700">Species</span>
+            <Pill tone="neutral">assembly</Pill>
+            <Pill tone="amber">monomer</Pill>
+            {pickedGrna && <Pill tone="sky">cut</Pill>}
+            <div className="h-4 w-px bg-zinc-200 mx-1" />
+            <label className="flex items-center gap-1.5">
+              <span className="text-zinc-600">gRNA:</span>
+              <select
+                value={speciesGrnaIdx}
+                onChange={e => setSpeciesGrnaIdx(parseInt(e.target.value, 10))}
+                className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white max-w-[28ch] focus-ring"
+              >
+                <option value={-1}>None (no cut overlay)</option>
+                {LAB_GRNA_CATALOG
+                  .map((g, i) => ({ g, i }))
+                  .filter(({ g }) => normalizeSpacer(g.spacer).length === 20)
+                  .map(({ g, i }) => (
+                    <option key={`lab-${i}`} value={i}>{g.name} (lab catalog)</option>
+                  ))}
+                {candidateGrnas.length > 0 && (
+                  <optgroup label={`Candidates in target window (${candidateGrnas.length})`}>
+                    {candidateGrnas.map((g, i) => (
+                      <option key={`cand-${g.id}`} value={1000 + i}>
+                        {g.name} cut@{g.cut_construct}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+            {pickedGrna && (
+              <>
+                <LabInventoryBadge candidate={pickedGrna} compact />
+                <div className="flex items-center gap-1">
+                  <span className="text-zinc-600">overhang:</span>
+                  {[-4, -1, 0, 1, 4].map(oh => {
+                    const on = speciesOverhangs.includes(oh);
+                    return (
+                      <button
+                        key={oh}
+                        onClick={() => setSpeciesOverhangs(s => on ? s.filter(x => x !== oh) : [...s, oh].sort((a,b)=>a-b))}
+                        className={`px-1.5 py-0.5 rounded border text-[11px] font-mono ${on ? "bg-sky-600 text-white border-sky-700" : "bg-white text-zinc-600 border-zinc-300 hover:border-zinc-400"}`}
+                      >
+                        {oh === 0 ? "blunt" : (oh > 0 ? `+${oh}` : `${oh}`)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Sample picker */}
@@ -2788,6 +2968,50 @@ function CompareTab({ samples, cfg, results }) {
             const color = PALETTE[i % PALETTE.length];
             return <line key={`exp-${ss}`} x1={xScale(exp)} x2={xScale(exp)} y1={m.t} y2={m.t + plotH} stroke={color} strokeWidth="1" strokeDasharray="3 3" opacity="0.4" />;
           })}
+
+          {/* Expected SPECIES overlay across all samples (one set of lines tied to the selected dye) */}
+          {showSpecies && (() => {
+            const species = expectedSpeciesForDye(
+              dye, componentSizes || {}, constructSize,
+              pickedGrna ? [pickedGrna] : [],
+              pickedGrna ? speciesOverhangs : []
+            ).filter(sp => sp.size >= range[0] && sp.size <= range[1]);
+            if (!species.length) return null;
+            const palette = { assembly: "#52525b", monomer: "#d97706", cut: "#0284c7" };
+            // Stack labels across rows to avoid collision (more rows than the
+            // electropherogram because the CompareTab plot is taller).
+            const minLabelDx = (range[1] - range[0]) / Math.max(1, plotW / 110);
+            const rows = [];
+            const nRows = 6;
+            const place = size => {
+              for (let r = 0; r < nRows; r++) {
+                if (rows[r] === undefined || size - rows[r] >= minLabelDx) { rows[r] = size; return r; }
+              }
+              rows[nRows - 1] = size;
+              return nRows - 1;
+            };
+            const inv = pickedGrna ? inventoryStatus(pickedGrna) : null;
+            const labMark = inv && inv.status === "exact" ? "✓ " : (inv && inv.status === "name" ? "~ " : "");
+            return (
+              <g pointerEvents="none">
+                {species.map((sp, idx) => {
+                  const x = xScale(sp.size);
+                  const row = place(sp.size);
+                  const stroke = palette[sp.kind] || "#71717a";
+                  const labelY = m.t + 14 + row * 12;
+                  const isCut = sp.kind === "cut";
+                  return (
+                    <g key={`spec-${idx}`}>
+                      <line x1={x} x2={x} y1={m.t} y2={m.t + plotH} stroke={stroke} strokeWidth="0.7" strokeDasharray="1.5 2.5" opacity="0.55" />
+                      <text x={x + 3} y={labelY} fontSize="9" fill={stroke} fontWeight="600" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 3 }}>
+                        {isCut ? labMark : ""}{sp.label} · {sp.size}
+                      </text>
+                    </g>
+                  );
+                })}
+              </g>
+            );
+          })()}
 
           {/* Drag rectangle */}
           {drag && Math.abs(drag.e - drag.s) > 0.1 && (
@@ -3175,6 +3399,7 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
 
   return (
     <>
+      <LabInventoryPanel candidates={grnas} />
       <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-2">
         <div className="flex items-center justify-between mb-1.5">
           <div className="text-sm font-medium">Target sequence &middot; construct pos {CONSTRUCT.targetRange.start} to {CONSTRUCT.targetRange.end} ({CONSTRUCT.targetRange.end - CONSTRUCT.targetRange.start + 1} bp)</div>
@@ -3271,13 +3496,7 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
                     <td className="px-1 py-0.5 text-right" style={{color:DYE.G.color}}>{p.G.length}</td>
                     <td className="px-1 py-0.5 text-right" style={{color:DYE.R.color}}>{p.R.length}</td>
                     <td className="px-1 py-0.5">
-                      {catalogMatches[g.id] ? (
-                        <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded text-[10px] font-semibold" title={catalogMatches[g.id].notes}>
-                          {catalogMatches[g.id].name}
-                        </span>
-                      ) : (
-                        <span className="text-zinc-300 text-[10px]">—</span>
-                      )}
+                      <LabInventoryBadge candidate={g} compact />
                     </td>
                     <td className="px-1 py-0.5">
                       <button onClick={() => setSelectedId(g.id)}
