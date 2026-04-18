@@ -857,11 +857,11 @@ export function LabInventoryPanel({ candidates = [] }) {
 // AMBIGUITY in which parent reactant a given peak could come from.
 // ----------------------------------------------------------------------
 export const TARGET_REACTANTS = [
-  { id: "full",            name: "Full ligation",                size: 226, construct_start: 1,  construct_end: 226, left_dyes: ["B","Y"], right_dyes: ["G","R"] },
-  { id: "no_ad2",          name: "Missing Ad2 (Ad1+OH1+Br1+Tgt+Br2+OH2)", size: 201, construct_start: 1,  construct_end: 201, left_dyes: ["B","Y"], right_dyes: [] },
-  { id: "no_ad1",          name: "Missing Ad1 (OH1+Br1+Tgt+Br2+OH2+Ad2)", size: 201, construct_start: 26, construct_end: 226, left_dyes: [],         right_dyes: ["G","R"] },
-  { id: "ad1_br1_target",  name: "Ad1+OH1+Br1+Target only",      size: 172, construct_start: 1,  construct_end: 172, left_dyes: ["B","Y"], right_dyes: [] },
-  { id: "target_ad2",      name: "Target+Br2+OH2+Ad2 only",      size: 172, construct_start: 55, construct_end: 226, left_dyes: [],         right_dyes: ["G","R"] },
+  { id: "full",            name: "Full ligation",                          parts: ["ad1","oh1","br1","target","br2","oh2","ad2"], size: 226, construct_start: 1,  construct_end: 226, left_dyes: ["B","Y"], right_dyes: ["G","R"] },
+  { id: "no_ad2",          name: "Missing Ad2 (Ad1+OH1+Br1+Tgt+Br2+OH2)",  parts: ["ad1","oh1","br1","target","br2","oh2"],        size: 201, construct_start: 1,  construct_end: 201, left_dyes: ["B","Y"], right_dyes: [] },
+  { id: "no_ad1",          name: "Missing Ad1 (OH1+Br1+Tgt+Br2+OH2+Ad2)",  parts: ["oh1","br1","target","br2","oh2","ad2"],        size: 201, construct_start: 26, construct_end: 226, left_dyes: [],         right_dyes: ["G","R"] },
+  { id: "ad1_br1_target",  name: "Ad1+OH1+Br1+Target only",                parts: ["ad1","oh1","br1","target"],                    size: 172, construct_start: 1,  construct_end: 172, left_dyes: ["B","Y"], right_dyes: [] },
+  { id: "target_ad2",      name: "Target+Br2+OH2+Ad2 only",                parts: ["target","br2","oh2","ad2"],                    size: 172, construct_start: 55, construct_end: 226, left_dyes: [],         right_dyes: ["G","R"] },
 ];
 
 // Predict the labeled ssDNA cut products produced when Cas9 cuts the given
