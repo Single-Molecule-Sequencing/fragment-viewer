@@ -1613,6 +1613,60 @@ export function exportSvgAsWebp(svgEl, filename, scale = 4, quality = 0.92, opts
   }, opts);
 }
 
+// Stack two SVG elements into a single combined SVG for bundled export.
+// Computes the union viewBox (stacked vertically with a small gap), copies
+// the inner nodes of each source SVG into the combined one, offsets the
+// second by the height of the first. Returns a detached <svg> element that
+// can be passed to exportSvgNative / exportSvgAsPng / exportSvgAsWebp.
+export function buildCombinedSvg(svgList, { gap = 24, title = "DNA diagrams" } = {}) {
+  const ns = "http://www.w3.org/2000/svg";
+  const combined = document.createElementNS(ns, "svg");
+  combined.setAttribute("xmlns", ns);
+  combined.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  // Compute viewBox: max width across sources, sum of heights + gaps.
+  let maxW = 0;
+  let totalH = 0;
+  const entries = [];
+  for (const s of svgList) {
+    if (!s) continue;
+    const vb = s.viewBox && s.viewBox.baseVal;
+    const w = (vb && vb.width)  || s.clientWidth  || 800;
+    const h = (vb && vb.height) || s.clientHeight || 400;
+    if (w > maxW) maxW = w;
+    entries.push({ src: s, w, h, yOffset: totalH });
+    totalH += h + gap;
+  }
+  totalH = Math.max(0, totalH - gap);  // trim the final gap
+  combined.setAttribute("viewBox", `0 0 ${maxW} ${totalH}`);
+  combined.setAttribute("width", String(maxW));
+  combined.setAttribute("height", String(totalH));
+  // White bg rect
+  const bg = document.createElementNS(ns, "rect");
+  bg.setAttribute("x", "0"); bg.setAttribute("y", "0");
+  bg.setAttribute("width", String(maxW)); bg.setAttribute("height", String(totalH));
+  bg.setAttribute("fill", "white");
+  combined.appendChild(bg);
+  // Optional title text — helpful when the file opens standalone
+  if (title) {
+    const t = document.createElementNS(ns, "title");
+    t.textContent = title;
+    combined.appendChild(t);
+  }
+  for (const { src, w, h, yOffset } of entries) {
+    // Wrap source svg contents in a <g translate(centerX, yOffset)> so
+    // narrower diagrams center horizontally within the combined frame.
+    const g = document.createElementNS(ns, "g");
+    const xOffset = (maxW - w) / 2;
+    g.setAttribute("transform", `translate(${xOffset}, ${yOffset})`);
+    // Deep-clone every child of the source SVG.
+    for (const child of Array.from(src.childNodes)) {
+      g.appendChild(child.cloneNode(true));
+    }
+    combined.appendChild(g);
+  }
+  return combined;
+}
+
 // Export menu: a single FileDown button that opens a small popover listing
 // every available format. One component replaces all the scattered "export
 // PNG" buttons so adding a new format is a one-line change here.
@@ -2618,6 +2672,7 @@ export default function FragmentViewer() {
 
   const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [dnaOpen, setDnaOpen] = useState(false);
   // Brief toast surfaced by Toolbar actions (link copied, CSV downloaded).
   const [toast, setToast] = useState(null);
   useEffect(() => {
@@ -2704,11 +2759,20 @@ export default function FragmentViewer() {
         onUpload={handleNewPeaks}
         onResetCalibration={() => setDyeOffsets({ B: 0, G: 0, Y: 0, R: 0 })}
         onOpenReport={() => setReportOpen(true)}
+        onOpenDnaDiagrams={() => setDnaOpen(true)}
         palette={palette}
         setPalette={setPalette}
         onDownloadCsv={handleDownloadCsv}
         onCopyLink={handleCopyLink}
         onOpenHelp={() => setHelpOpen(true)}
+      />
+      <DNADiagramsModal
+        open={dnaOpen}
+        onClose={() => setDnaOpen(false)}
+        componentSizes={componentSizes}
+        constructSeq={constructSeq}
+        targetStart={targetStart}
+        targetEnd={targetEnd}
       />
       {toast && (
         <div className={`fixed bottom-10 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg text-xs shadow-xl no-print ${toast.kind === "ok" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}>
@@ -2923,6 +2987,186 @@ function KeyboardHelpModal({ open, onClose }) {
   );
 }
 
+// DNA-diagrams modal: renders both the ConstructDiagram (annotated architecture
+// ± cut site) and the ProductFragmentViz (ssDNA cut products) in a single
+// preview pane, plus a bundle-export row that downloads both diagrams at
+// once (combined SVG, combined PNG, or individual files per format).
+function DNADiagramsModal({
+  open, onClose,
+  componentSizes, constructSeq, targetStart, targetEnd,
+}) {
+  const constructRef = useRef(null);
+  const productsRef  = useRef(null);
+  const [grnaIdx, setGrnaIdx] = useState(0);
+  const [overhang, setOverhang] = useState(0);
+  const [includeCut, setIncludeCut] = useState(true);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  // Resolve the picked gRNA from the lab catalog, matching against the
+  // user's construct window. Same logic as HeatmapTab's pickedCutGrna.
+  const pickedGrna = useMemo(() => {
+    if (!includeCut) return null;
+    const entry = LAB_GRNA_CATALOG[grnaIdx];
+    if (!entry) return null;
+    const norm = normalizeSpacer(entry.spacer);
+    if (norm.length !== 20) return null;
+    const rc = reverseComplement(norm);
+    const candidates = findGrnas(constructSeq, targetStart, targetEnd);
+    const cand = candidates.find(g => g.protospacer === norm || g.protospacer === rc);
+    return cand ? { ...cand, name: entry.name } : null;
+  }, [includeCut, grnaIdx, constructSeq, targetStart, targetEnd]);
+
+  const constructSize = (constructSeq || "").length || 226;
+  const predictedProducts = useMemo(() => {
+    if (!pickedGrna) return null;
+    return predictCutProducts(pickedGrna, constructSize, overhang);
+  }, [pickedGrna, constructSize, overhang]);
+
+  const bundle = (kind, scale = 4) => {
+    const svgs = [];
+    if (constructRef.current) svgs.push(constructRef.current);
+    if (productsRef.current)  svgs.push(productsRef.current);
+    if (svgs.length === 0) return;
+    const combined = buildCombinedSvg(svgs, { gap: 32, title: "Fragment Viewer DNA diagrams" });
+    // The combined SVG isn't in the document — exportSvgNative / rasterize
+    // both work on detached elements because they serialize via
+    // XMLSerializer rather than reading live computed styles.
+    const base = pickedGrna
+      ? `dna_diagrams_${pickedGrna.name}_oh${overhang}`
+      : "dna_diagrams_uncut";
+    switch (kind) {
+      case "svg":  exportSvgNative(combined, `${base}.svg`); break;
+      case "png":  exportSvgAsPng(combined, `${base}@${scale}x.png`, scale); break;
+      case "png_alpha":
+        exportSvgAsPng(combined, `${base}@${scale}x_alpha.png`, scale, { transparent: true });
+        break;
+      case "jpg":  exportSvgAsJpg(combined, `${base}@${scale}x_q92.jpg`, scale, 0.92); break;
+      case "webp": exportSvgAsWebp(combined, `${base}@${scale}x_q92.webp`, scale, 0.92); break;
+      default: break;
+    }
+  };
+  const individualBoth = (fmt) => {
+    const suffix = pickedGrna ? `_${pickedGrna.name}_oh${overhang}` : "_uncut";
+    const doOne = (ref, name) => {
+      if (!ref.current) return;
+      if (fmt === "svg")  exportSvgNative(ref.current, `${name}${suffix}.svg`);
+      if (fmt === "png")  exportSvgAsPng(ref.current, `${name}${suffix}@4x.png`, 4);
+      if (fmt === "webp") exportSvgAsWebp(ref.current, `${name}${suffix}@4x_q92.webp`, 4, 0.92);
+    };
+    doOne(constructRef, "construct_diagram");
+    doOne(productsRef,  "ssdna_products");
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-6 pb-6 px-4 overflow-auto no-print">
+      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-full max-w-6xl bg-white rounded-xl border border-zinc-200 shadow-2xl">
+        <header className="flex items-start justify-between gap-3 px-5 py-4 border-b border-zinc-200">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">DNA diagrams</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Full-construct architecture (with / without cut) plus Cas9 ssDNA cut-product products. Professional SVG layout with no overlapping text; scales to any resolution.
+            </p>
+          </div>
+          <ToolButton variant="ghost" onClick={onClose}>Close</ToolButton>
+        </header>
+
+        {/* Diagram configuration */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 border-b border-zinc-100 bg-zinc-50 text-xs">
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" checked={includeCut} onChange={e => setIncludeCut(e.target.checked)}
+                   className="w-3.5 h-3.5 accent-zinc-700" />
+            <span className="font-medium text-zinc-700">Include Cas9 cut site</span>
+          </label>
+          {includeCut && (
+            <>
+              <label className="flex items-center gap-1.5">
+                <span className="text-zinc-600">gRNA:</span>
+                <select value={grnaIdx} onChange={e => setGrnaIdx(parseInt(e.target.value, 10))}
+                        className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white max-w-[24ch] focus-ring">
+                  {LAB_GRNA_CATALOG
+                    .map((g, i) => ({ g, i }))
+                    .filter(({ g }) => normalizeSpacer(g.spacer).length === 20)
+                    .map(({ g, i }) => <option key={`dd-${i}`} value={i}>{g.name}</option>)}
+                </select>
+                {!pickedGrna && <span className="text-amber-700 text-[11px]">gRNA not in construct target window</span>}
+              </label>
+              <label className="flex items-center gap-1.5">
+                <span className="text-zinc-600">Overhang:</span>
+                {[-4, -1, 0, 1, 4].map(oh => {
+                  const on = overhang === oh;
+                  return (
+                    <button key={oh} onClick={() => setOverhang(oh)}
+                      className={`px-1.5 py-0.5 rounded border text-[11px] font-mono ${on ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-600 border-zinc-300 hover:border-zinc-400"}`}>
+                      {oh === 0 ? "blunt" : (oh > 0 ? `+${oh}` : `${oh}`)}
+                    </button>
+                  );
+                })}
+              </label>
+            </>
+          )}
+        </div>
+
+        {/* Preview pane — diagrams rendered at their native SVG viewBox, scaled responsively */}
+        <div className="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-zinc-800">Construct architecture</h3>
+              <ExportMenu svgRef={constructRef} basename="construct_diagram" label="Export" />
+            </div>
+            <div className="border border-zinc-200 rounded-lg bg-white p-2">
+              <ConstructDiagram
+                componentSizes={componentSizes}
+                highlightKey={null}
+                onHighlight={null}
+                onSizeChange={null}
+                cutConstructPos={pickedGrna && includeCut ? pickedGrna.cut_construct : null}
+                overhang={pickedGrna && includeCut ? Math.abs(overhang) : null}
+                grnaStrand={pickedGrna ? pickedGrna.strand : null}
+              />
+            </div>
+          </section>
+          {pickedGrna && includeCut && predictedProducts && (
+            <section>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-zinc-800">ssDNA cut products</h3>
+                <ExportMenu svgRef={productsRef} basename="ssdna_products" label="Export" />
+              </div>
+              <div className="border border-zinc-200 rounded-lg bg-white p-2">
+                <ProductFragmentViz products={predictedProducts} constructSize={constructSize} />
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* Bundle-export footer — single-click download of both diagrams combined */}
+        <footer className="px-5 py-3 border-t border-zinc-200 bg-zinc-50 text-xs flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-zinc-700 mr-1">Bundle (both diagrams):</span>
+          <ToolButton variant="primary" onClick={() => bundle("svg")}>Combined SVG</ToolButton>
+          <ToolButton variant="primary" onClick={() => bundle("png", 4)}>Combined PNG @ 4×</ToolButton>
+          <ToolButton variant="secondary" onClick={() => bundle("png", 6)}>PNG @ 6×</ToolButton>
+          <ToolButton variant="secondary" onClick={() => bundle("png_alpha", 4)}>PNG transparent</ToolButton>
+          <ToolButton variant="secondary" onClick={() => bundle("webp", 4)}>WebP</ToolButton>
+          <ToolButton variant="secondary" onClick={() => bundle("jpg", 4)}>JPG</ToolButton>
+          <span className="w-px h-4 bg-zinc-300 mx-1" />
+          <span className="font-semibold text-zinc-700 mr-1">Separate files:</span>
+          <ToolButton variant="secondary" onClick={() => individualBoth("svg")}>SVG ×2</ToolButton>
+          <ToolButton variant="secondary" onClick={() => individualBoth("png")}>PNG ×2</ToolButton>
+          <ToolButton variant="secondary" onClick={() => individualBoth("webp")}>WebP ×2</ToolButton>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd }) {
   if (!open) return null;
   const generatedAt = useMemo(() => new Date(), [open]);
@@ -3044,7 +3288,7 @@ function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, compon
 
 // Top toolbar. Brand + construct chip + global actions. 48px tall.
 // Dark bar gives the eye a stable anchor; main pane reads as the work surface.
-function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp }) {
+function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp, onOpenDnaDiagrams }) {
   return (
     <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
       <div className="flex items-center gap-2.5">
@@ -3087,6 +3331,9 @@ function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, pale
         </select>
         <ToolButton icon={FileDown} variant="dark" title="Build a one-page report: sample summary, offsets, top peaks — saveable as PDF or markdown" onClick={onOpenReport}>
           Report
+        </ToolButton>
+        <ToolButton icon={FileDown} variant="dark" title="Open the DNA diagrams panel — construct architecture (with/without cut) + ssDNA cut products. Bundled SVG / PNG / JPG / WebP export at any resolution." onClick={onOpenDnaDiagrams}>
+          DNA diagrams
         </ToolButton>
         <ToolButton icon={FileDown} variant="dark" title="Download the full peak table as a tidy long-format CSV (sample, dye, size, height, area, width). Ready for pandas / R / Excel." onClick={onDownloadCsv}>
           CSV
@@ -6819,92 +7066,162 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
 function ProductFragmentViz({ products, constructSize }) {
   const fragRef = useRef(null);
   if (!products) return null;
-  const W = 920, H = 230;
-  const m = { l: 80, r: 80, t: 28, b: 18 };
-  const pw = W - m.l - m.r;
-  const rowH = 38;
-  const barH = 14;
 
+  // Layout zones with strict left/right reserved columns for labels so the
+  // bar region never overlaps annotation text. Row heights are generous to
+  // give each lane a readable (dye name + strand) two-line label plus
+  // room for a "LEFT fragment" subtitle below each bar.
+  const W = 1100;
+  const m = { l: 160, r: 230, t: 46, b: 24 };
+  const pw = W - m.l - m.r;
+  const rowH = 64;
+  const barH = 18;
   const lanes = [
     { dye: "Y", row: 0 },
     { dye: "B", row: 1 },
     { dye: "R", row: 2 },
     { dye: "G", row: 3 },
   ];
+  const H = m.t + lanes.length * rowH + m.b;
+
+  const xForBp = (bp) => m.l + (bp / Math.max(1, constructSize)) * pw;
 
   return (
     <div className="relative">
       <div className="absolute top-1 right-1 z-10 no-print">
         <ExportMenu svgRef={fragRef} basename="ssdna_products" label="Export" />
       </div>
-      <svg ref={fragRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
-      <text x={m.l + pw / 2} y={12} fontSize="10" fill="#475569" textAnchor="middle" fontWeight="600">
-        Four labeled ssDNA products after denaturation (scaled to {constructSize} bp construct)
-      </text>
+      <svg ref={fragRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
+        <rect x="0" y="0" width={W} height={H} fill="white" />
 
-      {/* Construct scale ticks at 0, construct size, and 50 bp increments */}
-      <line x1={m.l} x2={m.l + pw} y1={m.t - 3} y2={m.t - 3} stroke="#cbd5e1" strokeWidth="1" />
-      {[0, 50, 100, 150, 200, 226].filter(v => v <= constructSize).map(v => {
-        const x = m.l + (v / constructSize) * pw;
-        return (
-          <g key={v}>
-            <line x1={x} x2={x} y1={m.t - 5} y2={m.t - 1} stroke="#94a3b8" strokeWidth="1" />
-            <text x={x} y={m.t - 8} fontSize="8" fill="#64748b" textAnchor="middle">{v}</text>
-          </g>
-        );
-      })}
+        {/* Title + subtitle */}
+        <text x={m.l + pw / 2} y="18" fontSize="13" fill="#0f172a" textAnchor="middle" fontWeight="700">
+          Cas9 ssDNA cut products after denaturation
+        </text>
+        <text x={m.l + pw / 2} y="32" fontSize="10" fill="#64748b" textAnchor="middle">
+          Four fluorophore-labeled single strands, scaled to the {constructSize} bp construct
+        </text>
 
-      {lanes.map(({ dye, row }) => {
-        const p = products[dye];
-        const y = m.t + row * rowH + 6;
-        const fragStart = p.fragment === "LEFT" ? 0 : constructSize - p.length;
-        const x1 = m.l + (fragStart / constructSize) * pw;
-        const x2 = m.l + ((fragStart + p.length) / constructSize) * pw;
-        const dyeColor = DYE[dye].color;
+        {/* Column-header row for the left/right annotation regions */}
+        <text x={m.l - 12} y="40" fontSize="9" fill="#94a3b8" textAnchor="end" fontWeight="600"
+              style={{ letterSpacing: "0.06em" }}>CHANNEL · STRAND</text>
+        <text x={m.l + pw + 12} y="40" fontSize="9" fill="#94a3b8" textAnchor="start" fontWeight="600"
+              style={{ letterSpacing: "0.06em" }}>TEMPLATE · PAM-SIDE · LENGTH</text>
 
-        // Dye marker position: for Y=top LEFT 5' end (left of bar), B=bot LEFT 3' end (left of bar),
-        // R=top RIGHT 3' end (right of bar), G=bot RIGHT 5' end (right of bar)
-        const dyeOnLeft = (dye === "Y" || dye === "B");
-        const dyeX = dyeOnLeft ? x1 : x2;
+        {/* Construct scale ticks at every 50 bp, plus at 0 and constructSize */}
+        <line x1={m.l} x2={m.l + pw} y1={m.t - 6} y2={m.t - 6} stroke="#cbd5e1" strokeWidth="1" />
+        {Array.from({ length: Math.floor(constructSize / 50) + 1 }, (_, i) => i * 50)
+          .concat([constructSize])
+          .filter((v, i, a) => a.indexOf(v) === i && v <= constructSize)
+          .map(v => {
+            const x = xForBp(v);
+            return (
+              <g key={`sc-${v}`}>
+                <line x1={x} x2={x} y1={m.t - 9} y2={m.t - 3} stroke="#94a3b8" strokeWidth="1" />
+                <text x={x} y={m.t - 12} fontSize="9" fill="#64748b" textAnchor="middle"
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}>{v}</text>
+              </g>
+            );
+          })}
 
-        return (
-          <g key={dye}>
-            {/* Lane label (dye info) */}
-            <text x={m.l - 6} y={y + 10} fontSize="10" fill="#0f172a" textAnchor="end" fontWeight="600">
-              {DYE[dye].name}
-            </text>
-            <text x={m.l - 6} y={y + 22} fontSize="8" fill="#64748b" textAnchor="end">
-              {p.strand} strand
-            </text>
-            {/* Fragment bar */}
-            <rect x={x1} y={y} width={Math.max(1, x2 - x1)} height={barH} fill={dyeColor} opacity="0.85" rx="2" />
-            {/* Direction arrow (5' to 3') at the dye end */}
-            {dyeOnLeft ? (
-              <polygon points={`${x1 + 4},${y + 2} ${x1 + 8},${y + barH / 2} ${x1 + 4},${y + barH - 2}`} fill="white" />
-            ) : (
-              <polygon points={`${x2 - 4},${y + 2} ${x2 - 8},${y + barH / 2} ${x2 - 4},${y + barH - 2}`} fill="white" />
-            )}
-            {/* Dye circle */}
-            <circle cx={dyeX} cy={y + barH / 2} r="6" fill={dyeColor} stroke="white" strokeWidth="1.5" />
-            <text x={dyeX} y={y + barH / 2 + 3} fontSize="7" fill="white" textAnchor="middle" fontWeight="700">{dye}</text>
-            {/* Length label */}
-            <text x={x2 + 4} y={y + barH / 2 + 3} fontSize="9" fill="#0f172a" fontWeight="700">
-              {p.length} nt
-            </text>
-            {/* Right-side annotations */}
-            <text x={m.l + pw + 8} y={y + 6} fontSize="9" fill={p.template === "non-template" ? "#b45309" : "#0369a1"} fontWeight="600">
-              {p.template}
-            </text>
-            <text x={m.l + pw + 8} y={y + 18} fontSize="9" fill={p.pam_side === "proximal" ? "#be123c" : "#475569"}>
-              PAM-{p.pam_side}
-            </text>
-            {/* Fragment annotation */}
-            <text x={(x1 + x2) / 2} y={y + barH + 10} fontSize="8" fill="#475569" textAnchor="middle">
-              {p.fragment}
-            </text>
-          </g>
-        );
-      })}
+        {lanes.map(({ dye, row }) => {
+          const p = products[dye];
+          const yRow = m.t + row * rowH;
+          const yBar = yRow + 14;
+          const fragStart = p.fragment === "LEFT" ? 0 : constructSize - p.length;
+          const x1 = xForBp(fragStart);
+          const x2 = xForBp(fragStart + p.length);
+          const barW = Math.max(2, x2 - x1);
+          const dyeColor = DYE[dye].color;
+
+          // Dye marker sidedness: per construct geometry, Y + B mark the LEFT
+          // end of their fragments; R + G mark the RIGHT end. For a LEFT
+          // product, "left end" = x1; for a RIGHT product, "left end" = x1.
+          // So dyeOnLeft → dyeX = x1; else dyeX = x2.
+          const dyeOnLeft = (dye === "Y" || dye === "B");
+          const dyeX = dyeOnLeft ? x1 : x2;
+
+          // Length label: inside the bar if it fits (barW > 55), else outside
+          // on the opposite end from the dye circle.
+          const labelInside = barW > 55;
+          const labelX = labelInside
+            ? (x1 + x2) / 2
+            : (dyeOnLeft ? x2 + 8 : x1 - 8);
+          const labelAnchor = labelInside ? "middle" : (dyeOnLeft ? "start" : "end");
+          const labelFill = labelInside ? "white" : "#0f172a";
+
+          return (
+            <g key={dye}>
+              {/* LEFT ANNOTATION COLUMN — dye name + strand */}
+              <g>
+                <rect x={m.l - 150} y={yRow + 6} width="16" height="28" rx="3" fill={dyeColor} />
+                <text x={m.l - 130} y={yRow + 20} fontSize="12" fill="#0f172a"
+                      textAnchor="start" fontWeight="700">{DYE[dye].name}</text>
+                <text x={m.l - 130} y={yRow + 34} fontSize="9" fill="#64748b" textAnchor="start"
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                  {p.strand}-strand
+                </text>
+              </g>
+
+              {/* Bar + direction arrow */}
+              <rect x={x1} y={yBar} width={barW} height={barH}
+                    fill={dyeColor} opacity="0.88" rx="3" />
+              {/* Direction chevron pointing 5' → 3' from the dye end toward
+                  the opposite end. Rendered INSIDE the bar only when the bar
+                  is wide enough (> 30 px) to avoid cutting off the chevron. */}
+              {barW > 30 && (dyeOnLeft ? (
+                <polygon
+                  points={`${x1 + 5},${yBar + 4} ${x1 + 11},${yBar + barH / 2} ${x1 + 5},${yBar + barH - 4}`}
+                  fill="white" opacity="0.9" />
+              ) : (
+                <polygon
+                  points={`${x2 - 5},${yBar + 4} ${x2 - 11},${yBar + barH / 2} ${x2 - 5},${yBar + barH - 4}`}
+                  fill="white" opacity="0.9" />
+              ))}
+
+              {/* Dye circle ON the bar edge, with dye letter inside */}
+              <circle cx={dyeX} cy={yBar + barH / 2} r="9" fill={dyeColor}
+                      stroke="white" strokeWidth="1.8" />
+              <text x={dyeX} y={yBar + barH / 2 + 3.5} fontSize="9"
+                    fill="white" textAnchor="middle" fontWeight="800"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}>{dye}</text>
+
+              {/* Length label — inside or outside depending on bar width */}
+              <text x={labelX} y={yBar + barH / 2 + 4} fontSize="11"
+                    fill={labelFill} textAnchor={labelAnchor} fontWeight="700"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                {p.length} nt
+              </text>
+
+              {/* Fragment subtitle below bar (LEFT / RIGHT of cut) */}
+              <text x={(x1 + x2) / 2} y={yBar + barH + 14} fontSize="9.5"
+                    fill="#475569" textAnchor="middle" fontWeight="500">
+                {p.fragment} fragment · {fragStart}–{fragStart + p.length} bp
+              </text>
+
+              {/* RIGHT ANNOTATION COLUMN — template + PAM-side + length pill */}
+              <g transform={`translate(${m.l + pw + 12}, ${yRow + 4})`}>
+                <rect x="0" y="0" width="8" height="36" rx="2"
+                      fill={p.template === "non-template" ? "#b45309" : "#0369a1"} opacity="0.85" />
+                <text x="14" y="14" fontSize="10.5"
+                      fill={p.template === "non-template" ? "#b45309" : "#0369a1"}
+                      textAnchor="start" fontWeight="700">{p.template}</text>
+                <text x="14" y="28" fontSize="10"
+                      fill={p.pam_side === "proximal" ? "#be123c" : "#475569"}
+                      textAnchor="start" fontWeight="500">
+                  PAM-{p.pam_side}
+                </text>
+                <g transform="translate(0, 40)">
+                  <rect x="0" y="0" width="56" height="14" rx="2" fill="#0f172a" />
+                  <text x="28" y="10" fontSize="9.5" fill="white" textAnchor="middle"
+                        fontWeight="700" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    {p.length} nt
+                  </text>
+                </g>
+              </g>
+            </g>
+          );
+        })}
       </svg>
     </div>
   );
@@ -6912,10 +7229,32 @@ function ProductFragmentViz({ products, constructSize }) {
 
 function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeChange, cutConstructPos, overhang, grnaStrand, productSizes }) {
   const consRef = useRef(null);
-  const total = CONSTRUCT.components.reduce((t, c) => t + (componentSizes[c.key] || 0), 0);
-  const W = 920, H = 130;
-  const m = { l: 10, r: 10, t: 18, b: 38 };
+  const total = CONSTRUCT.components.reduce((t, c) => t + (componentSizes[c.key] || 0), 0) || 1;
+
+  // Layout zones (all y coordinates). Each zone has a fixed pixel range so
+  // text placed in one zone can never collide with another. Widening the
+  // canvas (W=1100) gives component labels enough room to read without
+  // ellipsis at publication resolution.
+  const W = 1100;
+  const m = { l: 16, r: 16 };
   const pw = W - m.l - m.r;
+  const Z = {
+    dyeTop:   22,    // dye circles sit here
+    dyeLabel: 26,    // dye letter inside circle
+    boxTop:   44,    // component box top
+    boxH:     40,    // component box height
+    boxBot:   84,    // = boxTop + boxH
+    sizeText: 99,    // component size label baseline
+    cutTop:   36,    // cut line starts (above boxes for scissor visibility)
+    cutBot:   88,    // cut line ends (just below boxes)
+    cutLabel: 30,    // "cut" text above the scissor
+    bracketY: 114,   // bracket line y
+    bracketLabel: 130, // bracket label baseline
+    scaleBar: 158,   // scale bar y
+    scaleLabel: 174, // "Full ligation product: N bp"
+  };
+  const H = 190;
+
   let x = m.l;
   const boxes = CONSTRUCT.components.map(c => {
     const w = ((componentSizes[c.key] || 0) / total) * pw;
@@ -6923,87 +7262,201 @@ function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeCha
     x += w;
     return box;
   });
+
+  // Cut geometry
+  const hasCut = cutConstructPos != null && cutConstructPos > 0 && cutConstructPos < total;
+  const cutX1 = hasCut ? m.l + (cutConstructPos / total) * pw : null;
+  const cutX2 = hasCut ? m.l + ((cutConstructPos + (overhang || 0)) / total) * pw : null;
+
+  // Bracket label positions with collision avoidance: when a fragment is
+  // narrow (<90 px), the label drops to a second line to avoid the
+  // opposing bracket's label. min bracket center spacing is 140 px.
+  const leftEndX  = cutX1;
+  const rightEndX = m.l + pw;
+  const leftStartX = m.l;
+  const rightStartX = cutX2 != null ? cutX2 : cutX1;
+  const leftCenter  = hasCut ? (leftStartX  + leftEndX)  / 2 : null;
+  const rightCenter = hasCut ? (rightStartX + rightEndX) / 2 : null;
+  const labelsTooClose = hasCut && Math.abs(rightCenter - leftCenter) < 160;
+
   return (
     <div className="relative">
       <div className="absolute top-1 right-1 z-10 no-print">
         <ExportMenu svgRef={consRef} basename="construct_diagram" label="Export" />
       </div>
-      <svg ref={consRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
-        {/* 5' / 3' labels */}
-        <text x={m.l - 2} y={m.t - 4} fontSize="10" fill="#64748b" textAnchor="start">5' →</text>
-        <text x={m.l + pw + 2} y={m.t - 4} fontSize="10" fill="#64748b" textAnchor="end">→ 3'</text>
+      <svg ref={consRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
+        {/* White background rect for exports */}
+        <rect x="0" y="0" width={W} height={H} fill="white" />
+
+        {/* 5' / 3' end labels — at the left and right extremes, well above the boxes */}
+        <text x={m.l} y={14} fontSize="11" fill="#475569" textAnchor="start" fontWeight="600"
+              fontFamily="ui-monospace, JetBrains Mono, monospace">5′ →</text>
+        <text x={m.l + pw} y={14} fontSize="11" fill="#475569" textAnchor="end" fontWeight="600"
+              fontFamily="ui-monospace, JetBrains Mono, monospace">→ 3′</text>
+
+        {/* Dye markers on their owning fluor adapters. Stacked 2-high if the
+            box carries 2 dyes (Ad1: B+Y, Ad2: G+R in the canonical construct). */}
+        {boxes.map(b => b.dyes.length === 0 ? null : (
+          <g key={`dye-${b.key}`}>
+            {b.dyes.map((d, i) => {
+              const cx = b.x + b.w / 2 + (b.dyes.length === 1 ? 0 : (i - (b.dyes.length - 1) / 2) * 18);
+              return (
+                <g key={d}>
+                  <circle cx={cx} cy={Z.dyeTop} r="7" fill={DYE[d].color} stroke="white" strokeWidth="1.4" />
+                  <text x={cx} y={Z.dyeLabel} fontSize="8.5" fill="white" textAnchor="middle" fontWeight="800"
+                        style={{ fontFamily: "JetBrains Mono, monospace" }}>{d}</text>
+                </g>
+              );
+            })}
+          </g>
+        ))}
 
         {/* Component boxes */}
         {boxes.map(b => {
           const hl = highlightKey === b.key;
+          // Inside-box name only when the box is wide enough for readable text
+          // (at W=1100, 55 px ≈ 6 chars at 11 px). Below that, omit and let
+          // the size label below do the identification work via position.
+          const showName = b.w > 55;
+          const short = b.name
+            .replace("Fluor ", "")
+            .replace(" Oligo", "")
+            .replace("Oligo ", "")
+            .replace("Overhang", "OH");
           return (
             <g key={b.key} style={{ cursor: onHighlight ? "pointer" : "default" }}
                onMouseEnter={() => onHighlight && onHighlight(b.key)}
                onMouseLeave={() => onHighlight && onHighlight(null)}>
-              <rect x={b.x} y={m.t} width={Math.max(1, b.w)} height={28} fill={b.color}
-                    opacity={hl ? 1 : 0.85} stroke={hl ? "#0f172a" : "white"} strokeWidth={hl ? 1.5 : 1} />
-              {b.w > 20 && (
-                <text x={b.x + b.w / 2} y={m.t + 18} fontSize="10" fill="white" textAnchor="middle" fontWeight="600" pointerEvents="none">
-                  {b.name.replace("Fluor ", "").replace("Oligo ", "")}
+              <rect x={b.x} y={Z.boxTop} width={Math.max(1, b.w)} height={Z.boxH}
+                    fill={b.color}
+                    opacity={hl ? 1 : 0.9}
+                    stroke={hl ? "#0f172a" : "white"} strokeWidth={hl ? 1.8 : 1} />
+              {showName && (
+                <text x={b.x + b.w / 2} y={Z.boxTop + Z.boxH / 2 + 4} fontSize="11"
+                      fill="white" textAnchor="middle" fontWeight="700" pointerEvents="none"
+                      style={{ letterSpacing: "0.02em" }}>
+                  {short}
                 </text>
               )}
-              {/* Dye markers above fluor adapters */}
-              {b.dyes.map((d, i) => (
-                <g key={d}>
-                  <circle cx={b.x + 8 + i * 14} cy={m.t - 8} r="5" fill={DYE[d].color} stroke="white" strokeWidth="1" />
-                  <text x={b.x + 8 + i * 14} y={m.t - 5} fontSize="7" fill="white" textAnchor="middle" fontWeight="700" pointerEvents="none">
-                    {d}
-                  </text>
-                </g>
-              ))}
-              {/* Size labels below */}
-              <text x={b.x + b.w / 2} y={m.t + 42} fontSize="9" fill="#334155" textAnchor="middle" fontFamily="ui-monospace, monospace">
-                {b.size}
-              </text>
+              {/* Size label centered below the box, always rendered. When the
+                  box is very narrow (< 26 px) the size is rotated 45° so the
+                  text doesn't overlap its neighbors. */}
+              {b.w >= 26 ? (
+                <text x={b.x + b.w / 2} y={Z.sizeText} fontSize="10.5"
+                      fill="#334155" textAnchor="middle" fontWeight="600"
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                  {b.size} bp
+                </text>
+              ) : (
+                <text x={b.x + b.w / 2} y={Z.sizeText}
+                      fontSize="9" fill="#475569" textAnchor="end"
+                      transform={`rotate(-35, ${b.x + b.w / 2}, ${Z.sizeText})`}
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                  {b.size}
+                </text>
+              )}
             </g>
           );
         })}
 
-        {/* Cut site marker (if a gRNA is selected) */}
-        {cutConstructPos != null && (() => {
-          const cx = m.l + (cutConstructPos / total) * pw;
-          const cx2 = m.l + ((cutConstructPos + (overhang || 0)) / total) * pw;
-          const leftBp = cutConstructPos;
-          const rightBp = total - cutConstructPos;
-          return (
+        {/* Cut site overlay — rendered AFTER boxes so it sits on top */}
+        {hasCut && (
+          <g>
+            {/* Overhang shading band between top+bottom cut positions */}
+            {overhang > 0 && Math.abs(cutX2 - cutX1) > 0.5 && (
+              <rect x={Math.min(cutX1, cutX2)} y={Z.boxTop - 2}
+                    width={Math.abs(cutX2 - cutX1)} height={Z.boxH + 4}
+                    fill="#fbbf24" opacity="0.4" />
+            )}
+            {/* Primary cut line */}
+            <line x1={cutX1} x2={cutX1}
+                  y1={Z.cutTop} y2={Z.cutBot}
+                  stroke="#dc2626" strokeWidth="2.2" strokeDasharray="4 2" />
+            {/* Secondary cut line (bottom strand) when overhang !== 0 */}
+            {overhang > 0 && (
+              <line x1={cutX2} x2={cutX2}
+                    y1={Z.cutTop} y2={Z.cutBot}
+                    stroke="#dc2626" strokeWidth="2.2" strokeDasharray="4 2" />
+            )}
+            {/* Scissor glyph + "CUT" label above — positioned so they don't
+                collide with dye markers. Centered over the primary cut. */}
+            <g transform={`translate(${cutX1}, ${Z.cutLabel})`}>
+              <rect x="-16" y="-9" width="32" height="14" rx="3" fill="#dc2626" />
+              <text x="0" y="1" fontSize="9.5" fill="white" textAnchor="middle"
+                    fontWeight="800" dominantBaseline="middle"
+                    style={{ letterSpacing: "0.08em" }}>CUT</text>
+              <polygon points="-4,7 4,7 0,12" fill="#dc2626" />
+            </g>
+
+            {/* LEFT fragment bracket */}
             <g>
-              {/* Overhang band (top<->bot cut offset) */}
-              {overhang > 0 && (
-                <rect x={cx} y={m.t - 2} width={Math.max(1, cx2 - cx)} height={32} fill="#fbbf24" opacity="0.35" />
-              )}
-              {/* Cut line on top strand */}
-              <line x1={cx} x2={cx} y1={m.t - 6} y2={m.t + 32} stroke="#dc2626" strokeWidth="2" strokeDasharray="2,2" />
-              {/* Cut line on bot strand (if overhang) */}
-              {overhang > 0 && (
-                <line x1={cx2} x2={cx2} y1={m.t - 6} y2={m.t + 32} stroke="#dc2626" strokeWidth="2" strokeDasharray="2,2" />
-              )}
-              {/* Scissor triangle */}
-              <polygon points={`${cx - 4},${m.t - 10} ${cx + 4},${m.t - 10} ${cx},${m.t - 4}`} fill="#dc2626" />
-              <text x={cx} y={m.t - 13} fontSize="9" fill="#dc2626" textAnchor="middle" fontWeight="700">cut</text>
-              {/* Size annotations */}
-              <text x={m.l + (cutConstructPos / 2 / total) * pw + m.l / 2} y={m.t + 48} fontSize="9" fill="#475569" textAnchor="middle">
-                LEFT {leftBp} bp {grnaStrand === "top" ? "(PAM-distal)" : "(PAM-proximal)"}
-              </text>
-              <text x={m.l + ((cutConstructPos + total) / 2 / total) * pw - m.l / 2} y={m.t + 48} fontSize="9" fill="#475569" textAnchor="middle">
-                RIGHT {rightBp} bp {grnaStrand === "top" ? "(PAM-proximal)" : "(PAM-distal)"}
+              <line x1={leftStartX + 2} x2={leftEndX - 2}
+                    y1={Z.bracketY} y2={Z.bracketY}
+                    stroke="#64748b" strokeWidth="1.3" />
+              <line x1={leftStartX + 2} x2={leftStartX + 2}
+                    y1={Z.bracketY - 4} y2={Z.bracketY + 4}
+                    stroke="#64748b" strokeWidth="1.3" />
+              <line x1={leftEndX - 2} x2={leftEndX - 2}
+                    y1={Z.bracketY - 4} y2={Z.bracketY + 4}
+                    stroke="#64748b" strokeWidth="1.3" />
+              <text x={leftCenter}
+                    y={labelsTooClose ? Z.bracketLabel - 2 : Z.bracketLabel}
+                    fontSize="10.5" fill="#1f2937" textAnchor="middle" fontWeight="600">
+                <tspan style={{ fontFamily: "JetBrains Mono, monospace" }}>{cutConstructPos} bp</tspan>
+                <tspan dx="6" fill="#64748b" fontWeight="500">
+                  LEFT · {grnaStrand === "top" ? "PAM-distal" : "PAM-proximal"}
+                </tspan>
               </text>
             </g>
-          );
-        })()}
 
-        {/* Scale bar */}
-        <line x1={m.l} x2={m.l + pw} y1={m.t + 54} y2={m.t + 54} stroke="#94a3b8" strokeWidth="1" />
-        <text x={m.l + pw / 2} y={m.t + 68} fontSize="10" fill="#334155" textAnchor="middle" fontWeight="500">Full ligation product: {total} bp</text>
+            {/* RIGHT fragment bracket */}
+            <g>
+              <line x1={rightStartX + 2} x2={rightEndX - 2}
+                    y1={Z.bracketY} y2={Z.bracketY}
+                    stroke="#64748b" strokeWidth="1.3" />
+              <line x1={rightStartX + 2} x2={rightStartX + 2}
+                    y1={Z.bracketY - 4} y2={Z.bracketY + 4}
+                    stroke="#64748b" strokeWidth="1.3" />
+              <line x1={rightEndX - 2} x2={rightEndX - 2}
+                    y1={Z.bracketY - 4} y2={Z.bracketY + 4}
+                    stroke="#64748b" strokeWidth="1.3" />
+              <text x={rightCenter}
+                    y={labelsTooClose ? Z.bracketLabel + 14 : Z.bracketLabel}
+                    fontSize="10.5" fill="#1f2937" textAnchor="middle" fontWeight="600">
+                <tspan style={{ fontFamily: "JetBrains Mono, monospace" }}>{total - cutConstructPos} bp</tspan>
+                <tspan dx="6" fill="#64748b" fontWeight="500">
+                  RIGHT · {grnaStrand === "top" ? "PAM-proximal" : "PAM-distal"}
+                </tspan>
+              </text>
+            </g>
+          </g>
+        )}
+
+        {/* Scale bar + caption — always rendered at the bottom */}
+        <line x1={m.l} x2={m.l + pw} y1={Z.scaleBar} y2={Z.scaleBar}
+              stroke="#cbd5e1" strokeWidth="1.2" />
+        {/* Tick marks every 50 bp */}
+        {Array.from({ length: Math.floor(total / 50) + 1 }, (_, i) => i * 50).map(v => {
+          const tx = m.l + (v / total) * pw;
+          return (
+            <g key={`tick-${v}`}>
+              <line x1={tx} x2={tx} y1={Z.scaleBar - 3} y2={Z.scaleBar + 3} stroke="#94a3b8" strokeWidth="1" />
+              <text x={tx} y={Z.scaleBar + 14} fontSize="8.5" fill="#64748b" textAnchor="middle"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}>{v}</text>
+            </g>
+          );
+        })}
+        <text x={m.l + pw / 2} y={Z.scaleLabel + 10} fontSize="10" fill="#334155"
+              textAnchor="middle" fontWeight="500">
+          {hasCut
+            ? `Full ligation product: ${total} bp · cut at position ${cutConstructPos}${overhang > 0 ? ` (+${overhang} nt overhang)` : ""}`
+            : `Full ligation product: ${total} bp (uncut)`}
+        </text>
       </svg>
 
-      {/* Editable component sizes */}
+      {/* Editable component sizes — form chrome below the SVG, excluded from exports */}
       {onSizeChange && (
-        <div className="flex flex-wrap gap-2 pt-1 text-xs">
+        <div className="flex flex-wrap gap-2 pt-1 text-xs no-print">
           <span className="text-zinc-500 font-semibold uppercase tracking-wide">Component sizes (bp):</span>
           {CONSTRUCT.components.map(c => (
             <label key={c.key} className="flex items-center gap-1">
