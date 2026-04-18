@@ -156,6 +156,162 @@ export function parseGenemapperTSV(text) {
 }
 
 // ----------------------------------------------------------------------
+// ABIF (.fsa) parser — pure JS, no npm dep. Reads the binary directory,
+// extracts named tags, and returns {version, entries} where each entry is
+// {name, number, elemType, value}. Mirrors the Python biopython AbiIO
+// reader closely enough that scripts/fsa_to_json.py and this in-browser
+// path produce comparable peak tables.
+//
+// Big-endian. Element-type codes per ABIF spec (commonly used subset):
+//   1=byte, 2=char, 3=word, 4=short(i16), 5=int(i32), 7=float,
+//   18=pString (length-prefixed), 19=cString (null-terminated).
+export function parseAbifBuffer(arrayBuffer) {
+  const view = new DataView(arrayBuffer);
+  const dec = new TextDecoder("ascii", { fatal: false });
+  const tagAt = (off, n = 4) => {
+    let s = "";
+    for (let i = 0; i < n; i++) s += String.fromCharCode(view.getUint8(off + i));
+    return s;
+  };
+  if (tagAt(0) !== "ABIF") throw new Error("Not an ABIF file (magic mismatch)");
+  const version = view.getInt16(4, false);
+  const numEntries = view.getInt32(18, false);
+  const dirOffset = view.getInt32(26, false);
+  const entries = {};
+  for (let i = 0; i < numEntries; i++) {
+    const e = dirOffset + i * 28;
+    const name = tagAt(e);
+    const number = view.getInt32(e + 4, false);
+    const elemType = view.getInt16(e + 8, false);
+    const numElements = view.getInt32(e + 12, false);
+    const dataSize = view.getInt32(e + 16, false);
+    const dataOffset = view.getInt32(e + 20, false);
+    const offset = dataSize <= 4 ? e + 20 : dataOffset;
+    let value = null;
+    try {
+      if (elemType === 2 || elemType === 19) {
+        const bytes = new Uint8Array(arrayBuffer, offset, numElements);
+        value = dec.decode(bytes).replace(/\x00+$/, "").trim();
+      } else if (elemType === 4) {
+        value = new Array(numElements);
+        for (let j = 0; j < numElements; j++) value[j] = view.getInt16(offset + j * 2, false);
+      } else if (elemType === 5) {
+        value = new Array(numElements);
+        for (let j = 0; j < numElements; j++) value[j] = view.getInt32(offset + j * 4, false);
+      } else if (elemType === 18) {
+        const len = view.getUint8(offset);
+        value = dec.decode(new Uint8Array(arrayBuffer, offset + 1, len));
+      } else if (elemType === 7) {
+        value = new Array(numElements);
+        for (let j = 0; j < numElements; j++) value[j] = view.getFloat32(offset + j * 4, false);
+      } else if (elemType === 1) {
+        value = view.getUint8(offset);
+      } else if (elemType === 3) {
+        value = view.getUint16(offset, false);
+      }
+    } catch { value = null; }
+    entries[`${name}${number}`] = { name, number, elemType, value };
+  }
+  return { version, entries };
+}
+
+// GS500LIZ size standard (16 ladder peaks).
+const GS500LIZ_SIZES = [35, 50, 75, 100, 139, 150, 160, 200, 250, 300, 340, 350, 400, 450, 490, 500];
+
+// Piecewise-linear interpolator built from LIZ anchor peaks → bp.
+// Returns null if too few anchors are detectable.
+export function calibrateLizJs(lizTrace, nAnchors = 16) {
+  if (!lizTrace || lizTrace.length < 200) return null;
+  const peaks = [];
+  for (let i = 1; i < lizTrace.length - 1; i++) {
+    if (lizTrace[i] > lizTrace[i - 1] && lizTrace[i] >= lizTrace[i + 1] && lizTrace[i] > 50) {
+      if (peaks.length && i - peaks[peaks.length - 1].idx < 20) {
+        if (lizTrace[i] > peaks[peaks.length - 1].h) {
+          peaks[peaks.length - 1] = { idx: i, h: lizTrace[i] };
+        }
+      } else {
+        peaks.push({ idx: i, h: lizTrace[i] });
+      }
+    }
+  }
+  if (peaks.length < 5) return null;
+  peaks.sort((a, b) => b.h - a.h);
+  const top = peaks.slice(0, nAnchors).sort((a, b) => a.idx - b.idx);
+  const n = Math.min(top.length, GS500LIZ_SIZES.length);
+  const xs = top.slice(0, n).map(p => p.idx);
+  const ys = GS500LIZ_SIZES.slice(0, n);
+  return (x) => {
+    if (x <= xs[0]) return ys[0] + (x - xs[0]) * (ys[1] - ys[0]) / (xs[1] - xs[0]);
+    if (x >= xs[n - 1]) return ys[n - 1] + (x - xs[n - 1]) * (ys[n - 1] - ys[n - 2]) / (xs[n - 1] - xs[n - 2]);
+    for (let i = 1; i < n; i++) {
+      if (x <= xs[i]) return ys[i - 1] + (x - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
+    }
+    return ys[n - 1];
+  };
+}
+
+// Simple local-max peak caller. Computes height + FWHM-derived bp width.
+export function callPeaksFromTrace(trace, idxToBp, { heightThresh = 100, minSepSamples = 5 } = {}) {
+  if (!trace || !trace.length || !idxToBp) return [];
+  const raw = [];
+  for (let i = 1; i < trace.length - 1; i++) {
+    if (trace[i] >= heightThresh && trace[i] > trace[i - 1] && trace[i] >= trace[i + 1]) {
+      if (raw.length && i - raw[raw.length - 1].idx < minSepSamples) {
+        if (trace[i] > raw[raw.length - 1].h) raw[raw.length - 1] = { idx: i, h: trace[i] };
+      } else {
+        raw.push({ idx: i, h: trace[i] });
+      }
+    }
+  }
+  return raw.map(p => {
+    const halfH = p.h / 2;
+    let lo = p.idx, hi = p.idx;
+    while (lo > 0 && trace[lo] > halfH) lo--;
+    while (hi < trace.length - 1 && trace[hi] > halfH) hi++;
+    const sizeBp = idxToBp(p.idx);
+    const widthBp = Math.max(0.05, idxToBp(hi) - idxToBp(lo));
+    const area = p.h * widthBp * 1.064;
+    return [
+      Math.round(sizeBp * 100) / 100,
+      Math.round(p.h * 10) / 10,
+      Math.round(area * 10) / 10,
+      Math.round(widthBp * 1000) / 1000,
+    ];
+  });
+}
+
+// One-shot .fsa → peaks-by-dye for a single sample. Returns
+// {sampleName, peaks, meta, calibrated} where peaks matches the
+// GeneMapper TSV schema for the four lab dye letters B/G/Y/R + O.
+export function parseFsaArrayBuffer(arrayBuffer, fileName = "sample") {
+  const { entries } = parseAbifBuffer(arrayBuffer);
+  const get = (k) => entries[k]?.value;
+  const trace = (n) => get(`DATA${n}`) || null;
+  const liz = trace(105);
+  const interp = calibrateLizJs(liz);
+  const peaks = {};
+  if (interp) {
+    for (const [ch, dye] of [[1, "B"], [2, "G"], [3, "Y"], [4, "R"]]) {
+      const t = trace(ch);
+      if (t) peaks[dye] = callPeaksFromTrace(t, interp);
+    }
+    if (liz) peaks.O = callPeaksFromTrace(liz, interp, { heightThresh: 200, minSepSamples: 10 });
+  }
+  // Sample name preference: filename stem (TUBE1/SMPL1 are typically just
+  // well-plate positions like A1/B12 which lose the experiment context).
+  const stem = fileName.replace(/\.[Ff][Ss][Aa]$/, "").replace(/^.*[\\/]/, "");
+  const meta = {
+    instrument_model: get("MODL1"),
+    dye_chemistry: [1, 2, 3, 4, 5].map(i => get(`DyeN${i}`) || "").filter(Boolean),
+    well: get("TUBE1"),
+    container_id: get("CTNM1"),
+    n_data_points: liz ? liz.length : 0,
+    calibration_anchors: interp ? GS500LIZ_SIZES.length : 0,
+  };
+  return { sampleName: stem, peaks, meta, calibrated: !!interp };
+}
+
+// ----------------------------------------------------------------------
 // Drag-drop zone for new GeneMapper TSV exports.
 // Listens for drag events anywhere in the window and lights up only while
 // a file is being dragged. On drop, parses the TSV and calls onData. The
@@ -168,17 +324,38 @@ function DropOverlay({ onData }) {
   const handleFiles = async (files) => {
     setError(null);
     if (!files || files.length === 0) return;
-    const f = files[0];
+    const arr = Array.from(files);
+    // Route by extension: .fsa = ABIF binary (one sample per file, batch
+    // multi-drop OK); .txt/.tsv/.csv = GeneMapper peak-table TSV.
+    const fsa = arr.filter(f => /\.fsa$/i.test(f.name));
+    const tsv = arr.filter(f => /\.(txt|tsv|csv)$/i.test(f.name));
     try {
-      const text = await f.text();
-      const parsed = parseGenemapperTSV(text);
-      if (Object.keys(parsed.peaks).length === 0) {
-        setError("No samples found. Is this a GeneMapper TSV export?");
+      const merged = {};
+      let warnings = [];
+      for (const f of fsa) {
+        const buf = await f.arrayBuffer();
+        const { sampleName, peaks, calibrated } = parseFsaArrayBuffer(buf, f.name);
+        if (!calibrated) {
+          warnings.push(`${sampleName}: LIZ size standard not calibratable; skipped`);
+          continue;
+        }
+        const key = merged[sampleName] ? `${sampleName}_${f.name.replace(/\.[Ff][Ss][Aa]$/, "")}` : sampleName;
+        merged[key] = peaks;
+      }
+      for (const f of tsv) {
+        const text = await f.text();
+        const parsed = parseGenemapperTSV(text);
+        Object.assign(merged, parsed.peaks);
+      }
+      const n = Object.keys(merged).length;
+      if (n === 0) {
+        setError("No samples loaded. Drop GeneMapper .txt/.tsv or ABIF .fsa files.");
         return;
       }
-      onData(parsed.peaks);
+      if (warnings.length) setError(warnings.join("; "));
+      onData(merged);
     } catch (e) {
-      setError(e.message || "Failed to parse file");
+      setError(e.message || "Failed to parse file(s)");
     }
   };
 
@@ -219,7 +396,9 @@ function DropOverlay({ onData }) {
               </div>
               <div>
                 <div className="text-base font-semibold tracking-tight">Drop to load dataset</div>
-                <div className="text-xs text-zinc-500 mt-0.5">GeneMapper or PeakScanner TSV export (.txt, .tsv, .csv)</div>
+                <div className="text-xs text-zinc-500 mt-0.5">
+                  GeneMapper TSV (.txt/.tsv/.csv) <strong>or ABIF .fsa</strong> binary trace files. Multi-file drop OK; .fsa peaks are auto-called via LIZ calibration.
+                </div>
               </div>
             </div>
           </div>
@@ -243,23 +422,37 @@ function UploadButton({ onData }) {
       <ToolButton
         icon={Upload}
         variant="dark"
-        title="Load a GeneMapper TSV export (drag-drop also works anywhere in the window)"
+        title="Load GeneMapper TSV (.txt/.tsv/.csv) or ABIF .fsa files. Drag-drop anywhere in the window also works."
         onClick={() => inputRef.current?.click()}
       >
-        Load TSV
+        Load data
       </ToolButton>
       <input
         ref={inputRef}
         type="file"
-        accept=".txt,.tsv,.csv"
+        accept=".txt,.tsv,.csv,.fsa"
+        multiple
         onChange={async (e) => {
-          const f = e.target.files?.[0];
-          if (!f) return;
+          const files = Array.from(e.target.files || []);
+          if (files.length === 0) return;
           try {
-            const parsed = parseGenemapperTSV(await f.text());
-            if (Object.keys(parsed.peaks).length > 0) onData(parsed.peaks);
+            const merged = {};
+            for (const f of files) {
+              if (/\.fsa$/i.test(f.name)) {
+                const buf = await f.arrayBuffer();
+                const { sampleName, peaks, calibrated } = parseFsaArrayBuffer(buf, f.name);
+                if (calibrated) {
+                  const key = merged[sampleName] ? `${sampleName}_${f.name.replace(/\.[Ff][Ss][Aa]$/, "")}` : sampleName;
+                  merged[key] = peaks;
+                }
+              } else {
+                const parsed = parseGenemapperTSV(await f.text());
+                Object.assign(merged, parsed.peaks);
+              }
+            }
+            if (Object.keys(merged).length > 0) onData(merged);
           } catch (err) {
-            console.error("[fragment-viewer] TSV parse failed:", err);
+            console.error("[fragment-viewer] file parse failed:", err);
           }
           e.target.value = "";
         }}

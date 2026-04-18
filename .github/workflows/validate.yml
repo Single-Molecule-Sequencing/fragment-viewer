@@ -81,14 +81,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install ruff + pyyaml + pytest + matplotlib + numpy
-        run: pip install ruff pyyaml pytest matplotlib numpy
+      - name: Install ruff + pyyaml + pytest + matplotlib + numpy + biopython + scipy
+        run: pip install ruff pyyaml pytest matplotlib numpy biopython scipy
       - name: Compile Python scripts
         run: |
           python -m py_compile scripts/build_artifact.py
           python -m py_compile scripts/ingest_to_kb.py
           python -m py_compile scripts/regen_scaffold.py
           python -m py_compile scripts/cross_link_smaseq.py
+          python -m py_compile scripts/fsa_to_json.py
           python -m py_compile skills/cas9-cut-predictor/scripts/cas9_cut_predictor.py
           python -m py_compile skills/genemapper-parser/scripts/genemapper_parser.py
           python -m py_compile skills/clc-construct-registry/scripts/clc_construct_registry.py
