@@ -10,7 +10,8 @@
 //   - PrepControls        — per-sample prep metadata (lib, chemistry, etc.).
 
 import { useState, useMemo } from "react";
-import { Panel, Field, Pill, ToolButton } from "./primitives.jsx";
+import { Panel, Field, Pill, ToolButton, DyeChip } from "./primitives.jsx";
+import { ExportMenu } from "./export_menu.jsx";
 import { DYE, resolveDyeColor } from "../lib/constants.js";
 import { evaluateDATailing, predictPostTailing, computePeakShiftStats } from "../lib/analysis.js";
 

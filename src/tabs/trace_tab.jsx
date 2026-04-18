@@ -13,7 +13,7 @@
 // to reach here.
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import { ArrowLeft, ArrowRight, ChevronRight, FileDown } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, FileDown, RotateCcw } from "lucide-react";
 import { ExportMenu } from "../components/export_menu.jsx";
 import { LabInventoryBadge, LabInventoryPanel } from "../components/lab_inventory.jsx";
 import { Panel, Stat, Pill, DyeChip, Field, ToolButton } from "../components/primitives.jsx";
@@ -61,7 +61,7 @@ import {
   SampleStyleRow, PrepControls,
 } from "../components/editors.jsx";
 import { ReportModal, DNADiagramsModal } from "../components/modals.jsx";
-import { PeakSpeciesPopover, SampleSummaryCard } from "./peak_id_tab.jsx";
+import { PeakSpeciesPopover, SampleSummaryCard, VisibleWindowCard } from "./peak_id_tab.jsx";
 import { inventoryStatus } from "../lib/grna_catalog.js";
 // Items still resident in FragmentViewer.jsx (SpeciesSchematic/Legend/Sidebar,
 // biology helpers, analysis helpers). Live bindings via ESM.

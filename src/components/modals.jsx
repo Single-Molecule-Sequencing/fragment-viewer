@@ -10,8 +10,9 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { FileDown } from "lucide-react";
-import { Panel, Pill, ToolButton, DyeChip } from "./primitives.jsx";
+import { Panel, Pill, Stat, ToolButton, DyeChip } from "./primitives.jsx";
 import { ExportMenu } from "./export_menu.jsx";
+import { PostTailingPanel } from "./editors.jsx";
 import {
   ConstructDiagram, ProductFragmentViz,
 } from "./diagrams.jsx";

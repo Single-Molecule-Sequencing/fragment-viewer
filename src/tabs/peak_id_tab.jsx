@@ -17,6 +17,7 @@ import { LabInventoryBadge } from "../components/lab_inventory.jsx";
 import { DYE, DYE_ORDER, CONSTRUCT, ASSEMBLY_PRODUCTS, resolveDyeColor } from "../lib/constants.js";
 import { LAB_GRNA_CATALOG, matchLabCatalog, normalizeSpacer } from "../lib/grna_catalog.js";
 import { productSize, findGrnas, predictCutProducts } from "../lib/biology.js";
+import { AssemblyProductsCard } from "../components/diagrams.jsx";
 import {
   DATA,
   classifyPeak,
@@ -259,7 +260,7 @@ function OverhangBadge({ label, a, b }) {
 // ======================================================================
 // Visible window peak list
 // ======================================================================
-function VisibleWindowCard({ peaksByChannel, results, cfg }) {
+export function VisibleWindowCard({ peaksByChannel, results, cfg }) {
   if (!cfg) return null;
   const peaks = [];
   for (const d of SAMPLE_DYES) {
