@@ -450,6 +450,96 @@ export function computePurityScore(peaksByDye, expectedByDye, tol = 1.5) {
   return { purity, matchedHeight, totalHeight, matches, n };
 }
 
+// Build a sample × expected-species matrix for the heatmap view. For each
+// (sample, species) cell, search the sample's peaks in the species' dye for
+// the nearest peak within `tol` bp of the species size; cell value is
+// log10(peak height) if matched, or null if not. Log10 compresses the
+// 50-30000 RFU dynamic range into something a diverging palette can cover.
+//
+// Returns:
+//   { rows: [sampleName, ...],
+//     cols: [{ key, size, dye, label }, ...],
+//     cells: { [sampleName]: { [colKey]: logHeight | null } } }
+export function buildHeatmapMatrix({ samples, peaksBySample, species, tol = 2.0 }) {
+  const cells = {};
+  for (const s of samples) {
+    const peaks = (peaksBySample && peaksBySample[s]) || {};
+    cells[s] = {};
+    for (const sp of species) {
+      const lp = peaks[sp.dye] || [];
+      let best = null;
+      let bestD = Infinity;
+      for (const p of lp) {
+        const d = Math.abs(p[0] - sp.size);
+        if (d < bestD && d <= tol) { bestD = d; best = p; }
+      }
+      cells[s][sp.key] = best ? Math.log10(Math.max(1, best[1])) : null;
+    }
+  }
+  return { rows: samples, cols: species, cells };
+}
+
+// Viridis-like 5-stop palette for log10(height). Input: logH in [minL, maxL];
+// returns a CSS hex color. Missing cells render as a neutral gray upstream.
+export function heatmapColor(logH, minL = 1.7, maxL = 4.5) {
+  if (logH == null || !Number.isFinite(logH)) return "#e5e7eb";
+  const t = Math.max(0, Math.min(1, (logH - minL) / (maxL - minL)));
+  // 5-stop viridis approximation (sampled from the canonical matplotlib).
+  const stops = [
+    [0.0, [68, 1, 84]],      // #440154 dark purple
+    [0.25,[59, 82, 139]],    // #3B528B blue
+    [0.5, [33, 145, 140]],   // #21918C teal
+    [0.75,[94, 201, 98]],    // #5EC962 green
+    [1.0, [253, 231, 37]],   // #FDE725 yellow
+  ];
+  let lo = stops[0], hi = stops[stops.length - 1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (t >= stops[i][0] && t <= stops[i + 1][0]) { lo = stops[i]; hi = stops[i + 1]; break; }
+  }
+  const f = (t - lo[0]) / Math.max(1e-9, hi[0] - lo[0]);
+  const rgb = lo[1].map((c, i) => Math.round(c + f * (hi[1][i] - c)));
+  return `#${rgb.map(v => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+// ----------------------------------------------------------------------
+// Peak-shift analysis: quantify how far each cut-sample peak moved
+// relative to its matching uncut-sample peak within tol, per dye.
+// Returns { byDye: {B: {n, medianShift, meanShift}, ...}, totals }.
+// ----------------------------------------------------------------------
+export function computePeakShiftStats(currentPeaks, referencePeaks, tol = 2.5) {
+  const byDye = { B: [], G: [], Y: [], R: [] };
+  for (const d of ["B", "G", "Y", "R"]) {
+    const cp = currentPeaks?.[d] || [];
+    const rp = referencePeaks?.[d] || [];
+    if (!cp.length || !rp.length) continue;
+    // For each current peak, find the nearest reference peak within tol.
+    for (const pc of cp) {
+      let best = null;
+      let bestD = Infinity;
+      for (const pr of rp) {
+        const d2 = Math.abs(pc[0] - pr[0]);
+        if (d2 < bestD && d2 <= tol) { bestD = d2; best = pr; }
+      }
+      if (best) byDye[d].push(pc[0] - best[0]); // signed shift
+    }
+  }
+  const median = (arr) => {
+    if (!arr.length) return null;
+    const s = arr.slice().sort((a, b) => a - b);
+    return s.length % 2 === 1 ? s[(s.length - 1) / 2] : 0.5 * (s[s.length / 2 - 1] + s[s.length / 2]);
+  };
+  const mean = (arr) => arr.length ? arr.reduce((t, v) => t + v, 0) / arr.length : null;
+  const stats = { byDye: {} };
+  let totalN = 0;
+  for (const d of ["B", "G", "Y", "R"]) {
+    const arr = byDye[d];
+    stats.byDye[d] = { n: arr.length, medianShift: median(arr), meanShift: mean(arr) };
+    totalN += arr.length;
+  }
+  stats.totalN = totalN;
+  return stats;
+}
+
 // Evaluate the modeled sum-of-gaussians at a single bp position. Mirrors the
 // peak-rendering path in buildGaussianPath but returns a scalar so we can
 // sample it at arbitrary x. Used by computeResidual for the residual view
@@ -2608,6 +2698,7 @@ export default function FragmentViewer() {
             {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
             {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
             {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} />}
+            {tab === "heatmap" && <HeatmapTab samples={samples} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} palette={palette} />}
           </div>
         </main>
       </div>
@@ -2980,6 +3071,7 @@ function Sidebar({ tab, setTab }) {
     { id: "cutpred",   label: "Cut Prediction",    icon: Scissors,   hint: "Enumerate gRNAs and predict ssDNA products" },
     { id: "autoclass", label: "Auto Classify",     icon: Layers,     hint: "Cluster and identify peaks across all dyes" },
     { id: "compare",   label: "Cross-Sample",      icon: GitCompare, hint: "Overhang offsets and purity grid" },
+    { id: "heatmap",   label: "Batch Heatmap",     icon: Database,   hint: "Sample × species heatmap · 96-well-plate view" },
   ];
   return (
     <nav className="w-52 shrink-0 bg-white border-r border-zinc-200 flex flex-col no-print">
@@ -3085,6 +3177,76 @@ function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
 // ======================================================================
 // TAB 1 — Single-sample electropherogram viewer with high-res trace
 // ======================================================================
+// Peak-shift analysis panel — quantifies the dotted-vs-solid visual overlay
+// into per-dye bp shifts. For each current-sample peak, finds the nearest
+// reference peak within tol and records the signed delta. Median is robust
+// to outliers; mean is shown for transparency. Negative values = cut peaks
+// are SMALLER in bp than uncut peaks (as expected for cleavage products).
+function PeakShiftPanel({ currentSample, referenceSample, currentPeaks, referencePeaks, palette }) {
+  const colorFor = (d) => resolveDyeColor(d, palette);
+  const [tol, setTol] = useState(2.5);
+  const stats = useMemo(
+    () => computePeakShiftStats(currentPeaks, referencePeaks, tol),
+    [currentPeaks, referencePeaks, tol]
+  );
+  return (
+    <Panel
+      title="Peak shift analysis"
+      subtitle={`Signed bp offset: peaks in ${currentSample} minus nearest peaks in ${referenceSample} within tolerance.`}
+      className="mb-3"
+      actions={
+        <label className="flex items-center gap-2 text-xs">
+          <span className="text-zinc-600">Tol</span>
+          <input type="range" min="0.5" max="5" step="0.1" value={tol}
+                 onChange={e => setTol(parseFloat(e.target.value))} className="accent-zinc-700 w-24" />
+          <span className="tabular-nums text-zinc-600 w-14">{tol.toFixed(1)} bp</span>
+        </label>
+      }
+    >
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {["B", "G", "Y", "R"].map(d => {
+          const s = stats.byDye[d] || { n: 0, medianShift: null, meanShift: null };
+          const tone = s.medianShift == null ? "neutral"
+            : s.medianShift < -0.3 ? "emerald"      // shifted smaller — cleavage expected sign
+            : s.medianShift >  0.3 ? "rose"          // shifted larger — unexpected
+            :                        "neutral";
+          const toneBg = {
+            neutral: "bg-zinc-50 border-zinc-200",
+            emerald: "bg-emerald-50 border-emerald-200",
+            rose:    "bg-rose-50 border-rose-200",
+          }[tone];
+          return (
+            <div key={d} className={`px-3 py-2.5 rounded-lg border ${toneBg}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <DyeChip dye={d} showLabel />
+                <span className="ml-auto text-[11px] text-zinc-500">n={s.n}</span>
+              </div>
+              {s.n === 0 ? (
+                <div className="text-xs text-zinc-400">no matched pairs</div>
+              ) : (
+                <>
+                  <div className="text-xs text-zinc-600">
+                    median <span className="font-mono font-semibold text-zinc-800 tabular-nums">
+                      {s.medianShift > 0 ? "+" : ""}{s.medianShift.toFixed(2)} bp
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-zinc-500">
+                    mean {s.meanShift > 0 ? "+" : ""}{s.meanShift.toFixed(2)} bp
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 text-[11px] text-zinc-500">
+        Totals: <span className="font-mono text-zinc-700">{stats.totalN}</span> matched peaks across all four dyes.
+        {" "}Green = net shift to smaller sizes (expected after Cas9 cleavage); rose = shift to larger sizes (investigate).
+      </div>
+    </Panel>
+  );
+}
+
 // Preprocessing controls block — rendered once for the current sample and,
 // when pairing is active, a second time for the reference sample with its
 // own `prep` state object. Factored into a component so the two instances
@@ -4599,6 +4761,21 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         <VisibleWindowCard peaksByChannel={peaksByChannel} results={results[sample]} cfg={cfg[sample]} />
       </div>
 
+      {/* Peak-shift analysis: quantitative companion to the dotted/solid
+          overlay. For each dye, compute the observed bp shift between
+          current-sample peaks and nearest reference-sample peaks within tol.
+          Displayed as a compact per-dye row with n + median + mean. Only
+          meaningful when pairing is active. */}
+      {pairMode !== "none" && resolvedReference && (
+        <PeakShiftPanel
+          currentSample={sample}
+          referenceSample={resolvedReference}
+          currentPeaks={peaks}
+          referencePeaks={refPeaks}
+          palette={palette}
+        />
+      )}
+
       {/* Static species reference card (always available) */}
       <SpeciesLegend
         componentSizes={componentSizes}
@@ -5740,6 +5917,243 @@ function CrossDyeSummary({ classification, constructSize }) {
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
       {renderPair(p1)}
       {renderPair(p2)}
+    </div>
+  );
+}
+
+// Batch heatmap tab — sample × expected-species matrix, log10(height)
+// colored with a viridis-like palette. One screen for an entire 96-well
+// plate's worth of data. Click a row to copy the sample name.
+function HeatmapTab({ samples, componentSizes, constructSeq, targetStart, targetEnd, palette = "default" }) {
+  const constructSize = (constructSeq || "").length || 226;
+  const colorFor = (d) => resolveDyeColor(d, palette);
+
+  const [speciesSet, setSpeciesSet] = useState("both");   // "assembly" | "cut" | "both"
+  const [matchTol, setMatchTol] = useState(2.0);
+  const [sortBy, setSortBy] = useState("alpha");          // "alpha" | "total"
+  const [filterText, setFilterText] = useState("");
+  const [cutGrnaIdx, setCutGrnaIdx] = useState(0);
+
+  // Resolve the picked gRNA from the lab catalog, so the heatmap can include
+  // that gRNA's cut products as columns. Gracefully degrade when the spacer
+  // doesn't match the construct (the "cut" columns just don't appear).
+  const pickedCutGrna = useMemo(() => {
+    const entry = LAB_GRNA_CATALOG[cutGrnaIdx];
+    if (!entry) return null;
+    const norm = normalizeSpacer(entry.spacer);
+    if (norm.length !== 20) return null;
+    const rc = reverseComplement(norm);
+    const candidates = findGrnas(constructSeq, targetStart, targetEnd);
+    const cand = candidates.find(g => g.protospacer === norm || g.protospacer === rc);
+    return cand ? { ...cand, name: entry.name } : null;
+  }, [cutGrnaIdx, constructSeq, targetStart, targetEnd]);
+
+  // Columns: assembly products (one per dye they carry) + cut products for
+  // the picked gRNA at the two common chemistries (blunt + +4 sticky).
+  const species = useMemo(() => {
+    const list = [];
+    if (speciesSet !== "cut") {
+      for (const prod of ASSEMBLY_PRODUCTS) {
+        if (!prod.dyes) continue;
+        for (const dye of prod.dyes) {
+          list.push({
+            key: `asm:${prod.id}:${dye}`,
+            size: productSize(prod, componentSizes),
+            dye,
+            kind: "assembly",
+            label: `${prod.id}·${dye}`,
+          });
+        }
+      }
+    }
+    if (speciesSet !== "assembly" && pickedCutGrna) {
+      for (const oh of [0, 4]) {
+        const pr = predictCutProducts(pickedCutGrna, constructSize, oh);
+        for (const dye of ["B", "G", "Y", "R"]) {
+          if (!pr[dye] || pr[dye].length <= 0) continue;
+          list.push({
+            key: `cut:${dye}:${oh}`,
+            size: pr[dye].length,
+            dye,
+            kind: "cut",
+            label: `CUT·${dye}${oh === 0 ? "" : `+${oh}`}`,
+          });
+        }
+      }
+    }
+    // Sort columns by (dye order, size) for visual coherence.
+    const dyeOrder = { B: 0, G: 1, Y: 2, R: 3 };
+    list.sort((a, b) => (dyeOrder[a.dye] - dyeOrder[b.dye]) || (a.size - b.size));
+    return list;
+  }, [speciesSet, pickedCutGrna, componentSizes, constructSize]);
+
+  const filtered = useMemo(() => {
+    if (!filterText) return samples;
+    const re = (() => { try { return new RegExp(filterText, "i"); } catch { return null; } })();
+    return re ? samples.filter(s => re.test(s)) : samples.filter(s => s.toLowerCase().includes(filterText.toLowerCase()));
+  }, [samples, filterText]);
+
+  const matrix = useMemo(() => {
+    return buildHeatmapMatrix({ samples: filtered, peaksBySample: DATA.peaks, species, tol: matchTol });
+  }, [filtered, species, matchTol]);
+
+  const sortedRows = useMemo(() => {
+    if (sortBy === "total") {
+      return filtered.slice().sort((a, b) => {
+        const ta = species.reduce((t, sp) => t + (matrix.cells[a]?.[sp.key] || 0), 0);
+        const tb = species.reduce((t, sp) => t + (matrix.cells[b]?.[sp.key] || 0), 0);
+        return tb - ta;
+      });
+    }
+    return filtered.slice().sort();
+  }, [filtered, sortBy, species, matrix]);
+
+  // Compute color range from the visible cells so the palette auto-scales.
+  const colorRange = useMemo(() => {
+    const vals = [];
+    for (const s of sortedRows) {
+      for (const sp of species) {
+        const v = matrix.cells[s]?.[sp.key];
+        if (v != null) vals.push(v);
+      }
+    }
+    if (!vals.length) return [1.7, 4.5];
+    vals.sort((a, b) => a - b);
+    // Use 5th-95th percentile so outliers don't flatten the palette.
+    const lo = vals[Math.floor(vals.length * 0.05)];
+    const hi = vals[Math.floor(vals.length * 0.95)];
+    return [lo, hi];
+  }, [sortedRows, species, matrix]);
+
+  const svgRef = useRef(null);
+  const cellW = 28;
+  const cellH = 18;
+  const labelW = 200;
+  const headerH = 88;
+  const W = labelW + species.length * cellW + 16;
+  const H = headerH + sortedRows.length * cellH + 10;
+
+  return (
+    <div>
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+          <div>
+            <span className="font-semibold uppercase tracking-wide text-zinc-500 mr-2">Species</span>
+            <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden">
+              {[
+                { k: "both",     l: "Assembly + Cut" },
+                { k: "assembly", l: "Assembly only" },
+                { k: "cut",      l: "Cut only" },
+              ].map(o => (
+                <button key={o.k} onClick={() => setSpeciesSet(o.k)}
+                  className={`px-2 py-1 ${speciesSet === o.k ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>
+                  {o.l}
+                </button>
+              ))}
+            </div>
+          </div>
+          {speciesSet !== "assembly" && (
+            <label className="flex items-center gap-1.5">
+              <span className="text-zinc-600">gRNA:</span>
+              <select value={cutGrnaIdx} onChange={e => setCutGrnaIdx(parseInt(e.target.value, 10))}
+                      className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white max-w-[22ch] focus-ring">
+                {LAB_GRNA_CATALOG
+                  .map((g, i) => ({ g, i }))
+                  .filter(({ g }) => normalizeSpacer(g.spacer).length === 20)
+                  .map(({ g, i }) => <option key={`hm-${i}`} value={i}>{g.name}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="flex items-center gap-1.5">
+            <span className="text-zinc-600">Tol:</span>
+            <input type="range" min="0.5" max="5" step="0.1" value={matchTol}
+                   onChange={e => setMatchTol(parseFloat(e.target.value))} className="accent-zinc-700 w-24" />
+            <span className="tabular-nums text-zinc-600 w-10">{matchTol.toFixed(1)} bp</span>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span className="text-zinc-600">Sort:</span>
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                    className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+              <option value="alpha">Sample name (A→Z)</option>
+              <option value="total">Total matched signal (high→low)</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <span className="text-zinc-600">Filter:</span>
+            <input type="text" value={filterText} onChange={e => setFilterText(e.target.value)}
+                   placeholder="regex or substring" className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white w-40 focus-ring" />
+            <span className="text-[11px] text-zinc-500">{sortedRows.length}/{samples.length}</span>
+          </label>
+          <div className="ml-auto">
+            <ExportMenu svgRef={svgRef} basename="heatmap" label="Export" />
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-zinc-200 p-2 mb-3 overflow-x-auto">
+        {species.length === 0 ? (
+          <div className="p-6 text-xs text-zinc-500 text-center">
+            No species columns. Toggle to include assembly products or pick a gRNA whose spacer matches the construct.
+          </div>
+        ) : sortedRows.length === 0 ? (
+          <div className="p-6 text-xs text-zinc-500 text-center">
+            No samples match the current filter.
+          </div>
+        ) : (
+          <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+            {/* Column headers: dye-colored capsule + bp-size + kind */}
+            {species.map((sp, ci) => {
+              const x = labelW + ci * cellW;
+              return (
+                <g key={`col-${sp.key}`} transform={`translate(${x + cellW / 2}, ${headerH - 6})`}>
+                  <g transform="rotate(-55)">
+                    <text x="0" y="0" fontSize="9" fill={colorFor(sp.dye)} fontWeight="600"
+                          style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                      {sp.label}·{sp.size.toFixed(0)}
+                    </text>
+                  </g>
+                </g>
+              );
+            })}
+            {/* Rows */}
+            {sortedRows.map((s, ri) => {
+              const y = headerH + ri * cellH;
+              return (
+                <g key={`row-${s}`}>
+                  <text x={labelW - 6} y={y + cellH / 2 + 3} fontSize="10" fill="#334155" textAnchor="end"
+                        style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    <title>{s}</title>
+                    {s.length > 26 ? `…${s.slice(-24)}` : s}
+                  </text>
+                  {species.map((sp, ci) => {
+                    const x = labelW + ci * cellW;
+                    const v = matrix.cells[s]?.[sp.key];
+                    const fill = heatmapColor(v, colorRange[0], colorRange[1]);
+                    return (
+                      <g key={`c-${s}-${sp.key}`}>
+                        <rect x={x + 1} y={y + 1} width={cellW - 2} height={cellH - 2} rx="2"
+                              fill={fill} stroke="white" strokeWidth="0.5">
+                          <title>{`${s} · ${sp.label} (${sp.size.toFixed(1)} bp) · ${v != null ? `log10(h)=${v.toFixed(2)} (h=${Math.round(Math.pow(10, v))})` : "no match"}`}</title>
+                        </rect>
+                      </g>
+                    );
+                  })}
+                </g>
+              );
+            })}
+            {/* Legend swatch */}
+            <g transform={`translate(${labelW}, ${headerH + sortedRows.length * cellH + 8})`}>
+              {Array.from({ length: 30 }, (_, i) => {
+                const t = i / 29;
+                const v = colorRange[0] + t * (colorRange[1] - colorRange[0]);
+                return <rect key={`lg-${i}`} x={i * 4} y="0" width="4" height="8" fill={heatmapColor(v, colorRange[0], colorRange[1])} />;
+              })}
+              <text x="0" y="22" fontSize="9" fill="#64748b">log₁₀(h) {colorRange[0].toFixed(1)}</text>
+              <text x="120" y="22" fontSize="9" fill="#64748b" textAnchor="end">{colorRange[1].toFixed(1)} ({Math.round(Math.pow(10, colorRange[1]))} RFU)</text>
+            </g>
+          </svg>
+        )}
+      </div>
     </div>
   );
 }
