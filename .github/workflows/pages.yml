@@ -27,10 +27,11 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # Private-repo Pages publish at a randomized *.pages.github.io subdomain
-          # root, not under /fragment-viewer/. If the repo is made public this
-          # should change to /fragment-viewer/ so asset paths resolve.
-          GH_PAGES_BASE: /
+          # Public-repo project Pages serve at /<repo>/. Vite's base path must
+          # match so asset URLs in dist/index.html resolve correctly. (When
+          # the repo was private, Pages used a randomized subdomain root and
+          # this was "/".)
+          GH_PAGES_BASE: /fragment-viewer/
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
