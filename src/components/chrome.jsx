@@ -14,8 +14,7 @@ import {
   Activity, Crosshair, Scissors, Layers, GitCompare,
 } from "lucide-react";
 import { Pill, ToolButton } from "./primitives.jsx";
-// UploadButton still lives in the monolith (pending drop_zone extraction).
-import { UploadButton } from "../FragmentViewer.jsx";
+import { UploadButton } from "./drop_zone.jsx";
 
 export function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp, onOpenDnaDiagrams }) {
   return (
