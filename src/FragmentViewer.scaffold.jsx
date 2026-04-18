@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity, Crosshair, Scissors, Layers, GitCompare,
   Upload, Database, Microscope, FileDown, RotateCcw,
@@ -3123,42 +3124,39 @@ function PrintStyles() {
         .print-show { display: block !important; }
       }
 
-      /* Report-modal print isolation. The modal is rendered nested inside
-         the FragmentViewer root div, so a simple "> *:not(.fv-report-root)"
-         selector can't reach across nesting levels. Instead, we use the
-         visibility-based scope pattern: hide everything, then un-hide only
-         the .fv-report-root subtree. visibility (vs display:none) preserves
-         layout and child styles inherit correctly.                         */
-      body.fv-report-printing * { visibility: hidden !important; }
-      body.fv-report-printing .fv-report-root,
-      body.fv-report-printing .fv-report-root * { visibility: visible !important; }
+      /* Report-modal print isolation. The modal is portaled to document.body
+         via React createPortal, so it's a DIRECT child of body and the simple
+         "hide siblings" selector works. display:none on siblings completely
+         removes them from the flow — no position:fixed clipping, no height-
+         screen constraints, and multi-page PDFs flow naturally. */
+      body.fv-report-printing > *:not(.fv-report-root) { display: none !important; }
       body.fv-report-printing .fv-report-root {
-        position: fixed !important;
-        top: 0 !important; left: 0 !important;
+        position: static !important;
+        inset: auto !important;
         width: 100% !important;
         max-width: none !important;
+        max-height: none !important;
         margin: 0 !important; padding: 0 !important;
         background: white !important;
         box-shadow: none !important;
         border: none !important;
-        z-index: 99999 !important;
-        max-height: none !important;
         overflow: visible !important;
+        display: block !important;
       }
-      /* The modal's scrollable content region needs explicit overflow:visible
-         so all content flows across pages instead of being clipped to the
-         viewport-height box. Same for max-height that otherwise hides content. */
-      body.fv-report-printing .fv-report-root > div,
-      body.fv-report-printing .fv-report-root > * > div {
+      /* Strip scroll constraints on every descendant — Tailwind's
+         max-h-[80vh]/overflow-y-auto on the modal's content region would
+         otherwise clip everything after the first viewport-worth. */
+      body.fv-report-printing .fv-report-root * {
         max-height: none !important;
         overflow: visible !important;
         height: auto !important;
+        position: static !important;
+        inset: auto !important;
       }
       body.fv-report-printing .fv-report-actions,
-      body.fv-report-printing .fv-report-backdrop { display: none !important; }
-      /* Page break hints for printing: each top-level <section> inside the
-         report starts on a new logical page where possible. The browser
-         respects these when generating multi-page PDFs. */
+      body.fv-report-printing .fv-report-backdrop,
+      body.fv-report-printing .fv-report-root .no-print { display: none !important; }
+      /* Page break hints for printing */
       body.fv-report-printing .fv-report-root section {
         page-break-inside: avoid;
         break-inside: avoid;
@@ -3168,7 +3166,7 @@ function PrintStyles() {
         break-before: page;
       }
       @media print {
-        body.fv-report-printing { background: white !important; margin: 0 !important; }
+        html, body { background: white !important; margin: 0 !important; }
         body.fv-report-printing .fv-report-root { padding: 0 !important; }
         @page { size: letter portrait; margin: 0.5in; }
       }
@@ -3595,10 +3593,17 @@ function ReportModal({
 
   const printSafePrint = () => {
     document.body.classList.add("fv-report-printing");
-    setTimeout(() => {
-      window.print();
-      setTimeout(() => document.body.classList.remove("fv-report-printing"), 250);
-    }, 50);
+    // Two RAFs guarantee the print CSS (visibility / overflow overrides) has
+    // actually been applied before the browser's print dialog snapshots the
+    // DOM. A bare setTimeout can fire before the style/layout pass. After
+    // printing the class stays ~500 ms so the browser-side preview window
+    // (if the user clicks "Preview") re-reads the right state.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+        setTimeout(() => document.body.classList.remove("fv-report-printing"), 500);
+      });
+    });
   };
   const downloadMd = () => {
     const md = buildReportMarkdown({
@@ -3651,7 +3656,13 @@ function ReportModal({
     downloadMd();
   };
 
-  return (
+  // Portal to document.body so .fv-report-root becomes a true direct child
+  // of <body>. This makes the print CSS selector `body > *:not(.fv-report-
+  // root)` work reliably and frees the modal from the FragmentViewer root's
+  // `h-screen` + flex layout constraints during print — the report now
+  // flows naturally across multiple PDF pages instead of clipping to one
+  // viewport.
+  return createPortal(
     <div className="fv-report-root fixed inset-0 z-50 flex items-start justify-center pt-6 pb-6 px-4 overflow-auto">
       <div className="fv-report-backdrop fixed inset-0 bg-black/40 no-print" onClick={onClose} />
       <div className="relative w-full max-w-5xl bg-white rounded-xl border border-zinc-200 shadow-2xl">
@@ -3971,7 +3982,8 @@ function ReportModal({
           </section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
