@@ -81,14 +81,23 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install ruff + pyyaml + pytest
+        run: pip install ruff pyyaml pytest
       - name: Compile Python scripts
         run: |
           python -m py_compile scripts/build_artifact.py
           python -m py_compile scripts/ingest_to_kb.py
-      - name: Lint scripts
-        run: ruff check scripts/
+          python -m py_compile scripts/regen_scaffold.py
+          python -m py_compile scripts/cross_link_smaseq.py
+          python -m py_compile skills/cas9-cut-predictor/scripts/cas9_cut_predictor.py
+          python -m py_compile skills/genemapper-parser/scripts/genemapper_parser.py
+          python -m py_compile skills/clc-construct-registry/scripts/clc_construct_registry.py
+      - name: Lint scripts and skills
+        run: ruff check scripts/ skills/
+      - name: Validate constructs.yaml
+        run: python skills/clc-construct-registry/scripts/clc_construct_registry.py validate
+      - name: Pytest skills
+        run: pytest skills/cas9-cut-predictor/tests/ skills/genemapper-parser/tests/ -q
 
   ingest-roundtrip:
     runs-on: ubuntu-latest

@@ -87,12 +87,30 @@ Answer: those are partial ligation products. "Missing Ad2" = 201 bp, "Missing Ad
 
 ## Cross-references
 
+### In-repo docs
+
 - Canonical biology: `docs/BIOLOGY.md`
 - Code structure: `docs/ARCHITECTURE.md`
 - gRNA catalog format: `docs/GRNA_CATALOG.md`
 - Tutorial: `docs/TUTORIAL.md`
+- Lab integrations map: `docs/LAB_INTEGRATIONS.md`
 - Knowledge-base ingestion: `scripts/ingest_to_kb.py`
-- Related skills: `cas9-guide-mapper` (for mapping gRNAs to reference genomes), `grna-variant-checker` (for off-target and patient-variant analysis), `golden-gate-assembly` (for designing the Level-0 plasmids this assay consumes)
+
+### Sibling skills extracted from this project
+
+- `cas9-cut-predictor` — Python port of the cut/PAM/product math used in the Cas9 Cut Prediction tab. Use from any lab tool that needs predictions without spinning up the React viewer.
+- `genemapper-parser` — Python port of the in-browser GeneMapper TSV parser. The single source of truth for the JSON peaks shape that fragment-viewer consumes.
+- `clc-construct-registry` — YAML registry of CLC constructs (`data/constructs.yaml`). The authoritative store of construct sequences, target windows, and dye-strand conventions.
+
+### Upstream and downstream lab skills
+
+- `cas9-guide-mapper` — map a gRNA spacer to GRCh38 (off-target and on-target genomic coordinates).
+- `grna-variant-checker` — check whether known patient variants disrupt a gRNA's target site.
+- `golden-gate-assembly` — design the Level-0 plasmids that become the CLC constructs this assay reads.
+- `cas9-panel-eval` — when fragment-viewer reveals which gRNAs cut efficiently, those results feed panel-level evaluation downstream.
+- `cas9-enrichment` — Cas9-targeted PacBio / ONT enrichment, the production application of the gRNAs this assay validates.
+- `sma-pipeline` — SMA-seq library prep often consumes CLC fragment products from this assay; cross-link via `scripts/cross_link_smaseq.py`.
+- `lab-research-oracle` — searches `~/lab_knowledge.db` and Fireflies / Tactiq transcripts for past discussions of CLC chemistry, V059, gRNA3, etc.
 
 ## Do NOT
 

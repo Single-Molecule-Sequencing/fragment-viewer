@@ -1,0 +1,68 @@
+# constructs.yaml — Canonical CLC fragment-analysis constructs.
+#
+# Read by: clc-construct-registry skill, fragment-viewer (when generalized
+# beyond V059 in a future iteration), cas9-cut-predictor (for default
+# construct lookup), and any lab tool that needs the canonical dye/strand
+# convention.
+#
+# Schema (per construct):
+#   id                 unique short id used as foreign key elsewhere
+#   name               human-readable label
+#   total_bp           length of the ligated construct
+#   target_start       1-indexed start of the target region (inclusive)
+#   target_end         1-indexed end of the target region (inclusive)
+#   sequence           5' to 3' top-strand sequence, full ligated form
+#   components:        ordered list of segments; sizes must sum to total_bp
+#     - key, name, size, dyes (which channels light up if this segment carries them)
+#   dye_strand:        per-dye strand, end (5'/3'), construct position, oligo length
+#                      MUST match docs/BIOLOGY.md §3 in the fragment-viewer repo.
+#
+# Add a new construct by appending an entry below. Validate with
+# `clc-construct-registry.py validate`.
+
+schema_version: 1
+
+constructs:
+  V059_gRNA3:
+    id: V059_gRNA3
+    name: V059 gRNA3 ligated construct
+    total_bp: 226
+    target_start: 55
+    target_end: 172
+    sequence: CGTACGATGCGTACGACCGATGCCAGGAGACGTGCTGAGGTCCATAGCCTGGACGCTCAGTCGGCAGGTGCCAGAACGTTCCCTGGGAAGGCCCCATGGAAGCCCAGGACTGAGCCACCACCCTCAGCCTCGTCACCTCACCACAGGACTGGCTACCTCTCTGGGCCCTCAGGGATCCAATCGAGTCGCAGGTACCCAGCGGCGATCCGATGACCGTACGTCGACC
+    snapgene_file: data/V059_gRNA3_construct.dna
+    components:
+      - { key: ad1,    name: Fluor Adapter 1, size: 25,  dyes: [B, Y] }
+      - { key: oh1,    name: Overhang 1,      size: 4,   dyes: [] }
+      - { key: br1,    name: Bridge Oligo 1,  size: 25,  dyes: [] }
+      - { key: target, name: Target,          size: 118, dyes: [] }
+      - { key: br2,    name: Bridge Oligo 2,  size: 25,  dyes: [] }
+      - { key: oh2,    name: Overhang 2,      size: 4,   dyes: [] }
+      - { key: ad2,    name: Fluor Adapter 2, size: 25,  dyes: [G, R] }
+    dye_strand:
+      B: { dye_name: 6-FAM, strand: bot, fragment: left,  end: "3'", pos: 1,   oligo_len: 29 }
+      Y: { dye_name: TAMRA, strand: top, fragment: left,  end: "5'", pos: 1,   oligo_len: 25 }
+      G: { dye_name: HEX,   strand: bot, fragment: right, end: "5'", pos: 226, oligo_len: 25 }
+      R: { dye_name: ROX,   strand: top, fragment: right, end: "3'", pos: 226, oligo_len: 29 }
+    notes: |
+      Reference construct. SnapGene file in repo at data/V059_gRNA3_construct.dna.
+      Pairing convention: (B,Y) at Adapter 1, (G,R) at Adapter 2. Earlier
+      versions used (B,R) + (G,Y) which was wrong; corrected in fragment-viewer
+      v0.3 after clarification that TAMRA + 6-FAM share Adapter 1.
+
+# Add new constructs below as the lab develops more CLC variants.
+#
+# Example template:
+#
+#   V073_pgxA:
+#     id: V073_pgxA
+#     name: V073 PGx panel construct A
+#     total_bp: 212
+#     target_start: 55
+#     target_end: 158
+#     sequence: ...
+#     components: ...
+#     dye_strand:
+#       B: { dye_name: 6-FAM, strand: bot, ... }
+#       ...
+#     notes: ...
