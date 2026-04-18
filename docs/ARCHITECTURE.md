@@ -25,13 +25,28 @@ fragment-viewer/
 │   ├── CHANGELOG.md                   Version history
 │   └── CONTRIBUTING.md                Local dev, tests, commit conventions
 ├── scripts/
-│   ├── build_artifact.py              GeneMapper TSV → DATA literal in JSX
-│   ├── ingest_to_kb.py                LAB_GRNA_CATALOG + samples → ~/lab_knowledge.db
-│   └── init_repo.sh                   One-shot git init + gh repo create + push
+│   ├── build_artifact.py              GeneMapper TSV → DATA literal in JSX (legacy)
+│   ├── fsa_to_json.py                 ABIF .fsa batch → seed JSON (canonical ingest path)
+│   ├── inject_seed_json.py            seed JSON → DATA literal substitution in the scaffold
+│   └── ingest_to_kb.py                LAB_GRNA_CATALOG → ~/lab_knowledge.db (lab-internal)
+├── public/
+│   └── demo/                          V059_4-5.fsa + gRNA3_1-1.fsa (seeded demo, browser-fetched on mount)
 ├── skills/
 │   └── fragment-viewer/SKILL.md       Claude skill that triggers on fragment-analysis terms
-├── tests/
-│   └── classifier.test.mjs            Vitest unit tests on classifyPeaks et al
+├── tests/                             13 vitest files, 147 tests as of v0.23.0
+│   ├── classifier.test.mjs            core classifyPeaks + matchLabCatalog
+│   ├── fsa_parser.test.mjs            ABIF parser + LIZ calibration on real fixtures
+│   ├── preprocess.test.mjs            Savitzky-Golay, rolling baseline, clip
+│   ├── preprocess_extras.test.mjs     moving-average, median, detrend, log, derivative
+│   ├── residual_and_calib.test.mjs    computeResidual + autoCalibrateDyeOffsets
+│   ├── snr_purity_palette.test.mjs    per-peak SNR, purity score, palette contract
+│   ├── csv_and_url.test.mjs           peak-table CSV + URL view-state round-trip
+│   ├── heatmap_and_shift.test.mjs     buildHeatmapMatrix + computePeakShiftStats
+│   ├── combined_svg.test.mjs          buildCombinedSvg layout math
+│   ├── export.test.mjs                SVG / PNG / JPG / WebP guard paths
+│   ├── da_tailing.test.mjs            evaluateDATailing LEFT/RIGHT sign conventions
+│   ├── post_tailing.test.mjs          predictPostTailing + adapter compatibility
+│   └── issues_regression.test.mjs     regression tests for closed issues
 ├── .project/
 │   ├── HANDOFF.md                     Session handoff for the next agent
 │   ├── PLAN.md                        Current priorities
@@ -41,19 +56,20 @@ fragment-viewer/
     └── validate.yml                   CI: jsx parse, biology sync, python syntax, ruff, ingest test
 ```
 
-## 2. The five tabs (in `src/FragmentViewer.jsx`)
+## 2. The six tabs (in `src/FragmentViewer.jsx`)
 
-Tabs are conditionally rendered from a single `tab` state variable. Each tab is a sub-section of the main `FragmentViewer` component.
+Tabs are conditionally rendered from a single `tab` state variable. Each tab is a sub-section of the main `FragmentViewer` component. To find a tab component in the source, grep the function definition rather than relying on line numbers — the file is ~9500 lines and the positions drift with every release.
 
-| Tab | Roughly | Primary functions used |
-|---|---|---|
-| Electropherogram | line ~1100 | `dominantPeak`, `gaussianSum`, smoothing helpers |
-| Peak Identification | line ~1180 | `classifyPeak`, `assemblyProducts` derivation |
-| Cas9 Cut Prediction | line ~1430 | `findPAMs`, `predictCutProducts`, `matchLabCatalog` |
-| Auto Classify | line ~1480 | `classifyPeaks` (the big one), `crossDyeSummary` |
-| Cross-Sample Comparison | line ~2200 | `summarizeOverhangs`, `purityGrid` |
+| Tab | Component | Navigate with | Primary functions used |
+|---|---|---|---|
+| Electropherogram | `TraceTab` | `grep "^function TraceTab"` | `buildGaussianPath`, preprocessing pipeline, paired overlay, end-structure editor |
+| Peak ID | `PeakIdTab` | `grep "^function PeakIdTab"` | `classifyPeak`, assembly-product derivation |
+| Cas9 Cut Prediction | `CutPredictionTab` | `grep "^function CutPredictionTab"` | `findGrnas`, `predictCutProducts`, `matchLabCatalog` |
+| Auto Classify | `AutoClassifyTab` | `grep "^function AutoClassifyTab"` | `classifyPeaks`, `autoCalibrateDyeOffsets` |
+| Cross-Sample | `CompareTab` | `grep "^function CompareTab"` | overhang summary, purity grid |
+| Batch Heatmap | `HeatmapTab` | `grep "^function HeatmapTab"` | `buildHeatmapMatrix`, `heatmapColor` (viridis 5-stop) |
 
-Line numbers are approximate; use grep when they drift.
+Sidebar registration: search for `const tabs = [` in `Sidebar` — that's the single list the sidebar + FragmentViewer's tab switch both read from.
 
 ## 3. Top-of-file constants
 
@@ -69,11 +85,10 @@ Everything biology-related is concentrated in a small block of constants near th
 
 ## 4. Data flow
 
-1. A GeneMapper TSV export is parsed by `scripts/build_artifact.py` into `data/fa_data.json`.
-2. The same script substitutes the JSON into `src/FragmentViewer.scaffold.jsx` at the `__DATA__` placeholder, producing `src/FragmentViewer.jsx`.
-3. The viewer is opened either as a Claude.ai artifact or via the Vite scaffold and GitHub Pages deploy (see CONTRIBUTING.md §3).
-4. All analysis happens client-side; nothing leaves the browser.
-5. `scripts/ingest_to_kb.py` reads the JSX (regex-extracts `LAB_GRNA_CATALOG`) and `data/fa_data.json`, writes to `~/lab_knowledge.db` for downstream skills.
+1. **At runtime (primary path).** User opens the public Pages site. `FragmentViewer` mount-effect fetches `public/demo/V059_4-5.fsa` + `public/demo/gRNA3_1-1.fsa` via `fetch()`, parses each through `parseFsaArrayBuffer` (same code path as drag-drop), and populates `DATA.peaks` + `DATA.traces`. User drag-drops their own `.fsa` / `.ab1` / GeneMapper TSV to replace the seed.
+2. **At build time (seeded demo).** `scripts/fsa_to_json.py` batch-parses `.fsa` files → `data/seed_*.json`. `scripts/inject_seed_json.py` substitutes the JSON into `src/FragmentViewer.scaffold.jsx` at the `__DATA__` placeholder → `src/FragmentViewer.jsx`.
+3. **Client-only.** All analysis happens in the browser. No server. No uploads.
+4. **Lab-side knowledge base (optional).** `scripts/ingest_to_kb.py` reads the JSX (regex-extracts `LAB_GRNA_CATALOG`), writes to `~/lab_knowledge.db` for downstream skills. This path is lab-internal; public users never touch it.
 
 ## 5. The `classifyPeaks` function
 

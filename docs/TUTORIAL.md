@@ -254,23 +254,23 @@ Last tested ingest run: 11 gRNAs + 10 experiments inserted into `/tmp/test_kb.db
 
 ---
 
-## 7. Publish the repo to GitHub
+## 7. Repo location
 
-The easiest path:
+The repo is already public at `github.com/Single-Molecule-Sequencing/fragment-viewer` and hosted at `single-molecule-sequencing.github.io/fragment-viewer/`. To contribute, clone + branch + PR:
 
 ```bash
-cd "/c/Users/gregfar/University of Michigan Dropbox/Gregory Farnum/Claude/Projects/fragment-viewer"
-bash scripts/init_repo.sh
+git clone https://github.com/Single-Molecule-Sequencing/fragment-viewer.git
+cd fragment-viewer
+npm install
+git checkout -b my-feature
+# ... edits ...
+npm test && npm run build
+git push origin my-feature
 ```
 
-This will:
-1. Run `git init` and add a sensible `.gitignore`
-2. Make an initial commit with all current files
-3. If `gh` CLI is installed and authenticated, create `github.com/Single-Molecule-Sequencing/fragment-viewer` as private and push
-4. If `gh` is not available, add the remote and try `git push` (in that case, create the repo in browser first)
-
-After publishing, the links in this tutorial will resolve:
+Useful links:
 - Repo: https://github.com/Single-Molecule-Sequencing/fragment-viewer
+- Live tool: https://single-molecule-sequencing.github.io/fragment-viewer/
 - Tutorial: https://github.com/Single-Molecule-Sequencing/fragment-viewer/blob/main/docs/TUTORIAL.md
 - Biology: https://github.com/Single-Molecule-Sequencing/fragment-viewer/blob/main/docs/BIOLOGY.md
 - Actions: https://github.com/Single-Molecule-Sequencing/fragment-viewer/actions

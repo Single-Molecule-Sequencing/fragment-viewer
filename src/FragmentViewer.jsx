@@ -1398,7 +1398,26 @@ function locateCustomGrna(grnaSeq, fullConstruct, targetStart, targetEnd) {
 //      abundance, best-guess identity, chemistry interpretation
 // ======================================================================
 
+// classifyPeaks accepts either the legacy 13-positional signature (for
+// backward compat) or an options object. Options form — preferred:
+//   classifyPeaks({
+//     sampleData, constructSeq, targetStart, targetEnd, constructSize,
+//     componentSizes, assemblyProducts, grnaCatalog, dyeOffsets,
+//     heightThreshold, matchTol, clusterTol, overhangsToConsider,
+//   })
+// The positional legacy form is preserved by detecting a first-arg object
+// with the shape of sampleData (per-dye arrays). (Issue #9 fix.)
 export function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, constructSize, componentSizes, assemblyProducts, grnaCatalog, dyeOffsets, heightThreshold, matchTol, clusterTol, overhangsToConsider) {
+  // Detect options-object call form: first arg has construct/target fields
+  // but no per-dye peak arrays at the top level (sampleData has B/G/Y/R).
+  if (sampleData && typeof sampleData === "object" && !Array.isArray(sampleData.B) && !Array.isArray(sampleData.G) && "sampleData" in sampleData) {
+    const o = sampleData;
+    return classifyPeaks(
+      o.sampleData, o.constructSeq, o.targetStart, o.targetEnd, o.constructSize,
+      o.componentSizes, o.assemblyProducts, o.grnaCatalog, o.dyeOffsets,
+      o.heightThreshold, o.matchTol, o.clusterTol, o.overhangsToConsider,
+    );
+  }
   const grnas = findGrnas(constructSeq, targetStart, targetEnd);
 
   // Pre-compute all predictions per dye. Predictions are { size, label, kind, detail }
@@ -2935,7 +2954,7 @@ export default function FragmentViewer() {
   }, []);
 
   const samples = useMemo(() => Object.keys(DATA.peaks).sort(), [dataKey]);
-  const [tab, setTab] = useState("trace");   // "trace" | "peakid" | "compare"
+  const [tab, setTab] = useState("trace");   // "trace" | "peakid" | "cutpred" | "autoclass" | "compare" | "heatmap"
 
   // Persistent per-sample config
   const [cfg, setCfg] = useState(() => computeAutoDefaults(DATA.peaks));
@@ -7406,11 +7425,18 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
 
   const classification = useMemo(() => {
     if (!sampleData) return null;
-    return classifyPeaks(
-      sampleData, constructSeq, targetStart, targetEnd, constructSize,
-      componentSizes, ASSEMBLY_PRODUCTS, LAB_GRNA_CATALOG,
-      dyeOffsets, heightThreshold, matchTol, clusterTol, overhangs
-    );
+    // Issue #9 fix: options-object call form. Order-independent and less
+    // error-prone than the 13-positional legacy form (which still works).
+    return classifyPeaks({
+      sampleData,
+      constructSeq, targetStart, targetEnd, constructSize,
+      componentSizes,
+      assemblyProducts: ASSEMBLY_PRODUCTS,
+      grnaCatalog: LAB_GRNA_CATALOG,
+      dyeOffsets,
+      heightThreshold, matchTol, clusterTol,
+      overhangsToConsider: overhangs,
+    });
   }, [sampleData, constructSeq, targetStart, targetEnd, constructSize, componentSizes, dyeOffsets, heightThreshold, matchTol, clusterTol, overhangs]);
 
   // Auto-calibrate dye offsets from blunt assumption: assume the tallest peak in

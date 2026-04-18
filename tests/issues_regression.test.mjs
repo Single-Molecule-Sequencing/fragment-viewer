@@ -80,3 +80,42 @@ describe("Issue #3 — dye palette is a single source of truth", () => {
     expect(resolveDyeColor("B", "wong")).not.toBe(DYE_PALETTES.default.B);
   });
 });
+
+describe("Issue #9 — classifyPeaks accepts an options-object call form", () => {
+  const seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+  const components = { ad1: 25, oh1: 4, br1: 25, target: 118, br2: 25, oh2: 4, ad2: 25 };
+  const sampleData = { B: [], G: [], Y: [], R: [], O: [] };
+
+  it("options-object form returns the same structure as the positional form", () => {
+    const positional = classifyPeaks(
+      sampleData, seq, 10, 50, 226, components, [], [],
+      { B: 0, G: 0, Y: 0, R: 0 }, 100, 8, 5, [0]
+    );
+    const opts = classifyPeaks({
+      sampleData,
+      constructSeq: seq, targetStart: 10, targetEnd: 50, constructSize: 226,
+      componentSizes: components,
+      assemblyProducts: [],
+      grnaCatalog: [],
+      dyeOffsets: { B: 0, G: 0, Y: 0, R: 0 },
+      heightThreshold: 100, matchTol: 8, clusterTol: 5,
+      overhangsToConsider: [0],
+    });
+    expect(Object.keys(opts).sort()).toEqual(Object.keys(positional).sort());
+  });
+
+  it("options-object form still takes a custom grnaCatalog", () => {
+    const customCatalog = [{ name: "CUSTOM_RG", spacer: "ACGTACGTACGTACGTACGT" }];
+    const out = classifyPeaks({
+      sampleData,
+      constructSeq: seq, targetStart: 10, targetEnd: 50, constructSize: 226,
+      componentSizes: components,
+      assemblyProducts: [],
+      grnaCatalog: customCatalog,
+      dyeOffsets: { B: 0, G: 0, Y: 0, R: 0 },
+      heightThreshold: 100, matchTol: 8, clusterTol: 5,
+      overhangsToConsider: [0],
+    });
+    expect(out).toHaveProperty("B");
+  });
+});

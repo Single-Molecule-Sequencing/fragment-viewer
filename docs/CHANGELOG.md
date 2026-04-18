@@ -88,3 +88,69 @@ The format is loosely [Keep a Changelog](https://keepachangelog.com/). This proj
 - 11 catalog entries have `spacer: ""`. The `matchLabCatalog` green badge feature is dark until populated.
 - The `gRNA3_X-Y` samples show ~88 bp G-only peaks inconsistent with the 226 bp V059 construct; likely a different (smaller) plasmid that needs its own `CONSTRUCT` variant.
 - Dye mobility offsets default to zero; no instrument-specific calibration data yet.
+
+
+---
+
+## v0.8.0 — v0.22.2 (Apr 2026)
+
+Rather than one bullet per minor version across 15 releases, this block summarizes the feature arc that took the viewer from "Claude.ai artifact with a peak-table" to "public-hosted lab tool with interactive biology simulation." Individual commits on `main` retain per-feature detail.
+
+### Ingest and data model
+
+- **In-browser ABIF parsing.** `parseFsaArrayBuffer` + `calibrateLizJs` + `callPeaksFromTrace` turn raw `.fsa` / `.ab1` files into the same peak-table shape the old GeneMapper path produced. Raw DATA1..4 traces are preserved so "show unsmoothed raw" works.
+- **Seeded demo.** `V059_4-5.fsa` (uncut) + `gRNA3_1-1.fsa` (cut) ship in `public/demo/` and are fetched on mount. Same code path as drag-drop.
+- **Peak-table CSV export** (Toolbar → CSV). Tidy long format.
+
+### Analytical
+
+- **Preprocessing pipeline.** clip → log10 → rolling-min baseline → detrend → Savitzky-Golay / moving-average / median smoother → first derivative. Per-sample independent settings in paired view.
+- **Residual view.** `computeResidual` + toggle → raw minus modeled gaussian.
+- **Per-peak SNR + noise floor.** `computePeakSNR` robust MAD; lane-wide dashed 3σ reference line.
+- **Cut-product purity score.** `computePurityScore` height-weighted, color-coded pill on every sample button.
+- **Multi-sample auto-calibrated dye offsets.** `autoCalibrateDyeOffsets` median-based, robust to outliers, ≥3 matches per dye gate.
+- **Peak-shift analysis panel.** Quantitative per-dye bp shift between paired samples.
+
+### Visualization
+
+- **Paired overlay.** Dotted uncut + solid cut on the same 4-color stacked lane, per-sample normalized (`pairScale: "independent"` default).
+- **End-structure editor.** Nudge each of 4 strand termini ±1 bp; dA-tailability pill flips.
+- **Post-dA-tailing reaction diagram.** 4-step: Original → Taq 5′→3′ exo → Taq 5′→3′ pol + dATP → T/A adapter ligated.
+- **PAM visualization** on ConstructDiagram (purple band + orientation arrow + actual motif text).
+- **Batch heatmap tab.** Sample × expected-species viridis matrix (96-well-plate view).
+- **Colorblind-safe palette** toggle (Default / Wong / IBM / Grayscale).
+
+### Export
+
+- **Multi-format export menu** per figure: SVG, PNG @ 2×/4×/6×/8×, PNG transparent, WebP, JPG.
+- **DNA diagrams modal** (Toolbar → "DNA diagrams") with combined SVG / PNG bundle export.
+- **Report modal** (Toolbar → "Report") — 5 sections (A–E) with figures + captions + per-sample chromatograms + expected-species table + full PDF print (portaled to `document.body` for clean multi-page output) + "Export all" one-click bundle download.
+
+### Infrastructure
+
+- **Public hosting.** Repo flipped public, Pages serves at `https://single-molecule-sequencing.github.io/fragment-viewer/`. Vite `GH_PAGES_BASE=/fragment-viewer/`.
+- **Shareable URL state.** All major view state (sample, zoom, channels, pair mode, palette, preprocessing, end offsets) encodes to `#view=…` URL fragment; Toolbar → "Link" copies the current full URL.
+- **Keyboard shortcuts.** ←/→ samples, [/] smoothing, f zoom, 1-4 channels, n noise floor, r raw, ? help.
+- **CI.** `validate.yml` runs vitest (147 tests), seed-data-schema, ingest-roundtrip, scaffold-in-sync. `pages.yml` deploys on push to main.
+
+### Pre-release checklist (for next release)
+
+Follow this order for every version bump to keep `package.json`, `README`, and `CHANGELOG` in lockstep:
+
+1. Bump `package.json::version`.
+2. Add a `## vX.Y.Z — YYYY-MM-DD` section to this file with one bullet per meaningful change.
+3. Update the `Current version: **vX.Y.Z**` line in `README.md`.
+4. Run `npm test && npm run build && python3 scripts/regen_scaffold.py`.
+5. Commit with a message that lists the changes (same content as the CHANGELOG entry).
+6. `git push origin main`.
+
+---
+
+## v0.23.0 (2026-04-18)
+
+Closed 6 open issues in one batch: `Fixes #2` (classifyPeaks unused grnaCatalog), `Fixes #3` (5 drifted dye palettes collapsed to one), `Fixes #4` (stale results memo on drag-drop), `Fixes #5` (test hardcoded WSL path), `Fixes #6` (lab-internal paths stripped from public docs), `Fixes #7` (data/fa_data.json deleted). +8 regression tests (139 → 147).
+
+## v0.24.0 (2026-04-18)
+
+Closed 5 issues: `Fixes #8` (deleted scripts/init_repo.sh), `Fixes #10` (CHANGELOG catch-up — this entry), `Fixes #11` (ARCHITECTURE.md updated for 6 tabs + 13 test files + new data flow), `Fixes #12` (shrunk examples/ from 638K → 71K via PNG8 + resize), plus `Fixes #9` (classifyPeaks converted to options-object signature).
+
