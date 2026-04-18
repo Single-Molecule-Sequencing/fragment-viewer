@@ -2529,6 +2529,45 @@ export default function FragmentViewer() {
     setDataKey(k => k + 1);
   };
 
+  // On first mount, fetch the seeded demo .fsa files from /demo and parse
+  // them with the SAME browser-side parseFsaArrayBuffer that drag-drop uses.
+  // This guarantees the seeded view matches what users see when they upload
+  // their own .fsa — no Python heuristics divergence, no "preprocessed
+  // strangely" surprises. Raw traces are preserved so the raw-signal toggle
+  // works out of the box on the seeded samples.
+  const [demoLoaded, setDemoLoaded] = useState(false);
+  useEffect(() => {
+    if (demoLoaded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Vite's BASE_URL resolves to the Pages subpath (/fragment-viewer/)
+        // in production, "/" in dev. Either way it points at /demo/*.fsa.
+        const base = (import.meta?.env?.BASE_URL) || "/";
+        const files = [
+          { name: "V059_4-5.fsa", url: `${base}demo/V059_4-5.fsa` },
+          { name: "gRNA3_1-1.fsa", url: `${base}demo/gRNA3_1-1.fsa` },
+        ];
+        const merged = {};
+        const mergedTraces = {};
+        for (const f of files) {
+          const res = await fetch(f.url);
+          if (!res.ok) continue;
+          const buf = await res.arrayBuffer();
+          const { sampleName, peaks, calibrated, traces, bpAxis } = parseFsaArrayBuffer(buf, f.name);
+          if (!calibrated) continue;
+          merged[sampleName] = peaks;
+          mergedTraces[sampleName] = { ...traces, bpAxis };
+        }
+        if (!cancelled && Object.keys(merged).length > 0) {
+          handleNewPeaks(merged, mergedTraces);
+        }
+      } catch { /* silently keep the fallback seeded literal */ }
+      if (!cancelled) setDemoLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const samples = useMemo(() => Object.keys(DATA.peaks).sort(), [dataKey]);
   const [tab, setTab] = useState("trace");   // "trace" | "peakid" | "compare"
 
@@ -3177,6 +3216,63 @@ function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
 // ======================================================================
 // TAB 1 — Single-sample electropherogram viewer with high-res trace
 // ======================================================================
+// Per-sample style row — one instance per overlaid sample. Each row carries
+// independent controls for stroke width, stroke opacity, fill opacity, and
+// dash pattern. The accent parameter themes the row header so the two rows
+// are visually distinguishable at a glance (zinc = current/cut, indigo =
+// reference/uncut). Previews the current dash pattern inline as a SVG line
+// so users see the choice before applying.
+function SampleStyleRow({ title, accent = "zinc", style, setField }) {
+  const titleCls = accent === "indigo" ? "text-indigo-700" : "text-zinc-700";
+  const dashPatterns = [
+    { k: "solid",    l: "Solid",    arr: "none" },
+    { k: "dotted",   l: "Dotted",   arr: "1 3", cap: "round" },
+    { k: "dashed",   l: "Dashed",   arr: "5 3" },
+    { k: "dash-dot", l: "Dash-dot", arr: "5 2 1 2" },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+      <span className={`font-semibold tracking-tight ${titleCls} min-w-[22ch]`}>{title}</span>
+      <label className="flex items-center gap-1.5" title="Stroke width of the modeled gaussian trace">
+        <span className="text-zinc-500">Width</span>
+        <input type="range" min="0.5" max="3" step="0.1" value={style.strokeWidth}
+               onChange={e => setField("strokeWidth", parseFloat(e.target.value))} className="accent-zinc-700 w-20" />
+        <span className="tabular-nums text-zinc-600 w-8">{style.strokeWidth.toFixed(1)}</span>
+      </label>
+      <label className="flex items-center gap-1.5" title="Stroke opacity (line)">
+        <span className="text-zinc-500">Line α</span>
+        <input type="range" min="0.1" max="1" step="0.05" value={style.strokeOpacity}
+               onChange={e => setField("strokeOpacity", parseFloat(e.target.value))} className="accent-zinc-700 w-20" />
+        <span className="tabular-nums text-zinc-600 w-10">{style.strokeOpacity.toFixed(2)}</span>
+      </label>
+      <label className="flex items-center gap-1.5" title="Fill opacity (under the line)">
+        <span className="text-zinc-500">Fill α</span>
+        <input type="range" min="0" max="0.6" step="0.02" value={style.fillOpacity}
+               onChange={e => setField("fillOpacity", parseFloat(e.target.value))} className="accent-zinc-700 w-20" />
+        <span className="tabular-nums text-zinc-600 w-10">{style.fillOpacity.toFixed(2)}</span>
+      </label>
+      <label className="flex items-center gap-1.5">
+        <span className="text-zinc-500">Pattern</span>
+        <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden">
+          {dashPatterns.map(d => (
+            <button key={d.k} onClick={() => setField("dash", d.k)}
+              className={`px-1.5 py-0.5 ${style.dash === d.k ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}
+              title={d.l}>
+              <svg width="26" height="6" aria-hidden style={{ display: "block" }}>
+                <line x1="0" y1="3" x2="26" y2="3"
+                      stroke={style.dash === d.k ? "white" : "#334155"}
+                      strokeWidth="1.5"
+                      strokeDasharray={d.arr}
+                      strokeLinecap={d.cap || "butt"} />
+              </svg>
+            </button>
+          ))}
+        </div>
+      </label>
+    </div>
+  );
+}
+
 // Peak-shift analysis panel — quantifies the dotted-vs-solid visual overlay
 // into per-dye bp shifts. For each current-sample peak, finds the nearest
 // reference peak within tol and records the signed delta. Median is robust
@@ -3356,8 +3452,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const [stackChannels, setStackChannels] = useState(() => seeded("stackChannels", true));
   const [logY, setLogY] = useState(() => seeded("logY", false));
   const [smoothing, setSmoothing] = useState(() => seeded("smoothing", 1));
-  const [labelPeaks, setLabelPeaks] = useState(true);
-  const [showExpected, setShowExpected] = useState(true);
+  // Peak labels + Expected markers OFF by default — they clutter the paired
+  // overlay view. Users can flip them on from the controls row when needed.
+  const [labelPeaks, setLabelPeaks] = useState(() => seeded("labelPeaks", false));
+  const [showExpected, setShowExpected] = useState(() => seeded("showExpected", false));
   const [showSpecies, setShowSpecies] = useState(false);
 
   // Y-axis scaling. "auto" = per-lane peak * 1.12 (legacy default);
@@ -3371,6 +3469,34 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const [traceOpacity, setTraceOpacity] = useState(0.95);
   const [fillOpacity, setFillOpacity] = useState(0.20);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Per-sample style overrides for the paired overlay. Each sample's modeled
+  // gaussian gets an independent stroke width, stroke opacity, fill opacity,
+  // and stroke-dash pattern. Defaults preserve the v0.12 dotted/solid
+  // convention (cut = solid, uncut = dotted) but let the user fine-tune any
+  // of them without touching the global `traceOpacity` / `fillOpacity` used
+  // on non-paired views.
+  const [currentStyle, setCurrentStyle] = useState(() => seeded("currentStyle", {
+    strokeWidth:   1.5,
+    strokeOpacity: 0.95,
+    fillOpacity:   0.20,
+    dash:          "solid",   // "solid" | "dotted" | "dashed" | "dash-dot"
+  }));
+  const [refStyle, setRefStyle] = useState(() => seeded("refStyle", {
+    strokeWidth:   1.3,
+    strokeOpacity: 0.95,
+    fillOpacity:   0.07,
+    dash:          "dotted",
+  }));
+  const setCurrentStyleField = (k, v) => setCurrentStyle(s => ({ ...s, [k]: v }));
+  const setRefStyleField     = (k, v) => setRefStyle(s => ({ ...s, [k]: v }));
+  // Map dash-name → strokeDasharray + linecap combo. "solid" uses no dash.
+  const dashFor = (d) => {
+    if (d === "dotted")   return { dashArr: "1 3",   cap: "round" };
+    if (d === "dashed")   return { dashArr: "5 3",   cap: "butt"  };
+    if (d === "dash-dot") return { dashArr: "5 2 1 2", cap: "butt"  };
+    return { dashArr: "none", cap: "butt" };
+  };
 
   // Raw-trace overlay. Only available for samples loaded from .fsa (traces
   // persisted from parseFsaArrayBuffer). TSV-only samples have no raw data.
@@ -3489,6 +3615,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         sample, range, channels, mode, stackChannels, logY, smoothing,
         pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers,
         pairScale, prepRef,
+        labelPeaks, showExpected,
+        currentStyle, refStyle,
       };
       const encoded = encodeViewState(state);
       // Only mutate history if it actually changed; replaceState (not push)
@@ -3501,7 +3629,9 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     return () => clearTimeout(id);
   }, [sample, range, channels, mode, stackChannels, logY, smoothing,
       pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers,
-      pairScale, prepRef]);
+      pairScale, prepRef,
+      labelPeaks, showExpected,
+      currentStyle, refStyle]);
 
   // Resolve the reference sample name. "auto" picks the first matching
   // uncut / NoCas9 / control candidate from the loaded samples. A manual
@@ -3950,6 +4080,29 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
           <span className="text-zinc-700">Precursor markers</span>
         </label>
       </div>
+
+      {/* Per-sample style controls — surfaced only when pairing is active.
+          Each of cut and uncut gets its own stroke width, stroke opacity,
+          fill opacity, and dash pattern. Decoupled from the global
+          traceOpacity/fillOpacity sliders used on non-paired views. */}
+      {pairMode !== "none" && (
+        <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2 space-y-2">
+          <SampleStyleRow
+            title={`Cut (solid) · ${sample}`}
+            accent="zinc"
+            style={currentStyle}
+            setField={setCurrentStyleField}
+          />
+          {resolvedReference && (
+            <SampleStyleRow
+              title={`Uncut (dotted) · ${resolvedReference}`}
+              accent="indigo"
+              style={refStyle}
+              setField={setRefStyleField}
+            />
+          )}
+        </div>
+      )}
 
       {/* Controls row 3 (species overlay) — visible only when showSpecies is on */}
       {showSpecies && (
@@ -4436,6 +4589,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   const refYMax = pairScale === "independent"
                     ? Math.max(10, refYMaxByChannel[dye])
                     : lane.yMax;
+                  const refDash = dashFor(refStyle.dash);
                   if (pairMode === "mirror") {
                     const halfGeom = { laneTop: lane.top + lane.h / 2, laneH: lane.h / 2, mLeft: m.l, plotW };
                     const path = buildGaussianPath(
@@ -4445,9 +4599,11 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                     return (
                       <g key={`refmir-${li}-${dye}`}
                          transform={`matrix(1 0 0 -1 0 ${2 * (lane.top + lane.h / 2)})`}>
-                        <path d={path.fill}   fill={refFill} opacity="0.10" />
-                        <path d={path.stroke} fill="none" stroke={refColor} strokeWidth="1.2"
-                              opacity="0.95" strokeDasharray="1 3" strokeLinecap="round"
+                        <path d={path.fill}   fill={refFill} opacity={refStyle.fillOpacity} />
+                        <path d={path.stroke} fill="none" stroke={refColor}
+                              strokeWidth={refStyle.strokeWidth}
+                              opacity={refStyle.strokeOpacity}
+                              strokeDasharray={refDash.dashArr} strokeLinecap={refDash.cap}
                               vectorEffect="non-scaling-stroke" />
                       </g>
                     );
@@ -4459,9 +4615,11 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   );
                   return (
                     <g key={`refovl-${li}-${dye}`}>
-                      <path d={path.fill}   fill={refFill} opacity="0.07" />
-                      <path d={path.stroke} fill="none" stroke={refColor} strokeWidth="1.3"
-                            opacity="0.95" strokeDasharray="1 3" strokeLinecap="round"
+                      <path d={path.fill}   fill={refFill} opacity={refStyle.fillOpacity} />
+                      <path d={path.stroke} fill="none" stroke={refColor}
+                            strokeWidth={refStyle.strokeWidth}
+                            opacity={refStyle.strokeOpacity}
+                            strokeDasharray={refDash.dashArr} strokeLinecap={refDash.cap}
                             vectorEffect="non-scaling-stroke" />
                     </g>
                   );
@@ -4580,10 +4738,19 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                       lp.map(p => [p.size, p.height, p.area, p.width]),
                       range, lane.yMax, laneGeom, smoothing, logY
                     );
+                    const curDash = dashFor(currentStyle.dash);
+                    // Only apply the per-sample (cut) style when pairing is
+                    // on — keep the legacy global controls live on non-paired
+                    // views so existing behavior is preserved.
+                    const curFillOp   = pairMode !== "none" ? currentStyle.fillOpacity   : (stackChannels ? fillOpacity : fillOpacity * 0.5);
+                    const curStrokeOp = pairMode !== "none" ? currentStyle.strokeOpacity : (dye === "O" ? traceOpacity * 0.68 : traceOpacity);
+                    const curStrokeW  = pairMode !== "none" ? currentStyle.strokeWidth   : 1.5;
                     return (
                       <g key={`tr-${li}-${dye}`}>
-                        <path d={path.fill}   fill={colorFor(dye)} opacity={stackChannels ? fillOpacity : fillOpacity * 0.5} />
-                        <path d={path.stroke} fill="none" stroke={colorFor(dye)} strokeWidth={1.5} opacity={dye === "O" ? traceOpacity * 0.68 : traceOpacity} />
+                        <path d={path.fill}   fill={colorFor(dye)} opacity={curFillOp} />
+                        <path d={path.stroke} fill="none" stroke={colorFor(dye)}
+                              strokeWidth={curStrokeW} opacity={curStrokeOp}
+                              strokeDasharray={curDash.dashArr} strokeLinecap={curDash.cap} />
                       </g>
                     );
                   } else {
