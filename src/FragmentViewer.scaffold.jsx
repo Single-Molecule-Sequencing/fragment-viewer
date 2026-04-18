@@ -3125,11 +3125,13 @@ function PrintStyles() {
       }
 
       /* Report-modal print isolation. The modal is portaled to document.body
-         via React createPortal, so it's a DIRECT child of body and the simple
-         "hide siblings" selector works. display:none on siblings completely
-         removes them from the flow — no position:fixed clipping, no height-
-         screen constraints, and multi-page PDFs flow naturally. */
+         via React createPortal, so it's a DIRECT child of body. */
       body.fv-report-printing > *:not(.fv-report-root) { display: none !important; }
+      body.fv-report-printing {
+        background: white !important;
+        height: auto !important;
+        min-height: auto !important;
+      }
       body.fv-report-printing .fv-report-root {
         position: static !important;
         inset: auto !important;
@@ -3143,15 +3145,26 @@ function PrintStyles() {
         overflow: visible !important;
         display: block !important;
       }
-      /* Strip scroll constraints on every descendant — Tailwind's
-         max-h-[80vh]/overflow-y-auto on the modal's content region would
-         otherwise clip everything after the first viewport-worth. */
-      body.fv-report-printing .fv-report-root * {
-        max-height: none !important;
-        overflow: visible !important;
-        height: auto !important;
+      /* Strip scroll clamps on the FIRST TWO container levels only — NOT on
+         SVG children. Earlier universal fv-report-root descendant selector
+         with height:auto !important overrode SVG rect height attributes
+         in SVG2-compliant browsers (CSS beats presentation attrs), collapsing
+         every figure to zero height. The targeted selectors below only touch
+         the outer modal container + the scroll region that Tailwind put
+         max-h + overflow-y-auto on. SVGs stay untouched. */
+      body.fv-report-printing .fv-report-root > * {
         position: static !important;
         inset: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        max-width: none !important;
+        width: 100% !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+      }
+      body.fv-report-printing .fv-report-root > * > * {
+        max-height: none !important;
+        overflow: visible !important;
       }
       body.fv-report-printing .fv-report-actions,
       body.fv-report-printing .fv-report-backdrop,
@@ -3164,6 +3177,14 @@ function PrintStyles() {
       body.fv-report-printing .fv-report-page-break {
         page-break-before: always;
         break-before: page;
+      }
+      /* SVGs keep their intrinsic sizing in print. Width constrained to
+         available content area so big diagrams (W=1200) scale to fit. */
+      body.fv-report-printing .fv-report-root svg {
+        max-width: 100% !important;
+        height: auto !important;
+        page-break-inside: avoid;
+        break-inside: avoid;
       }
       @media print {
         html, body { background: white !important; margin: 0 !important; }
@@ -3737,7 +3758,7 @@ function ReportModal({
                 svgRef={constructRef}
               />
             </div>
-            <p className="text-[11px] text-zinc-500 mt-1">
+            <p className="fv-report-caption text-[12.5px] leading-relaxed text-zinc-700 mt-2 mb-1 px-1">
               <b>Figure 1.</b> Full {constructSize} bp ligated construct drawn 5′→3′ (top strand).
               Colored boxes are the assembly components (fluorescent adapters Ad1/Ad2, bridge
               oligos Br1/Br2, overhangs, target insert). Dye circles above the adapters show
@@ -3756,7 +3777,7 @@ function ReportModal({
               <div className="border border-zinc-200 rounded-lg bg-white p-2">
                 <ProductFragmentViz products={cutProducts} constructSize={constructSize} svgRef={productsRef} />
               </div>
-              <p className="text-[11px] text-zinc-500 mt-1">
+              <p className="fv-report-caption text-[12.5px] leading-relaxed text-zinc-700 mt-2 mb-1 px-1">
                 <b>Figure 2.</b> The four fluorophore-labeled single-stranded products released
                 after Cas9 cleavage + denaturation of the ligated construct. Each bar represents
                 one ssDNA, scaled to the {constructSize} bp construct; the dye circle marks the
@@ -3921,7 +3942,7 @@ function ReportModal({
                   topSeq={constructSeq}
                 />
               </div>
-              <p className="text-[11px] text-zinc-500 mt-1">
+              <p className="fv-report-caption text-[12.5px] leading-relaxed text-zinc-700 mt-2 mb-1 px-1">
                 <b>Figure 5.</b> Simulated molecular products after the lab's 5′→3′ exonuclease +
                 Klenow exo⁻ dA-tailing protocol, applied at the canonical {pickedGrna.name} cut positions.
                 Blue bars = top strand, navy bars = bot strand. Green pills = dA-tailed 3′ termini
@@ -4004,7 +4025,10 @@ function StackedChromatogram({
   currentSampleName = "",
 }) {
   const W = 1100;
-  const m = { l: 80, r: 24, t: (title ? 34 : 12), b: (caption ? 78 : 32) };
+  // Bottom margin scales with caption line count at ~14 px per line + 50 px
+  // lead so in-SVG captions don't get clipped by the viewBox.
+  const captionLineCount = caption ? String(caption).split(/\n/).length : 0;
+  const m = { l: 80, r: 24, t: (title ? 34 : 12), b: captionLineCount > 0 ? 58 + captionLineCount * 14 : 32 };
   const channels = ["B", "G", "Y", "R"];
   const laneH = 92;
   const laneGap = 8;
@@ -4157,13 +4181,15 @@ function StackedChromatogram({
       })()}
 
       {/* Caption — one or more lines wrapped inside the SVG so the figure
-          ships self-contained with its legend */}
+          ships self-contained with its legend. First line rendered bolder
+          so it reads as a figure lede (e.g. "Figure 3. ..."). */}
       {caption && (() => {
         const lines = String(caption).split(/\n/);
-        const base = H - m.b + 46;
+        const base = H - m.b + 50;
+        const lineH = 14;
         return lines.map((line, i) => (
-          <text key={`cap-${i}`} x={m.l} y={base + i * 11} fontSize="8.5"
-                fill="#475569" fontWeight="400">
+          <text key={`cap-${i}`} x={m.l} y={base + i * lineH} fontSize="11"
+                fill="#1f2937" fontWeight={i === 0 ? "700" : "400"}>
             {line}
           </text>
         ));
@@ -4844,8 +4870,8 @@ function PostTailingPanel({ cutPos, canonicalOverhang, constructSize, offsets, t
         </text>
         {renderRow(m.t + 14,                         "left",  leftP,  "LEFT fragment end")}
         {renderRow(m.t + rowH + rowGap + 14,         "right", rightP, "RIGHT fragment end")}
-        <text x={W / 2} y={H - 14} fontSize="9" fill="#475569" textAnchor="middle">
-          Blue = insert top strand · Navy = insert bot strand · Purple = T/A adapter · Yellow T = adapter's 3′-T overhang pairing with insert's dA · Green tag = dA-tailed 3′ terminus · Gray tag = unchanged 3′ terminus · Overhang lengths drawn ×{stepScale} for visibility
+        <text x={W / 2} y={H - 14} fontSize="10.5" fill="#1f2937" textAnchor="middle" fontWeight="400">
+          Blue = insert top strand · Navy = insert bot strand · Purple = T/A adapter · Yellow T = adapter's 3′-T overhang pairing with insert's dA · Green tag = dA-tailed 3′ terminus · Gray tag = unchanged 3′ terminus · Overhangs drawn ×{stepScale} for visibility
         </text>
       </svg>
 
