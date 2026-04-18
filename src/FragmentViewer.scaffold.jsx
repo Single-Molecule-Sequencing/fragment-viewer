@@ -1322,9 +1322,44 @@ export function predictCutFromReactant(grna, reactant, overhang_nt = 0) {
 // Serializes the given <svg> element, paints it onto a white canvas at 2x
 // scale, and triggers a download. Used by the per-figure Export buttons.
 // ----------------------------------------------------------------------
-export function exportSvgAsPng(svgEl, filename, scale = 2) {
+// Trigger a browser download for a Blob. Shared by every export path so the
+// link/cleanup dance lives in one place.
+function downloadBlob(blob, filename) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
+// Ensure the SVG has an explicit XML namespace before serialization so that
+// saved .svg files render correctly when opened directly (the DOM copy often
+// inherits the namespace implicitly and some viewers drop the root otherwise).
+function serializeSvg(svgEl) {
+  const clone = svgEl.cloneNode(true);
+  if (!clone.getAttribute("xmlns")) clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  if (!clone.getAttribute("xmlns:xlink")) clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  return new XMLSerializer().serializeToString(clone);
+}
+
+// Native SVG export — no rasterization, no resolution cap, opens directly in
+// Illustrator/Inkscape/Figma. This is the best format for publication figures
+// because the downstream editor can tweak text, stroke widths, and colors.
+export function exportSvgNative(svgEl, filename) {
   if (!svgEl) return;
-  const xml = new XMLSerializer().serializeToString(svgEl);
+  const xml = serializeSvg(svgEl);
+  // BOM-less UTF-8 so Illustrator doesn't complain; CSS font stack inherited
+  // from the live DOM will fall back on the opener's system fonts.
+  const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+  downloadBlob(blob, filename || "fragment-viewer.svg");
+}
+
+// Rasterize SVG → Canvas → Blob, then download. Shared by PNG + JPG paths;
+// they only differ in mime type + quality, not in the draw pipeline.
+function rasterizeSvgToCanvas(svgEl, scale, onCanvas) {
+  const xml = serializeSvg(svgEl);
   const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(svgBlob);
   const img = new Image();
@@ -1336,23 +1371,109 @@ export function exportSvgAsPng(svgEl, filename, scale = 2) {
     canvas.width  = Math.round(w * scale);
     canvas.height = Math.round(h * scale);
     const ctx = canvas.getContext("2d");
+    // White background always — transparent PNGs read as ugly grey on
+    // journal templates; JPGs require an opaque background anyway.
     ctx.fillStyle = "white";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     URL.revokeObjectURL(url);
-    canvas.toBlob(blob => {
-      if (!blob) return;
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename || "fragment-viewer.png";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(link.href);
-    }, "image/png");
+    onCanvas(canvas);
   };
   img.onerror = () => URL.revokeObjectURL(url);
   img.src = url;
+}
+
+// High-res PNG (scale ≥ 1; 2 = default, 4 = poster/print, 6 = slide zoom).
+export function exportSvgAsPng(svgEl, filename, scale = 2) {
+  if (!svgEl) return;
+  rasterizeSvgToCanvas(svgEl, scale, (canvas) => {
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      downloadBlob(blob, filename || "fragment-viewer.png");
+    }, "image/png");
+  });
+}
+
+// JPEG with configurable quality (0.92 high, 0.80 standard, 0.60 compact).
+// Useful for emailing figures where PNG would be too large — at 0.92 the
+// visual cost is negligible and file size drops 3-5x.
+export function exportSvgAsJpg(svgEl, filename, scale = 2, quality = 0.92) {
+  if (!svgEl) return;
+  rasterizeSvgToCanvas(svgEl, scale, (canvas) => {
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      downloadBlob(blob, filename || "fragment-viewer.jpg");
+    }, "image/jpeg", quality);
+  });
+}
+
+// Export menu: a single FileDown button that opens a small popover listing
+// every available format. One component replaces all the scattered "export
+// PNG" buttons so adding a new format is a one-line change here.
+//
+// Props:
+//   svgRef   — React ref pointing at the <svg> element to export.
+//   basename — filename stem; the format-specific suffix is appended.
+//   formats  — array of format keys to show. Defaults to all five below.
+//              Order controls menu order.
+export function ExportMenu({ svgRef, basename = "figure", formats = ["png2", "png4", "png6", "svg", "jpg_hi", "jpg_std"], variant = "secondary", label = "Export" }) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => {
+      if (anchorRef.current && !anchorRef.current.contains(e.target)) setOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+  const doExport = (kind) => {
+    const el = svgRef?.current;
+    if (!el) return;
+    switch (kind) {
+      case "svg":    exportSvgNative(el, `${basename}.svg`); break;
+      case "png2":   exportSvgAsPng(el, `${basename}@2x.png`, 2); break;
+      case "png4":   exportSvgAsPng(el, `${basename}@4x.png`, 4); break;
+      case "png6":   exportSvgAsPng(el, `${basename}@6x.png`, 6); break;
+      case "jpg_hi": exportSvgAsJpg(el, `${basename}@4x_q92.jpg`, 4, 0.92); break;
+      case "jpg_std":exportSvgAsJpg(el, `${basename}@2x_q80.jpg`, 2, 0.80); break;
+      default: break;
+    }
+    setOpen(false);
+  };
+  const entries = {
+    svg:     { label: "SVG · vector, editable", hint: "Best for publication figures (Illustrator / Inkscape)" },
+    png2:    { label: "PNG @ 2×", hint: "Screens, slides" },
+    png4:    { label: "PNG @ 4×", hint: "Posters, print" },
+    png6:    { label: "PNG @ 6×", hint: "Zoom-in crops, very large formats" },
+    jpg_hi:  { label: "JPG @ 4× · high quality", hint: "Q92; ~3-5× smaller than PNG" },
+    jpg_std: { label: "JPG @ 2× · standard", hint: "Q80; email-friendly size" },
+  };
+  return (
+    <div ref={anchorRef} className="relative inline-block">
+      <ToolButton icon={FileDown} variant={variant} onClick={() => setOpen(v => !v)} title="Export this figure — PNG/SVG/JPG at multiple resolutions">
+        {label} {open ? "▾" : "▸"}
+      </ToolButton>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-40 w-64 bg-white border border-zinc-200 rounded-lg shadow-xl overflow-hidden no-print">
+          <ul className="divide-y divide-zinc-100">
+            {formats.map(k => (
+              <li key={k}>
+                <button onClick={() => doExport(k)}
+                  className="w-full px-3 py-2 flex items-start gap-2 text-left hover:bg-zinc-50 focus:bg-zinc-100 focus:outline-none">
+                  <FileDown size={13} className="text-zinc-400 mt-0.5 shrink-0" />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-zinc-800">{entries[k].label}</span>
+                    <span className="block text-[11px] text-zinc-500">{entries[k].hint}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Cas9 nomenclature for a single ssDNA cut product.
@@ -2624,6 +2745,18 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   // features pop visually without needing any statistical cutoff.
   const [overlayMode, setOverlayMode] = useState("raw"); // "raw" | "residual"
 
+  // Reference sample (typically the uncut / no-Cas9 control) overlaid on
+  // the current sample as a ghost trace. Makes it obvious which peaks
+  // existed before cleavage and which were generated by cleavage.
+  //   pairMode: "none" = hidden; "overlay" = ghost underlay behind current;
+  //             "mirror" = butterfly / top-above-bottom layout
+  // referenceSample: filename stem or "" for none; "auto" picks the first
+  //                  sample whose name matches a NoCas9 / uncut / control regex.
+  const [pairMode, setPairMode] = useState("none");
+  const [referenceSample, setReferenceSample] = useState("");
+  const [showUncutCutMarkers, setShowUncutCutMarkers] = useState(false);
+  const [showPrecursorMarkers, setShowPrecursorMarkers] = useState(false);
+
   // Preprocessing pipeline applied to raw trace before rendering. Purely
   // visual — never mutates the stored traces or the called peak table.
   const [prep, setPrep] = useState({
@@ -2658,6 +2791,21 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const rawBundle = (DATA.traces && DATA.traces[sample]) || null;
   const hasRawTrace = !!(rawBundle && rawBundle.bpAxis);
   const s = cfg[sample];
+
+  // Resolve the reference sample name. "auto" picks the first matching
+  // uncut / NoCas9 / control candidate from the loaded samples. A manual
+  // pick overrides. Empty string = no reference overlay.
+  const resolvedReference = useMemo(() => {
+    if (!pairMode || pairMode === "none") return "";
+    if (referenceSample === "auto" || referenceSample === "") {
+      const pat = /(no[-_ ]?cas|uncut|nocleav|control|input|t0)/i;
+      const match = samples.find(n => n !== sample && pat.test(n));
+      return match || "";
+    }
+    return referenceSample === sample ? "" : referenceSample;
+  }, [pairMode, referenceSample, samples, sample]);
+
+  const refPeaks = resolvedReference ? (DATA.peaks[resolvedReference] || {}) : {};
 
   const presets = sample.startsWith("gRNA3")
     ? [{ l: "Full", r: [0, 500] }, { l: "Cut site", r: [75, 110] }, { l: "Tight", r: [83, 95] }, { l: "Small", r: [0, 50] }]
@@ -2891,6 +3039,58 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
             Peak dots
           </label>
         </div>
+      </div>
+
+      {/* Controls row: uncut-vs-cut pairing + marker toggles.
+          The "uncut reference" overlay lets users see both a no-Cas9 control
+          and a cut sample on the same plot, so the cleavage transition is
+          visually obvious. Auto-detect matches common NoCas9/uncut patterns
+          in the loaded sample names; a manual pick overrides. */}
+      <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Uncut vs cut</span>
+        <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden text-xs">
+          {[
+            { k: "none",    l: "Off" },
+            { k: "overlay", l: "Overlay" },
+            { k: "mirror",  l: "Mirror" },
+          ].map(o => (
+            <button key={o.k} onClick={() => setPairMode(o.k)}
+              title={
+                o.k === "overlay" ? "Reference sample drawn as a ghost trace (gray) under the current sample" :
+                o.k === "mirror"  ? "Reference trace drawn mirrored below the x-axis (butterfly plot)" :
+                "Hide reference overlay"
+              }
+              className={`px-2 py-1 ${pairMode === o.k ? "bg-indigo-600 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>
+              {o.l}
+            </button>
+          ))}
+        </div>
+        {pairMode !== "none" && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <span className="text-zinc-600">Reference:</span>
+            <select value={referenceSample} onChange={e => setReferenceSample(e.target.value)}
+                    className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white max-w-[22ch] focus-ring">
+              <option value="auto">Auto-detect (NoCas9 / uncut / control)</option>
+              {samples.filter(n => n !== sample).map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            <span className="text-[11px] text-zinc-500">
+              {resolvedReference ? <>using <span className="font-mono text-zinc-700">{resolvedReference}</span></> : <span className="text-amber-700">no match</span>}
+            </span>
+          </label>
+        )}
+        <div className="h-5 w-px bg-zinc-200" />
+        <label className="flex items-center gap-1 text-xs cursor-pointer"
+               title="Explicit UNCUT reference line at the full construct size + CUT product lines from the picked gRNA. Works with any single sample; no reference sample needed.">
+          <input type="checkbox" checked={showUncutCutMarkers}
+                 onChange={e => setShowUncutCutMarkers(e.target.checked)} className="w-3.5 h-3.5 accent-indigo-600" />
+          <span className="text-zinc-700">Uncut + cut markers</span>
+        </label>
+        <label className="flex items-center gap-1 text-xs cursor-pointer"
+               title="Mark all pre-cleavage assembly precursors (full construct + partial ligations) with distinctive lines">
+          <input type="checkbox" checked={showPrecursorMarkers}
+                 onChange={e => setShowPrecursorMarkers(e.target.checked)} className="w-3.5 h-3.5 accent-indigo-600" />
+          <span className="text-zinc-700">Precursor markers</span>
+        </label>
       </div>
 
       {/* Controls row 3 (species overlay) — visible only when showSpecies is on */}
@@ -3173,14 +3373,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
             <div className="text-[11px] text-zinc-500">
               Drag on plot to zoom · {Object.values(peaksByChannel).reduce((t, a) => t + a.length, 0)} peaks in window
             </div>
-            <ToolButton
-              icon={FileDown}
-              variant="secondary"
-              title="Download this electropherogram as a PNG (2x scale, white background)"
-              onClick={() => exportSvgAsPng(svgRef.current, `${sample}_electropherogram.png`)}
-            >
-              PNG
-            </ToolButton>
+            <ExportMenu svgRef={svgRef} basename={`${sample}_electropherogram`} label="Export" />
           </div>
         </div>
         <svg
@@ -3327,6 +3520,118 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                     </g>
                   );
                 })}
+
+                {/* Reference-sample ghost trace (uncut/control overlay).
+                    Drawn BEFORE the current sample so it sits behind, in a
+                    muted gray so it reads as "previous state." In mirror
+                    mode the lane height is halved and the ghost goes below
+                    the x-axis reflected — a butterfly layout that makes
+                    added/removed signal obvious at a glance. */}
+                {pairMode !== "none" && resolvedReference && lane.dyes.map(dye => {
+                  const lrp = (refPeaks[dye] || [])
+                    .filter(p => p[0] >= range[0] - 5 && p[0] <= range[1] + 5);
+                  if (!lrp.length) return null;
+                  if (pairMode === "mirror") {
+                    // Render in the bottom half of the lane, reflected.
+                    const halfGeom = { laneTop: lane.top + lane.h / 2, laneH: lane.h / 2, mLeft: m.l, plotW };
+                    const path = buildGaussianPath(
+                      lrp.map(p => [p[0], p[1], p[2], p[3]]),
+                      range, lane.yMax, halfGeom, smoothing, false
+                    );
+                    // Flip vertically around the lane midline by mirroring Y
+                    // coordinates in the string (cheap: reparse not needed —
+                    // we simply draw a second path with an inverted y transform
+                    // by passing a rebuilt peak set via negative heights? No —
+                    // easier: apply a CSS transform.
+                    return (
+                      <g key={`refmir-${li}-${dye}`}
+                         transform={`matrix(1 0 0 -1 0 ${2 * (lane.top + lane.h / 2)})`}>
+                        <path d={path.fill}   fill="#6366f1" opacity="0.12" />
+                        <path d={path.stroke} fill="none" stroke="#4f46e5" strokeWidth="1.1" opacity="0.7" />
+                      </g>
+                    );
+                  }
+                  // Overlay mode: ghost trace at full lane height, gray-indigo.
+                  const laneGeom = { laneTop: lane.top, laneH: lane.h, mLeft: m.l, plotW };
+                  const path = buildGaussianPath(
+                    lrp.map(p => [p[0], p[1], p[2], p[3]]),
+                    range, lane.yMax, laneGeom, smoothing, logY
+                  );
+                  return (
+                    <g key={`refovl-${li}-${dye}`}>
+                      <path d={path.fill}   fill="#94a3b8" opacity="0.14" />
+                      <path d={path.stroke} fill="none" stroke="#475569" strokeWidth="1.1"
+                            opacity="0.72" strokeDasharray="4 2"
+                            vectorEffect="non-scaling-stroke" />
+                    </g>
+                  );
+                })}
+
+                {/* UNCUT + CUT reference markers. Drawn only on the top lane
+                    when stacked (or on the single lane when overlaid). The
+                    UNCUT line sits at the full construct size; CUT lines at
+                    the picked gRNA's predicted product sizes per dye. */}
+                {(showUncutCutMarkers || showPrecursorMarkers) && li === 0 && (
+                  <g key={`ucmk-${li}`} pointerEvents="none">
+                    {/* UNCUT — full construct length */}
+                    {showUncutCutMarkers && constructSize >= range[0] && constructSize <= range[1] && (
+                      <g>
+                        <line x1={xScale(constructSize)} x2={xScale(constructSize)}
+                              y1={m.t} y2={m.t + lanesCount * laneH + (lanesCount - 1) * laneGap}
+                              stroke="#4f46e5" strokeWidth="1.4" strokeDasharray="1 0" opacity="0.82" />
+                        <rect x={xScale(constructSize) - 24} y={m.t + 2}
+                              width={48} height={12} rx="2" fill="#4f46e5" />
+                        <text x={xScale(constructSize)} y={m.t + 11}
+                              fontSize="8.5" fontWeight="700" fill="white" textAnchor="middle">
+                          UNCUT
+                        </text>
+                      </g>
+                    )}
+                    {/* CUT — predicted cut-product sizes per dye (only when a gRNA is picked) */}
+                    {showUncutCutMarkers && pickedGrnaForHover && (() => {
+                      const markers = [];
+                      for (const oh of speciesOverhangs) {
+                        const pr = predictCutProducts(pickedGrnaForHover, constructSize, oh);
+                        for (const dye of ["B", "G", "Y", "R"]) {
+                          if (!pr[dye] || pr[dye].length <= 0) continue;
+                          const sz = pr[dye].length;
+                          if (sz < range[0] || sz > range[1]) continue;
+                          markers.push({ size: sz, dye, overhang: oh, label: pr[dye].template });
+                        }
+                      }
+                      return markers.map((mk, i) => (
+                        <g key={`cutmk-${i}`}>
+                          <line x1={xScale(mk.size)} x2={xScale(mk.size)}
+                                y1={m.t} y2={m.t + lanesCount * laneH + (lanesCount - 1) * laneGap}
+                                stroke={DYE[mk.dye].color} strokeWidth="1" strokeDasharray="5 2" opacity="0.85" />
+                          <rect x={xScale(mk.size) - 22} y={m.t + 16 + (i % 4) * 14}
+                                width={44} height={12} rx="2" fill={DYE[mk.dye].color} opacity="0.92" />
+                          <text x={xScale(mk.size)} y={m.t + 25 + (i % 4) * 14}
+                                fontSize="8.5" fontWeight="700" fill="white" textAnchor="middle"
+                                style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                            CUT·{mk.dye}{mk.overhang === 0 ? "" : (mk.overhang > 0 ? `+${mk.overhang}` : mk.overhang)}
+                          </text>
+                        </g>
+                      ));
+                    })()}
+                    {/* PRECURSORS — assembly-product sizes with distinct dotted lines */}
+                    {showPrecursorMarkers && ASSEMBLY_PRODUCTS.map((prod, pi) => {
+                      const sz = productSize(prod, componentSizes);
+                      if (sz < range[0] || sz > range[1]) return null;
+                      return (
+                        <g key={`pre-${pi}`}>
+                          <line x1={xScale(sz)} x2={xScale(sz)}
+                                y1={m.t} y2={m.t + lanesCount * laneH + (lanesCount - 1) * laneGap}
+                                stroke="#8b5cf6" strokeWidth="0.9" strokeDasharray="1 2" opacity="0.7" />
+                          <text x={xScale(sz)} y={m.t + lanesCount * laneH + (lanesCount - 1) * laneGap - 2}
+                                fontSize="7.5" fill="#8b5cf6" textAnchor="middle" fontWeight="600">
+                            {prod.id || `pre${pi}`}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                )}
 
                 {/* Trace/Stem rendering per dye */}
                 {lane.dyes.map(dye => {
@@ -4919,14 +5224,7 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
           <div className="text-sm font-medium">Overlay · {DYE[dye].label} ({DYE[dye].name})</div>
           <div className="flex items-center gap-3">
             <div className="text-[11px] text-zinc-500">Drag to zoom · {picked.length} samples</div>
-            <ToolButton
-              icon={FileDown}
-              variant="secondary"
-              title="Download this overlay plot as a PNG (2x scale, white background)"
-              onClick={() => exportSvgAsPng(svgRef.current, `cross_sample_overlay_${DYE[dye].label}.png`)}
-            >
-              PNG
-            </ToolButton>
+            <ExportMenu svgRef={svgRef} basename={`cross_sample_overlay_${DYE[dye].label}`} label="Export" />
           </div>
         </div>
         <svg
@@ -5180,14 +5478,9 @@ function ProductFragmentViz({ products, constructSize }) {
 
   return (
     <div className="relative">
-      <button
-        onClick={() => exportSvgAsPng(fragRef.current, "ssdna_products.png")}
-        title="Download this 4-ssDNA-product diagram as a PNG"
-        className="absolute top-1 right-1 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md bg-zinc-100 text-zinc-800 hover:bg-zinc-200 border border-zinc-200 transition focus-ring no-print z-10"
-      >
-        <FileDown size={12} />
-        PNG
-      </button>
+      <div className="absolute top-1 right-1 z-10 no-print">
+        <ExportMenu svgRef={fragRef} basename="ssdna_products" label="Export" />
+      </div>
       <svg ref={fragRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
       <text x={m.l + pw / 2} y={12} fontSize="10" fill="#475569" textAnchor="middle" fontWeight="600">
         Four labeled ssDNA products after denaturation (scaled to {constructSize} bp construct)
@@ -5276,14 +5569,9 @@ function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeCha
   });
   return (
     <div className="relative">
-      <button
-        onClick={() => exportSvgAsPng(consRef.current, "construct_diagram.png")}
-        title="Download this construct diagram as a PNG"
-        className="absolute top-1 right-1 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md bg-zinc-100 text-zinc-800 hover:bg-zinc-200 border border-zinc-200 transition focus-ring no-print z-10"
-      >
-        <FileDown size={12} />
-        PNG
-      </button>
+      <div className="absolute top-1 right-1 z-10 no-print">
+        <ExportMenu svgRef={consRef} basename="construct_diagram" label="Export" />
+      </div>
       <svg ref={consRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
         {/* 5' / 3' labels */}
         <text x={m.l - 2} y={m.t - 4} fontSize="10" fill="#64748b" textAnchor="start">5' →</text>
