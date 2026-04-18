@@ -1056,6 +1056,205 @@ export const SPECIES_DASH = {
   cut:      "5 2",       // long dash
 };
 
+// ----------------------------------------------------------------------
+// SpeciesSchematic — small SVG cartoon of a molecular species.
+//
+// Renders the named construct components as a horizontal stacked bar,
+// component-colored, with dye dots at the labeled termini (LEFT side
+// stacks B over Y if Ad1 present; RIGHT side stacks G over R if Ad2
+// present). Component widths are proportional to bp; the bar always
+// fills the same overall width so different-sized species line up
+// visually.
+// ----------------------------------------------------------------------
+const COMPONENT_INFO = (() => {
+  const m = {};
+  for (const c of CONSTRUCT.components) m[c.key] = c;
+  return m;
+})();
+
+const DYE_HEX = { B: "#1e6fdb", G: "#16a34a", Y: "#ca8a04", R: "#dc2626", O: "#ea580c" };
+
+export function SpeciesSchematic({ parts, leftDyes = [], rightDyes = [], width = 220, height = 28, scaleToFull = true, showCut = null }) {
+  // Total bp of THIS species; reference total = full construct (226 bp by default).
+  const speciesBp = parts.reduce((t, k) => t + (COMPONENT_INFO[k]?.size || 0), 0);
+  const fullBp = CONSTRUCT.total;
+  const denom = scaleToFull ? fullBp : speciesBp;
+  const innerW = width - 28;
+  const startX = 14;
+  // For "scaleToFull", center the bar so partial species are visually shorter.
+  const usedW = (speciesBp / denom) * innerW;
+  let x = startX + (innerW - usedW) / (scaleToFull ? 2 : 1);
+  const segs = parts.map((k, i) => {
+    const info = COMPONENT_INFO[k] || { color: "#a1a1aa", size: 0, name: k };
+    const w = (info.size / denom) * innerW;
+    const rect = (
+      <g key={`${k}-${i}`}>
+        <rect x={x} y={9} width={w} height={10} fill={info.color}>
+          <title>{info.name} · {info.size} bp</title>
+        </rect>
+      </g>
+    );
+    const segX = x;
+    x += w;
+    return { rect, x0: segX, x1: x, key: k };
+  });
+  // Optional cut marker (small scissors line) at proportional bp position
+  let cutMarker = null;
+  if (showCut && typeof showCut.bp === "number") {
+    // showCut.bp is in original construct coords; we draw it relative to this species' start
+    // by mapping to the scaled bar
+    if (parts.length) {
+      // Determine which bp range this species spans in original coords (use leftDyes presence as a proxy)
+      const constructStartBp = parts.includes("ad1") ? 1 : (parts.includes("oh1") ? 26 : (parts[0] === "target" ? 55 : 1));
+      const inSpeciesBp = showCut.bp - constructStartBp + 1;
+      if (inSpeciesBp >= 0 && inSpeciesBp <= speciesBp) {
+        const cx = startX + (innerW - usedW) / (scaleToFull ? 2 : 1) + (inSpeciesBp / denom) * innerW;
+        cutMarker = (
+          <g pointerEvents="none">
+            <line x1={cx} x2={cx} y1={5} y2={23} stroke="#0f172a" strokeWidth="1.4" />
+            <text x={cx} y={4} fontSize="9" textAnchor="middle" fill="#0f172a">✂</text>
+          </g>
+        );
+      }
+    }
+  }
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label="species schematic">
+      {/* Backbone line for visual continuity */}
+      <line x1={startX} x2={startX + innerW} y1={14} y2={14} stroke="#e4e4e7" strokeWidth="0.5" />
+      {segs.map(s => s.rect)}
+      {cutMarker}
+      {/* Dye dots stacked vertically at LEFT terminus */}
+      {leftDyes.map((d, i) => (
+        <circle key={`L-${d}`} cx={6} cy={5 + i * 10} r={4} fill={DYE_HEX[d]} stroke="white" strokeWidth="1.2">
+          <title>{d} dye on LEFT terminus</title>
+        </circle>
+      ))}
+      {/* Dye dots at RIGHT terminus */}
+      {rightDyes.map((d, i) => (
+        <circle key={`R-${d}`} cx={width - 6} cy={5 + i * 10} r={4} fill={DYE_HEX[d]} stroke="white" strokeWidth="1.2">
+          <title>{d} dye on RIGHT terminus</title>
+        </circle>
+      ))}
+    </svg>
+  );
+}
+
+// Convenience: derive (parts, leftDyes, rightDyes) from an ASSEMBLY_PRODUCTS or
+// TARGET_REACTANTS entry. Both shapes carry .parts (or .components) and .dyes.
+export function speciesSchematicProps(entry) {
+  const parts = entry.parts || entry.components || [];
+  const allDyes = entry.dyes || [...(entry.left_dyes || []), ...(entry.right_dyes || [])];
+  const leftDyes = entry.left_dyes !== undefined
+    ? entry.left_dyes
+    : (parts.includes("ad1") ? allDyes.filter(d => d === "B" || d === "Y") : []);
+  const rightDyes = entry.right_dyes !== undefined
+    ? entry.right_dyes
+    : (parts.includes("ad2") ? allDyes.filter(d => d === "G" || d === "R") : []);
+  return { parts, leftDyes, rightDyes };
+}
+
+// ----------------------------------------------------------------------
+// SpeciesLegend — a panel listing every static species the assay can
+// produce (assembly products + adapter monomers) with a thumbnail
+// schematic, name, bp, dye topology. Dynamic Cas9 cut products are NOT
+// listed (they depend on the selected gRNA + chemistry); they are
+// surfaced via the species overlay and the hover popover instead.
+// ----------------------------------------------------------------------
+export function SpeciesLegend({ componentSizes, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  // Adapter monomers as pseudo-species
+  const monomers = [
+    { id: "ad1_top_25",  name: "Ad1 top oligo (TAMRA, unligated)", parts: ["ad1"],            left_dyes: ["Y"], right_dyes: [], size: 25 },
+    { id: "ad1_bot_29",  name: "Ad1 bot oligo (6-FAM, unligated)", parts: ["ad1", "oh1"],     left_dyes: ["B"], right_dyes: [], size: 29 },
+    { id: "ad2_bot_25",  name: "Ad2 bot oligo (HEX, unligated)",   parts: ["ad2"],            left_dyes: [],     right_dyes: ["G"], size: 25 },
+    { id: "ad2_top_29",  name: "Ad2 top oligo (ROX, unligated)",   parts: ["oh2", "ad2"],     left_dyes: [],     right_dyes: ["R"], size: 29 },
+  ];
+  const sizes = componentSizes || (() => {
+    const m = {}; for (const c of CONSTRUCT.components) m[c.key] = c.size; return m;
+  })();
+  const productSizeOf = entry => entry.size || (entry.parts || []).reduce((t, k) => t + (sizes[k] || 0), 0);
+  return (
+    <Panel
+      title="Molecular species legend"
+      subtitle="Every species the assay can produce, color-keyed to the construct components. Hover any thumbnail for component sizes; dye dots are color-keyed (B blue, Y gold, G green, R red)."
+      className="mb-3"
+      actions={
+        <ToolButton variant="ghost" onClick={() => setOpen(o => !o)} icon={open ? Layers : Layers}>
+          {open ? "Hide" : "Show"}
+        </ToolButton>
+      }
+    >
+      {open && (
+        <div className="space-y-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Component color key</div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {CONSTRUCT.components.map(c => (
+                <span key={c.key} className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-zinc-200 bg-white">
+                  <span className="inline-block w-3 h-3 rounded" style={{ background: c.color }} />
+                  <span className="text-zinc-700">{c.name}</span>
+                  <span className="font-mono text-zinc-500">· {c.size} bp</span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Assembly + partial-ligation species</div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+              {ASSEMBLY_PRODUCTS.map(p => {
+                const props = speciesSchematicProps(p);
+                return (
+                  <div key={p.id} className="flex items-center gap-2 px-2 py-1.5 rounded border border-zinc-100 bg-zinc-50/60">
+                    <SpeciesSchematic {...props} width={180} height={26} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-zinc-800 truncate">{p.name}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">{productSizeOf(p)} bp · dyes: {(p.dyes || []).join(" ") || "—"}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">Adapter monomers (pre-ligation)</div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+              {monomers.map(p => {
+                const props = speciesSchematicProps(p);
+                return (
+                  <div key={p.id} className="flex items-center gap-2 px-2 py-1.5 rounded border border-zinc-100 bg-zinc-50/60">
+                    <SpeciesSchematic {...props} width={180} height={26} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-zinc-800 truncate">{p.name}</div>
+                      <div className="text-[10px] text-zinc-500 font-mono">{p.size} nt</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="text-[11px] text-zinc-500 leading-snug border-t border-zinc-100 pt-2">
+            Cas9 <strong>cut products</strong> are dynamic (they depend on the chosen gRNA and chemistry) and appear inline as labeled vertical lines on each electropherogram lane plus in the hover popover. See the species overlay toggle in the controls above.
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Find every species (assembly + monomer + cut for the chosen gRNA) whose
+// size is within +/- tol bp of the queried bp on the queried dye. Used by
+// the hover-on-peak popover to answer "what could this peak be?"
+// ----------------------------------------------------------------------
+export function speciesAtSize({ bp, dye, tol = 2.5, componentSizes, constructSize, gRNAs = [], overhangs = [0] }) {
+  const all = expectedSpeciesForDye(dye, componentSizes, constructSize, gRNAs, overhangs);
+  return all
+    .map(sp => ({ ...sp, dist: Math.abs(sp.size - bp) }))
+    .filter(sp => sp.dist <= tol)
+    .sort((a, b) => a.dist - b.dist);
+}
+
 export function componentSizesFrom(construct) {
   const map = {};
   for (const c of construct.components) map[c.key] = c.size;
@@ -1488,6 +1687,9 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   // Peak hover-dot circles cover the trace heavily; off by default, toggle on demand.
   const [showPeakDots, setShowPeakDots] = useState(false);
   const [hover, setHover] = useState(null);
+  // Hover state for the species-at-size popover. Position via clientX/clientY
+  // so scroll inside the main pane doesn't drift the popover.
+  const [peakHover, setPeakHover] = useState(null);
 
   const peaks = DATA.peaks[sample] || {};
   const s = cfg[sample];
@@ -1573,6 +1775,21 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
 
   // Stats summary for this sample
   const sres = results[sample];
+
+  // Resolve picked gRNA for the species-at-size hover popover (mirrors the
+  // species overlay logic so hover answers the same question shown inline).
+  const pickedGrnaForHover = useMemo(() => {
+    if (speciesGrnaIdx < 0) return null;
+    if (speciesGrnaIdx < 1000) {
+      const e = LAB_GRNA_CATALOG[speciesGrnaIdx];
+      if (!e || normalizeSpacer(e.spacer).length !== 20) return null;
+      const norm = normalizeSpacer(e.spacer);
+      const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
+      const cand = candidateGrnas.find(g => g.protospacer === norm || g.protospacer === rc);
+      return cand ? { ...cand, name: e.name } : null;
+    }
+    return candidateGrnas[speciesGrnaIdx - 1000] || null;
+  }, [speciesGrnaIdx, candidateGrnas]);
 
   return (
     <>
@@ -1942,8 +2159,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   });
                 })()}
 
-                {/* Per-peak hover dots (off by default; clutter when many peaks) */}
-                {showPeakDots && lane.dyes.map(dye =>
+                {/* Per-peak hover dots: visible circles when toggle is on,
+                    transparent hit-targets always so the hover popover works
+                    regardless of dot visibility. */}
+                {lane.dyes.map(dye =>
                   (peaksByChannel[dye] || [])
                     .filter(p => p.size >= range[0] && p.size <= range[1])
                     .map((p, i) => {
@@ -1952,12 +2171,18 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                       return (
                         <circle
                           key={`dot-${li}-${dye}-${i}`}
-                          cx={x} cy={y} r={3}
-                          fill="white" stroke={DYE[dye].color} strokeWidth={1.2}
-                          opacity={mode === "trace" ? 0.9 : 0.7}
-                          onMouseEnter={() => setHover({ ...p, x, y })}
-                          onMouseLeave={() => setHover(null)}
-                          style={{ cursor: "pointer" }}
+                          cx={x} cy={y}
+                          r={showPeakDots ? 3 : 6}
+                          fill={showPeakDots ? "white" : "transparent"}
+                          stroke={showPeakDots ? DYE[dye].color : "transparent"}
+                          strokeWidth={showPeakDots ? 1.2 : 0}
+                          opacity={showPeakDots ? (mode === "trace" ? 0.9 : 0.7) : 1}
+                          onMouseEnter={(e) => setPeakHover({
+                            clientX: e.clientX, clientY: e.clientY,
+                            dye, size: p.size, height: p.height, area: p.area,
+                          })}
+                          onMouseLeave={() => setPeakHover(null)}
+                          style={{ cursor: "crosshair" }}
                         />
                       );
                     })
@@ -2022,7 +2247,97 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         <SampleSummaryCard sample={sample} cfg={cfg} setCfg={setCfg} results={results[sample]} />
         <VisibleWindowCard peaksByChannel={peaksByChannel} results={results[sample]} cfg={cfg[sample]} />
       </div>
+
+      {/* Molecular species legend */}
+      <SpeciesLegend componentSizes={componentSizes} defaultOpen={false} />
+
+      {/* Hover popover: every species whose size matches the hovered peak */}
+      {peakHover && (
+        <PeakSpeciesPopover
+          hover={peakHover}
+          componentSizes={componentSizes}
+          constructSize={constructSize}
+          gRNAs={pickedGrnaForHover ? [pickedGrnaForHover] : []}
+          overhangs={pickedGrnaForHover ? speciesOverhangs : []}
+          tol={2.5}
+        />
+      )}
     </>
+  );
+}
+
+// Floating popover anchored to the cursor that lists every species whose
+// size matches the hovered peak (within tol bp). Renders <SpeciesSchematic>
+// thumbnails so the user sees the molecular structure at a glance.
+function PeakSpeciesPopover({ hover, componentSizes, constructSize, gRNAs, overhangs, tol = 2.5 }) {
+  const matches = useMemo(
+    () => speciesAtSize({
+      bp: hover.size, dye: hover.dye, tol,
+      componentSizes, constructSize, gRNAs, overhangs,
+    }),
+    [hover.size, hover.dye, tol, componentSizes, constructSize, gRNAs, overhangs]
+  );
+  // Position the popover near the cursor; flip if near the right or bottom
+  // edges of the viewport so it stays fully visible.
+  const popW = 380, popH = Math.min(420, 90 + matches.length * 56);
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  let left = hover.clientX + 14;
+  let top  = hover.clientY + 14;
+  if (left + popW > vw - 8) left = Math.max(8, hover.clientX - popW - 14);
+  if (top  + popH > vh - 8) top  = Math.max(8, hover.clientY - popH - 14);
+  return (
+    <div
+      className="fixed z-50 bg-white rounded-xl border border-zinc-200 shadow-xl overflow-hidden no-print pointer-events-none"
+      style={{ left, top, width: popW, maxHeight: popH }}
+    >
+      <div className="px-3 py-2 border-b border-zinc-100 flex items-center gap-2 bg-zinc-50">
+        <DyeChip dye={hover.dye} showLabel />
+        <div className="flex-1">
+          <div className="text-xs font-mono text-zinc-700">{hover.size.toFixed(2)} bp</div>
+          <div className="text-[10px] text-zinc-500">height {Math.round(hover.height).toLocaleString()}{hover.area ? ` · area ${Math.round(hover.area).toLocaleString()}` : ""}</div>
+        </div>
+        <Pill tone="neutral">{matches.length} match{matches.length === 1 ? "" : "es"}</Pill>
+      </div>
+      <div className="overflow-auto max-h-72 divide-y divide-zinc-100">
+        {matches.length === 0 ? (
+          <div className="px-3 py-3 text-xs text-zinc-500">
+            No expected species within ±{tol} bp on this dye. The peak may be a noise / non-target product, or an unexpected chemistry.
+          </div>
+        ) : matches.map((sp, i) => {
+          const tone = sp.kind === "cut" ? "sky" : sp.kind === "monomer" ? "amber" : "neutral";
+          // Build schematic props from the species' source reactant when known
+          const reactant = sp.source_reactant ? TARGET_REACTANTS.find(r => r.id === sp.source_reactant) : null;
+          const sprops = reactant
+            ? speciesSchematicProps(reactant)
+            : (() => {
+                // Match against ASSEMBLY_PRODUCTS by size + dyes
+                const a = ASSEMBLY_PRODUCTS.find(ap => ap.dyes.includes(hover.dye) && Math.abs(productSize(ap, componentSizes) - sp.size) < 1);
+                return a ? speciesSchematicProps(a) : { parts: [], leftDyes: [], rightDyes: [] };
+              })();
+          return (
+            <div key={i} className="px-3 py-2 flex items-start gap-2">
+              <div className="shrink-0">
+                <SpeciesSchematic
+                  parts={sprops.parts} leftDyes={sprops.leftDyes} rightDyes={sprops.rightDyes}
+                  width={140} height={26}
+                  showCut={sp.kind === "cut" && reactant ? { bp: gRNAs[0]?.cut_construct } : null}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <Pill tone={tone}>{sp.kind}</Pill>
+                  <span className="text-[11px] font-mono text-zinc-500">{sp.size} bp · Δ {sp.dist.toFixed(2)}</span>
+                </div>
+                <div className="text-[11px] text-zinc-800 leading-snug break-words">
+                  {sp.fullLabel || sp.label}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -3271,6 +3586,9 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
         </div>
         <OverhangChart samples={samples} results={results} />
       </div>
+
+      {/* Molecular species legend (same component as TraceTab) */}
+      <SpeciesLegend componentSizes={componentSizes} defaultOpen={false} />
     </>
   );
 }
