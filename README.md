@@ -2,6 +2,17 @@
 
 Interactive capillary-electrophoresis viewer and Cas9 cut-product predictor for the Single-Molecule Sequencing / Athey Lab fluorescent-adapter fragment analysis assay.
 
+## Use the tool
+
+**Live app:** https://single-molecule-sequencing.github.io/fragment-viewer/
+
+## Quick links
+
+- **Tutorial:** `docs/TUTORIAL.md`
+- **Architecture:** `docs/ARCHITECTURE.md`
+- **Biology model and conventions:** `docs/BIOLOGY.md`
+- **Contributing guide:** `docs/CONTRIBUTING.md`
+
 This tool ingests GeneMapper peak-table exports from Cas9 cutting-efficiency experiments, reconstructs electropherograms, identifies biologically meaningful peaks, predicts cut products for every candidate gRNA in a target region, and cross-references candidates against the lab's curated gRNA catalog. It exists to turn raw fragment-analysis output into interpretable biology without leaving the browser.
 
 ---
@@ -19,6 +30,12 @@ The viewer gives five linked views of that data:
 5. **Cross-Sample Comparison.** Overhang-offset chart across all samples (Adapter-1-end and Adapter-2-end), match-purity heatmap, and a multi-sample overlay plot.
 
 See `docs/TUTORIAL.md` for a complete walkthrough with worked examples.
+
+## At a glance
+
+- Input: GeneMapper peak-table exports from CLC assay runs.
+- Output: per-sample electropherograms, expected-vs-observed peak matching, gRNA cut-product predictions, and cross-sample comparisons.
+- Audience: lab scientists analyzing Cas9 cutting outcomes from fragment analysis data.
 
 ---
 
