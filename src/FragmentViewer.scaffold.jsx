@@ -2,7 +2,114 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import {
   Activity, Crosshair, Scissors, Layers, GitCompare,
   Upload, Database, Microscope, FileDown, RotateCcw,
+  CheckCircle2, AlertTriangle, ChevronRight, ExternalLink,
 } from "lucide-react";
+
+// ----------------------------------------------------------------------
+// Design system — small set of primitives reused across tabs.
+// Built on Tailwind (configured in tailwind.config.js with dye accents).
+// ----------------------------------------------------------------------
+
+// Wrapper card: rounded, subtle shadow, optional header with title + actions.
+export function Panel({ title, subtitle, actions, children, className = "", padded = true }) {
+  return (
+    <section className={`bg-white rounded-xl border border-zinc-200 shadow-soft overflow-hidden ${className}`}>
+      {(title || actions) && (
+        <header className="flex items-start justify-between gap-3 px-4 py-3 border-b border-zinc-100">
+          <div className="min-w-0">
+            {title && <h2 className="text-sm font-semibold text-zinc-900 tracking-tight truncate">{title}</h2>}
+            {subtitle && <p className="text-xs text-zinc-500 mt-0.5">{subtitle}</p>}
+          </div>
+          {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
+        </header>
+      )}
+      <div className={padded ? "p-4" : ""}>{children}</div>
+    </section>
+  );
+}
+
+// Big-number metric tile.
+export function Stat({ label, value, hint, tone = "default" }) {
+  const toneCls = {
+    default: "text-zinc-900",
+    sky: "text-sky-700",
+    emerald: "text-emerald-700",
+    amber: "text-amber-700",
+    rose: "text-rose-700",
+  }[tone] || "text-zinc-900";
+  return (
+    <div className="px-3 py-2.5 rounded-lg bg-zinc-50 border border-zinc-100">
+      <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className={`mt-0.5 text-xl font-semibold tracking-tight num ${toneCls}`}>{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-zinc-500">{hint}</div>}
+    </div>
+  );
+}
+
+// Inline rounded label; optional accent color.
+export function Pill({ children, tone = "neutral", className = "" }) {
+  const tones = {
+    neutral: "bg-zinc-100 text-zinc-700 border-zinc-200",
+    sky:     "bg-sky-50 text-sky-700 border-sky-200",
+    emerald: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    amber:   "bg-amber-50 text-amber-800 border-amber-200",
+    rose:    "bg-rose-50 text-rose-700 border-rose-200",
+    dark:    "bg-zinc-900 text-zinc-100 border-zinc-900",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded border ${tones[tone] || tones.neutral} ${className}`}>
+      {children}
+    </span>
+  );
+}
+
+// Color-coded dye reference. Use anywhere a dye letter appears so users
+// associate the channel with its color throughout the viewer.
+export function DyeChip({ dye, showLabel = false, className = "" }) {
+  const palette = { B: "#1e6fdb", G: "#16a34a", Y: "#ca8a04", R: "#dc2626", O: "#ea580c" };
+  const label   = { B: "6-FAM",   G: "HEX",     Y: "TAMRA",   R: "ROX",     O: "GS500LIZ" };
+  return (
+    <span className={`inline-flex items-center gap-1.5 ${className}`}>
+      <span aria-hidden className="w-2.5 h-2.5 rounded-full ring-1 ring-inset ring-black/10" style={{ background: palette[dye] || "#94a3b8" }} />
+      <span className="text-xs font-mono text-zinc-700">{dye}</span>
+      {showLabel && <span className="text-[11px] text-zinc-500">{label[dye] || dye}</span>}
+    </span>
+  );
+}
+
+// Form field wrapper: label + input. Pass <input> / <select> as children.
+export function Field({ label, hint, children, className = "" }) {
+  return (
+    <label className={`flex flex-col gap-1 text-xs ${className}`}>
+      <span className="font-medium text-zinc-700">{label}</span>
+      {children}
+      {hint && <span className="text-[11px] text-zinc-500">{hint}</span>}
+    </label>
+  );
+}
+
+// Standard button used in chrome + tab toolbars.
+export function ToolButton({ icon: Icon, children, onClick, title, variant = "ghost", size = "sm", type = "button", className = "" }) {
+  const variants = {
+    primary: "bg-zinc-900 text-white hover:bg-zinc-800",
+    secondary: "bg-zinc-100 text-zinc-800 hover:bg-zinc-200 border border-zinc-200",
+    ghost:   "text-zinc-700 hover:text-zinc-900 hover:bg-zinc-100",
+    dark:    "text-zinc-300 hover:text-white hover:bg-zinc-800",
+    danger:  "bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200",
+  };
+  const sizes = { sm: "px-2 py-1 text-xs gap-1.5", md: "px-3 py-1.5 text-sm gap-2" };
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      title={title}
+      className={`inline-flex items-center font-medium rounded-md transition focus-ring ${variants[variant] || variants.ghost} ${sizes[size] || sizes.sm} ${className}`}
+    >
+      {Icon && <Icon size={size === "md" ? 16 : 14} />}
+      {children && <span>{children}</span>}
+    </button>
+  );
+}
 
 // ----------------------------------------------------------------------
 // GeneMapper TSV parser (browser-side; mirrors scripts/build_artifact.py)
@@ -104,19 +211,24 @@ function DropOverlay({ onData }) {
     <>
       {active && (
         <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none no-print">
-          <div className="absolute inset-0 bg-sky-500/15" />
-          <div className="relative px-6 py-4 rounded-lg border-2 border-dashed border-sky-500 bg-white shadow-2xl">
-            <div className="flex items-center gap-2 text-sky-700">
-              <Upload size={20} />
-              <span className="text-sm font-semibold">Drop GeneMapper TSV to load</span>
+          <div className="absolute inset-0 bg-sky-500/10 backdrop-blur-[1px]" />
+          <div className="relative px-8 py-6 rounded-2xl border-2 border-dashed border-sky-500 bg-white shadow-2xl max-w-md mx-4">
+            <div className="flex items-center gap-3 text-sky-700">
+              <div className="p-2 rounded-lg bg-sky-50">
+                <Upload size={20} />
+              </div>
+              <div>
+                <div className="text-base font-semibold tracking-tight">Drop to load dataset</div>
+                <div className="text-xs text-zinc-500 mt-0.5">GeneMapper or PeakScanner TSV export (.txt, .tsv, .csv)</div>
+              </div>
             </div>
-            <div className="text-xs text-slate-500 mt-1">.txt, .tsv, or .csv exported from GeneMapper / PeakScanner</div>
           </div>
         </div>
       )}
       {error && (
-        <div className="fixed bottom-10 right-4 z-50 px-3 py-2 rounded bg-rose-600 text-white text-xs shadow-lg no-print">
-          {error}
+        <div className="fixed bottom-10 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg bg-rose-600 text-white text-xs shadow-xl no-print">
+          <AlertTriangle size={14} />
+          <span>{error}</span>
         </div>
       )}
     </>
@@ -128,15 +240,14 @@ function UploadButton({ onData }) {
   const inputRef = useRef(null);
   return (
     <>
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
+      <ToolButton
+        icon={Upload}
+        variant="dark"
         title="Load a GeneMapper TSV export (drag-drop also works anywhere in the window)"
-        className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-700 rounded transition"
+        onClick={() => inputRef.current?.click()}
       >
-        <Upload size={14} />
-        <span>Load TSV</span>
-      </button>
+        Load TSV
+      </ToolButton>
       <input
         ref={inputRef}
         type="file"
@@ -840,7 +951,7 @@ export default function FragmentViewer() {
   const calibrated = ["B", "G", "Y", "R"].some(k => Math.abs(dyeOffsets[k] || 0) > 1e-6);
 
   return (
-    <div key={dataKey} className="h-screen flex flex-col bg-slate-100 text-slate-900 font-sans">
+    <div key={dataKey} className="h-screen flex flex-col bg-zinc-50 text-zinc-900 font-sans antialiased">
       <PrintStyles />
       <DropOverlay onData={handleNewPeaks} />
       <Toolbar
@@ -850,8 +961,8 @@ export default function FragmentViewer() {
       />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar tab={tab} setTab={setTab} />
-        <main className="flex-1 overflow-auto bg-white border-l border-slate-200">
-          <div className="px-4 py-3 max-w-[1400px] mx-auto">
+        <main className="flex-1 overflow-auto bg-zinc-50">
+          <div className="px-6 py-5 max-w-[1400px] mx-auto">
             {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
             {tab === "peakid"  && <PeakIdTab  samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
             {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
@@ -888,63 +999,62 @@ function PrintStyles() {
   );
 }
 
-// Top toolbar. Holds the lab brand mark, the construct chip, and the
-// global actions. Compact (40 px) so the main pane keeps vertical room.
+// Top toolbar. Brand + construct chip + global actions. 48px tall.
+// Dark bar gives the eye a stable anchor; main pane reads as the work surface.
 function Toolbar({ sampleCount, onUpload, onResetCalibration }) {
   return (
-    <header className="h-10 flex items-center gap-3 px-3 bg-slate-900 text-slate-100 border-b border-slate-700 no-print">
-      <div className="flex items-center gap-2">
-        <Microscope size={16} className="text-sky-400" />
-        <span className="text-sm font-semibold tracking-tight">Fragment Viewer</span>
-        <span className="text-[10px] uppercase tracking-wider text-slate-400 ml-1">SMS / Athey Lab</span>
+    <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
+      <div className="flex items-center gap-2.5">
+        <div className="p-1.5 rounded-md bg-zinc-800/80 ring-1 ring-zinc-700">
+          <Microscope size={16} className="text-sky-400" />
+        </div>
+        <div className="flex flex-col leading-tight">
+          <span className="text-sm font-semibold tracking-tight">Fragment Viewer</span>
+          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Athey Lab · SMS</span>
+        </div>
       </div>
-      <div className="h-5 w-px bg-slate-700" />
-      <div className="flex items-center gap-1 text-xs text-slate-300">
-        <span className="text-slate-400">construct:</span>
-        <span className="font-mono">V059_gRNA3</span>
-        <span className="text-slate-500">·</span>
-        <span className="font-mono">{sampleCount} samples</span>
+      <div className="h-6 w-px bg-zinc-800" />
+      <div className="hidden md:flex items-center gap-2 text-xs">
+        <Pill tone="dark" className="!bg-zinc-900 !border-zinc-700 !text-zinc-300">
+          <span className="text-zinc-500">construct</span>
+          <span className="font-mono text-zinc-100">V059_gRNA3</span>
+        </Pill>
+        <Pill tone="dark" className="!bg-zinc-900 !border-zinc-700 !text-zinc-300">
+          <Database size={10} className="text-zinc-500" />
+          <span className="font-mono text-zinc-100">{sampleCount}</span>
+          <span className="text-zinc-500">samples</span>
+        </Pill>
       </div>
       <div className="flex-1" />
       <div className="flex items-center gap-1">
         <UploadButton onData={onUpload} />
-        <button
-          type="button"
-          onClick={onResetCalibration}
-          title="Reset all per-dye mobility offsets to zero"
-          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-700 rounded transition"
-        >
-          <RotateCcw size={14} />
-          <span>Reset calib.</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          title="Open the browser print dialog (Save as PDF)"
-          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-200 hover:text-white hover:bg-slate-700 rounded transition"
-        >
-          <FileDown size={14} />
-          <span>PDF</span>
-        </button>
+        <ToolButton icon={RotateCcw} variant="dark" title="Reset all per-dye mobility offsets to zero" onClick={onResetCalibration}>
+          Reset calib.
+        </ToolButton>
+        <ToolButton icon={FileDown} variant="dark" title="Open browser print dialog (Save as PDF)" onClick={() => window.print()}>
+          PDF
+        </ToolButton>
       </div>
     </header>
   );
 }
 
-// Left rail. Vertical icon-and-label list. Active item gets a sky accent bar
-// + white background so the eye snaps to it without color noise on others.
+// Left rail. Sectioned: Workflow on top, Resources at bottom (links to lab tools).
 function Sidebar({ tab, setTab }) {
   const tabs = [
-    { id: "trace",     label: "Electropherogram",     icon: Activity,   hint: "Per-sample trace, smoothing, ladder overlay" },
-    { id: "peakid",    label: "Peak ID",              icon: Crosshair,  hint: "Match observed peaks to expected positions" },
-    { id: "cutpred",   label: "Cas9 Cut Prediction",  icon: Scissors,   hint: "Enumerate gRNAs and predict ssDNA products" },
-    { id: "autoclass", label: "Auto Classify",        icon: Layers,     hint: "Cluster + identify peaks across all dyes" },
-    { id: "compare",   label: "Cross-Sample",         icon: GitCompare, hint: "Overhang offsets and purity grid" },
+    { id: "trace",     label: "Electropherogram",  icon: Activity,   hint: "Per-sample trace, smoothing, ladder overlay" },
+    { id: "peakid",    label: "Peak ID",           icon: Crosshair,  hint: "Match observed peaks to expected positions" },
+    { id: "cutpred",   label: "Cut Prediction",    icon: Scissors,   hint: "Enumerate gRNAs and predict ssDNA products" },
+    { id: "autoclass", label: "Auto Classify",     icon: Layers,     hint: "Cluster and identify peaks across all dyes" },
+    { id: "compare",   label: "Cross-Sample",      icon: GitCompare, hint: "Overhang offsets and purity grid" },
   ];
   return (
-    <nav className="w-44 shrink-0 bg-slate-100 border-r border-slate-200 py-2 no-print">
-      <ul className="flex flex-col">
-        {tabs.map(t => {
+    <nav className="w-52 shrink-0 bg-white border-r border-zinc-200 flex flex-col no-print">
+      <div className="px-3 pt-3 pb-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Workflow</div>
+      </div>
+      <ul className="flex flex-col px-2 gap-0.5">
+        {tabs.map((t, i) => {
           const Icon = t.icon;
           const active = tab === t.id;
           return (
@@ -952,45 +1062,89 @@ function Sidebar({ tab, setTab }) {
               <button
                 onClick={() => setTab(t.id)}
                 title={t.hint}
-                className={`w-full flex items-center gap-2 pl-3 pr-2 py-1.5 text-xs font-medium border-l-2 transition ${
+                className={`group w-full flex items-center gap-2.5 px-2.5 py-1.5 text-sm rounded-md transition focus-ring ${
                   active
-                    ? "border-sky-500 bg-white text-slate-900"
-                    : "border-transparent text-slate-600 hover:bg-slate-200 hover:text-slate-900"
+                    ? "bg-zinc-900 text-white"
+                    : "text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900"
                 }`}
               >
-                <Icon size={14} className={active ? "text-sky-600" : "text-slate-500"} />
-                <span className="truncate">{t.label}</span>
+                <Icon size={15} className={active ? "text-sky-400" : "text-zinc-500 group-hover:text-zinc-700"} />
+                <span className="font-medium truncate">{t.label}</span>
+                <span className="ml-auto text-[10px] font-mono text-zinc-500/70">{i + 1}</span>
               </button>
             </li>
           );
         })}
       </ul>
-      <div className="mt-3 px-3 text-[10px] text-slate-400 leading-snug">
-        Drag a GeneMapper TSV anywhere in the window to swap datasets.
+      <div className="mt-auto p-3 border-t border-zinc-100">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">Lab tools</div>
+        <ul className="flex flex-col gap-0.5 text-xs text-zinc-600">
+          <SidebarLink href="https://github.com/Single-Molecule-Sequencing/cas9-targeted-sequencing" label="cas9-targeted-sequencing" />
+          <SidebarLink href="https://github.com/Single-Molecule-Sequencing/golden-gate" label="golden-gate" />
+          <SidebarLink href="https://github.com/Single-Molecule-Sequencing/sma-seq-workspace" label="sma-seq" />
+          <SidebarLink href="https://www.pharmvar.org" label="PharmVar" />
+        </ul>
+        <div className="mt-3 text-[10px] text-zinc-500 leading-snug">
+          Drag a GeneMapper TSV anywhere in this window to swap datasets.
+        </div>
       </div>
     </nav>
   );
 }
 
-// Bottom status bar. Always visible. Read it like a CLI status line.
+function SidebarLink({ href, label }) {
+  return (
+    <li>
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-zinc-100 hover:text-zinc-900 transition"
+      >
+        <ExternalLink size={10} className="text-zinc-400" />
+        <span className="truncate">{label}</span>
+      </a>
+    </li>
+  );
+}
+
+// Bottom status bar. Always visible. CLI-style readout.
 function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
   return (
-    <footer className="h-6 flex items-center gap-3 px-3 bg-slate-800 text-slate-300 text-[11px] font-mono no-print">
-      <span className="flex items-center gap-1">
-        <Database size={11} className="text-slate-500" />
-        <span className="text-slate-400">samples</span>
-        <span>{sampleCount}</span>
+    <footer className="h-7 flex items-center gap-3 px-3 bg-zinc-100 text-zinc-600 border-t border-zinc-200 text-[11px] no-print">
+      <span className="flex items-center gap-1.5">
+        <Database size={11} className="text-zinc-400" />
+        <span className="text-zinc-500">samples</span>
+        <span className="font-mono text-zinc-800">{sampleCount}</span>
       </span>
-      <span className="text-slate-600">·</span>
-      <span><span className="text-slate-400">peaks </span>{peakCount.toLocaleString()}</span>
-      <span className="text-slate-600">·</span>
-      <span><span className="text-slate-400">construct </span>{construct}</span>
-      <span className="text-slate-600">·</span>
-      <span className={calibrated ? "text-emerald-400" : "text-amber-400"}>
-        {calibrated ? "calibrated" : "uncalibrated"}
+      <span className="text-zinc-300">·</span>
+      <span className="flex items-center gap-1">
+        <span className="text-zinc-500">peaks</span>
+        <span className="font-mono text-zinc-800 num">{peakCount.toLocaleString()}</span>
+      </span>
+      <span className="text-zinc-300">·</span>
+      <span className="flex items-center gap-1">
+        <span className="text-zinc-500">construct</span>
+        <span className="font-mono text-zinc-800">{construct}</span>
+      </span>
+      <span className="text-zinc-300">·</span>
+      <span className="flex items-center gap-1">
+        {calibrated
+          ? <CheckCircle2 size={11} className="text-emerald-600" />
+          : <AlertTriangle size={11} className="text-amber-600" />}
+        <span className={calibrated ? "text-emerald-700" : "text-amber-700"}>
+          {calibrated ? "calibrated" : "uncalibrated"}
+        </span>
       </span>
       <div className="flex-1" />
-      <span className="text-slate-500">v0.6.0</span>
+      <a
+        href="https://github.com/Single-Molecule-Sequencing/fragment-viewer"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="font-mono text-zinc-500 hover:text-zinc-900"
+      >
+        v0.6.0
+      </a>
     </footer>
   );
 }
