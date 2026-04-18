@@ -7,6 +7,8 @@
 //
 // No React. No DOM. Consumed by the main viewer + unit tests.
 
+import { SAMPLE_DYES } from "./constants.js";
+
 // ----------------------------------------------------------------------
 
 // Per-peak signal-to-noise ratio. Noise is estimated from the robust MAD

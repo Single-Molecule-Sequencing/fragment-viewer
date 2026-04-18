@@ -7,6 +7,7 @@
 // imported where needed.
 
 import { matchLabCatalog, LAB_GRNA_CATALOG } from "./grna_catalog.js";
+import { SAMPLE_DYES, CONSTRUCT } from "./constants.js";
 
 // Pure helper: sum component sizes for a product (assembly or partial).
 // classifyPeaks uses this internally; kept local to biology.js so the

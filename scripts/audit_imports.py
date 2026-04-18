@@ -63,7 +63,10 @@ def source_side_missing() -> list[tuple[str, str]]:
     known = exported_names(lib_files + comp_files + tab_files) | REACT_HOOKS
 
     missing: list[tuple[str, str]] = []
-    for f in comp_files + tab_files:
+    # Include lib/ in the check — v0.27.0 slipped through because biology.js
+    # and analysis.js picked up SAMPLE_DYES + CONSTRUCT from the monolith
+    # scope and stopped working when they moved here.
+    for f in lib_files + comp_files + tab_files:
         src = f.read_text()
         # Strip comments and string literals to avoid false matches
         sc = re.sub(r"//.*$", "", src, flags=re.MULTILINE)
