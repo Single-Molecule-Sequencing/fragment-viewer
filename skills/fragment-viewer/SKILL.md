@@ -25,6 +25,14 @@ metadata:
 
 This skill is the entry point for the `fragment-viewer` project: an interactive Claude.ai artifact that ingests GeneMapper peak-table exports from Cas9 cutting-efficiency experiments, reconstructs electropherograms, identifies peaks, and predicts Cas9 cut products.
 
+## Canonical repo location
+
+`/mnt/d/University of Michigan Dropbox/Gregory Farnum/Claude/Projects/fragment-viewer/`
+
+Public mirror: `https://github.com/Single-Molecule-Sequencing/fragment-viewer`
+
+When this skill is invoked, read the in-repo `docs/BIOLOGY.md` and `docs/TUTORIAL.md` from the canonical location above before answering biology questions. Never infer from memory.
+
 ## When to use this skill
 
 Whenever the user mentions any of the following, treat this skill as the primary workflow:
