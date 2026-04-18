@@ -1037,6 +1037,17 @@ export function expectedSpeciesForDye(dye, components, constructSize = 226, gRNA
           fullLabel: labels.full,
           kind: "cut",
           source_reactant: reactant.id,
+          // Carry full cut-product details so downstream renderers (sidebar
+          // schematic, popover) know which fragment side keeps the dye.
+          fragment: p.fragment,        // "LEFT" | "RIGHT"
+          strand: p.strand,            // "top" | "bot"
+          template: p.template,
+          pam_side: p.pam_side,
+          overhang_nt: oh,
+          grna_cut_bp: g.cut_construct,
+          grna_strand: g.strand,
+          grna_pam: g.pam_seq,
+          grna_name: g.name,
         });
       }
     }
@@ -1074,64 +1085,70 @@ const COMPONENT_INFO = (() => {
 
 const DYE_HEX = { B: "#1e6fdb", G: "#16a34a", Y: "#ca8a04", R: "#dc2626", O: "#ea580c" };
 
-export function SpeciesSchematic({ parts, leftDyes = [], rightDyes = [], width = 220, height = 28, scaleToFull = true, showCut = null }) {
+export function SpeciesSchematic({
+  parts, leftDyes = [], rightDyes = [], width = 220, height = 28,
+  scaleToFull = true, showCut = null,
+  cutFragment = null,    // null | "LEFT" | "RIGHT" — when set, dim the discarded side and hide its dye dots
+}) {
   // Total bp of THIS species; reference total = full construct (226 bp by default).
   const speciesBp = parts.reduce((t, k) => t + (COMPONENT_INFO[k]?.size || 0), 0);
   const fullBp = CONSTRUCT.total;
   const denom = scaleToFull ? fullBp : speciesBp;
   const innerW = width - 28;
   const startX = 14;
-  // For "scaleToFull", center the bar so partial species are visually shorter.
   const usedW = (speciesBp / denom) * innerW;
-  let x = startX + (innerW - usedW) / (scaleToFull ? 2 : 1);
+  const barX0 = startX + (innerW - usedW) / (scaleToFull ? 2 : 1);
+  let x = barX0;
   const segs = parts.map((k, i) => {
     const info = COMPONENT_INFO[k] || { color: "#a1a1aa", size: 0, name: k };
     const w = (info.size / denom) * innerW;
     const rect = (
-      <g key={`${k}-${i}`}>
-        <rect x={x} y={9} width={w} height={10} fill={info.color}>
-          <title>{info.name} · {info.size} bp</title>
-        </rect>
-      </g>
+      <rect key={`${k}-${i}`} x={x} y={9} width={w} height={10} fill={info.color}>
+        <title>{info.name} · {info.size} bp</title>
+      </rect>
     );
     const segX = x;
     x += w;
     return { rect, x0: segX, x1: x, key: k };
   });
-  // Optional cut marker (small scissors line) at proportional bp position
+  // Cut position in SVG coords (if showCut)
+  let cutX = null;
   let cutMarker = null;
-  if (showCut && typeof showCut.bp === "number") {
-    // showCut.bp is in original construct coords; we draw it relative to this species' start
-    // by mapping to the scaled bar
-    if (parts.length) {
-      // Determine which bp range this species spans in original coords (use leftDyes presence as a proxy)
-      const constructStartBp = parts.includes("ad1") ? 1 : (parts.includes("oh1") ? 26 : (parts[0] === "target" ? 55 : 1));
-      const inSpeciesBp = showCut.bp - constructStartBp + 1;
-      if (inSpeciesBp >= 0 && inSpeciesBp <= speciesBp) {
-        const cx = startX + (innerW - usedW) / (scaleToFull ? 2 : 1) + (inSpeciesBp / denom) * innerW;
-        cutMarker = (
-          <g pointerEvents="none">
-            <line x1={cx} x2={cx} y1={5} y2={23} stroke="#0f172a" strokeWidth="1.4" />
-            <text x={cx} y={4} fontSize="9" textAnchor="middle" fill="#0f172a">✂</text>
-          </g>
-        );
-      }
+  if (showCut && typeof showCut.bp === "number" && parts.length) {
+    const constructStartBp = parts.includes("ad1") ? 1 : (parts.includes("oh1") ? 26 : (parts[0] === "target" ? 55 : 1));
+    const inSpeciesBp = showCut.bp - constructStartBp + 1;
+    if (inSpeciesBp >= 0 && inSpeciesBp <= speciesBp) {
+      cutX = barX0 + (inSpeciesBp / denom) * innerW;
+      cutMarker = (
+        <g pointerEvents="none">
+          <line x1={cutX} x2={cutX} y1={5} y2={23} stroke="#0f172a" strokeWidth="1.4" />
+          <text x={cutX} y={4} fontSize="9" textAnchor="middle" fill="#0f172a">✂</text>
+        </g>
+      );
     }
   }
+  // Determine which dye dots to render (when cutFragment is set, only show the
+  // dot on the kept terminus).
+  const showLeftDyes  = !cutFragment || cutFragment === "LEFT";
+  const showRightDyes = !cutFragment || cutFragment === "RIGHT";
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label="species schematic">
-      {/* Backbone line for visual continuity */}
       <line x1={startX} x2={startX + innerW} y1={14} y2={14} stroke="#e4e4e7" strokeWidth="0.5" />
       {segs.map(s => s.rect)}
+      {/* Dim the discarded side when this is a fragment view */}
+      {cutFragment === "LEFT" && cutX !== null && (
+        <rect x={cutX} y={8} width={(barX0 + usedW) - cutX} height={12} fill="white" opacity="0.72" pointerEvents="none" />
+      )}
+      {cutFragment === "RIGHT" && cutX !== null && (
+        <rect x={barX0} y={8} width={cutX - barX0} height={12} fill="white" opacity="0.72" pointerEvents="none" />
+      )}
       {cutMarker}
-      {/* Dye dots stacked vertically at LEFT terminus */}
-      {leftDyes.map((d, i) => (
+      {showLeftDyes && leftDyes.map((d, i) => (
         <circle key={`L-${d}`} cx={6} cy={5 + i * 10} r={4} fill={DYE_HEX[d]} stroke="white" strokeWidth="1.2">
           <title>{d} dye on LEFT terminus</title>
         </circle>
       ))}
-      {/* Dye dots at RIGHT terminus */}
-      {rightDyes.map((d, i) => (
+      {showRightDyes && rightDyes.map((d, i) => (
         <circle key={`R-${d}`} cx={width - 6} cy={5 + i * 10} r={4} fill={DYE_HEX[d]} stroke="white" strokeWidth="1.2">
           <title>{d} dye on RIGHT terminus</title>
         </circle>
@@ -1256,12 +1273,44 @@ export function speciesAtSize({ bp, dye, tol = 2.5, componentSizes, constructSiz
 }
 
 // Stable id for a species across renders. Used by the SpeciesSidebar
-// per-species visibility toggles.
+// per-species visibility toggles. Includes dye to distinguish the same
+// physical species displayed on different lanes.
 export function speciesId(sp, dye) {
   if (sp.kind === "assembly") return `asm:${dye}:${sp.size}:${sp.label}`;
   if (sp.kind === "monomer")  return `mon:${dye}:${sp.size}`;
-  if (sp.kind === "cut")      return `cut:${dye}:${sp.size}:${sp.source_reactant || ""}:${sp.label}`;
+  if (sp.kind === "cut")      return `cut:${dye}:${sp.size}:${sp.source_reactant || ""}:${sp.fragment || ""}:${sp.overhang_nt ?? ""}`;
   return `${sp.kind}:${dye}:${sp.size}`;
+}
+
+// Assign short display IDs (A1/A2/M1/C1...) across every dye for stable
+// labelling on the plot. Same physical species appearing on multiple dyes
+// shares one ID so the user can match between lanes.
+export function enumerateAllSpeciesWithIds({ componentSizes, constructSize, gRNAs, overhangs, dyes }) {
+  const all = [];
+  for (const d of dyes) {
+    for (const sp of expectedSpeciesForDye(d, componentSizes, constructSize, gRNAs, overhangs)) {
+      all.push({ ...sp, dye: d, lineColor: DYE[d].color });
+    }
+  }
+  const kindOrder = { assembly: 0, monomer: 1, cut: 2 };
+  all.sort((a, b) => {
+    if (a.kind !== b.kind) return kindOrder[a.kind] - kindOrder[b.kind];
+    return a.size - b.size;
+  });
+  const counts = { assembly: 0, monomer: 0, cut: 0 };
+  const prefix = { assembly: "A", monomer: "M", cut: "C" };
+  const seenKey = new Map();
+  for (const sp of all) {
+    const key = sp.kind === "cut"
+      ? `cut:${sp.size}:${sp.source_reactant}:${sp.fragment}:${sp.overhang_nt ?? 0}`
+      : `${sp.kind}:${sp.size}:${sp.label}`;
+    if (!seenKey.has(key)) {
+      counts[sp.kind] = (counts[sp.kind] || 0) + 1;
+      seenKey.set(key, `${prefix[sp.kind] || "?"}${counts[sp.kind]}`);
+    }
+    sp.displayId = seenKey.get(key);
+  }
+  return all;
 }
 
 // ----------------------------------------------------------------------
@@ -1283,19 +1332,18 @@ export function SpeciesSidebar({
   subtitle = "Tick to overlay; untick to hide. Color = lane dye; pattern = kind (assembly = short dash, monomer = dotted, cut = long dash).",
 }) {
   const groups = useMemo(() => {
+    const all = enumerateAllSpeciesWithIds({ componentSizes, constructSize, gRNAs, overhangs, dyes });
     const seen = new Set();
     const assembly = [], monomer = [], cuts = [];
-    for (const d of dyes) {
-      const list = expectedSpeciesForDye(d, componentSizes, constructSize, gRNAs, overhangs);
-      for (const sp of list) {
-        const id = speciesId(sp, d);
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const row = { ...sp, dye: d, dyeColor: DYE[d].color, id };
-        if (sp.kind === "assembly") assembly.push(row);
-        else if (sp.kind === "monomer") monomer.push(row);
-        else if (sp.kind === "cut") cuts.push(row);
-      }
+    for (const sp of all) {
+      const id = speciesId(sp, sp.dye);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const row = { ...sp, id };  // sp already has dye, lineColor, displayId
+      row.dyeColor = sp.lineColor;
+      if (sp.kind === "assembly") assembly.push(row);
+      else if (sp.kind === "monomer") monomer.push(row);
+      else if (sp.kind === "cut") cuts.push(row);
     }
     return { assembly, monomer, cuts };
   }, [dyes, componentSizes, constructSize, gRNAs, overhangs]);
@@ -1312,22 +1360,37 @@ export function SpeciesSidebar({
     // Build schematic from the species kind + (for cuts) source reactant
     let sprops = { parts: [], leftDyes: [], rightDyes: [] };
     let cutMark = null;
-    if (row.source_reactant) {
+    let cutFrag = null;
+    if (row.kind === "cut" && row.source_reactant) {
       const reactant = TARGET_REACTANTS.find(r => r.id === row.source_reactant);
       if (reactant) {
+        // For a cut species the schematic shows the parent reactant with the
+        // discarded fragment side dimmed and only the kept terminus's dye dot
+        // visible. fragment ("LEFT"/"RIGHT") + grna_cut_bp tell us which side.
         sprops = speciesSchematicProps(reactant);
-        cutMark = gRNAs[0]?.cut_construct ? { bp: gRNAs[0].cut_construct } : null;
+        // Filter dyes to only the one this species carries (the other terminal
+        // dye on the same fragment side may belong to a different species row).
+        if (row.fragment === "LEFT") {
+          sprops = { ...sprops, leftDyes: sprops.leftDyes.filter(d => d === row.dye), rightDyes: [] };
+        } else if (row.fragment === "RIGHT") {
+          sprops = { ...sprops, leftDyes: [], rightDyes: sprops.rightDyes.filter(d => d === row.dye) };
+        }
+        cutMark = row.grna_cut_bp ? { bp: row.grna_cut_bp } : null;
+        cutFrag = row.fragment || null;
       }
-    } else {
+    } else if (row.kind === "assembly") {
       const a = ASSEMBLY_PRODUCTS.find(ap => ap.dyes.includes(row.dye) && Math.abs(productSize(ap, componentSizes) - row.size) < 1);
-      if (a) sprops = speciesSchematicProps(a);
-      else if (row.kind === "monomer") {
-        // Single-component bar for the relevant adapter oligo
-        if (row.dye === "Y" && row.size === 25) sprops = { parts: ["ad1"], leftDyes: ["Y"], rightDyes: [] };
-        else if (row.dye === "B" && row.size === 29) sprops = { parts: ["ad1","oh1"], leftDyes: ["B"], rightDyes: [] };
-        else if (row.dye === "G" && row.size === 25) sprops = { parts: ["ad2"], leftDyes: [], rightDyes: ["G"] };
-        else if (row.dye === "R" && row.size === 29) sprops = { parts: ["oh2","ad2"], leftDyes: [], rightDyes: ["R"] };
+      if (a) {
+        sprops = speciesSchematicProps(a);
+        // Restrict to the lane's dye on the relevant terminus
+        if (sprops.leftDyes.includes(row.dye)) sprops = { ...sprops, leftDyes: [row.dye], rightDyes: sprops.rightDyes.filter(d => false) };
+        else if (sprops.rightDyes.includes(row.dye)) sprops = { ...sprops, leftDyes: [], rightDyes: [row.dye] };
       }
+    } else if (row.kind === "monomer") {
+      if (row.dye === "Y" && row.size === 25) sprops = { parts: ["ad1"], leftDyes: ["Y"], rightDyes: [] };
+      else if (row.dye === "B" && row.size === 29) sprops = { parts: ["ad1","oh1"], leftDyes: ["B"], rightDyes: [] };
+      else if (row.dye === "G" && row.size === 25) sprops = { parts: ["ad2"], leftDyes: [], rightDyes: ["G"] };
+      else if (row.dye === "R" && row.size === 29) sprops = { parts: ["oh2","ad2"], leftDyes: [], rightDyes: ["R"] };
     }
     return (
       <li key={row.id} className={`flex items-start gap-2 px-2 py-1.5 rounded transition ${visible ? "bg-white" : "bg-zinc-50 opacity-60"} hover:bg-zinc-100`}>
@@ -1341,11 +1404,17 @@ export function SpeciesSidebar({
           <SpeciesSchematic
             parts={sprops.parts} leftDyes={sprops.leftDyes} rightDyes={sprops.rightDyes}
             width={120} height={22}
-            showCut={cutMark}
+            showCut={cutMark} cutFragment={cutFrag}
           />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1 text-[11px]">
+          <div className="flex items-center gap-1.5 text-[11px]">
+            {row.displayId && (
+              <span className="inline-flex items-center justify-center min-w-[22px] px-1 py-0.5 rounded font-mono font-bold text-[10px] text-white"
+                    style={{ background: row.dyeColor }}>
+                {row.displayId}
+              </span>
+            )}
             <span className="font-mono text-zinc-800">{row.size} bp</span>
             <DyeChip dye={row.dye} />
           </div>
@@ -1353,7 +1422,6 @@ export function SpeciesSidebar({
             {row.label}
           </div>
         </div>
-        {/* Line sample: lane dye color + kind dash pattern */}
         <svg width="22" height="14" aria-hidden className="shrink-0 mt-1">
           <line x1="0" y1="7" x2="22" y2="7" stroke={row.dyeColor} strokeWidth="1.6" strokeDasharray={SPECIES_DASH[row.kind] || "1 2"} />
         </svg>
@@ -1954,6 +2022,20 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     return candidateGrnas[speciesGrnaIdx - 1000] || null;
   }, [speciesGrnaIdx, candidateGrnas]);
 
+  // Compute the full species list once per render, with stable A1/M2/C3
+  // displayIds shared across dyes. Both the per-lane plot overlay and the
+  // SpeciesSidebar reference this list so the IDs match.
+  const allSpeciesWithIds = useMemo(() => {
+    if (!showSpecies) return [];
+    return enumerateAllSpeciesWithIds({
+      componentSizes,
+      constructSize,
+      gRNAs: pickedGrnaForHover ? [pickedGrnaForHover] : [],
+      overhangs: pickedGrnaForHover ? speciesOverhangs : [],
+      dyes: ["B", "G", "Y", "R"],
+    });
+  }, [showSpecies, componentSizes, constructSize, pickedGrnaForHover, speciesOverhangs]);
+
   return (
     <>
       <div className={showSpecies ? "lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-3" : ""}>
@@ -2205,24 +2287,13 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   );
                 })}
 
-                {/* Expected SPECIES overlay (assembly + monomer + cut) — colored by dye, kind via dash pattern */}
+                {/* Expected SPECIES overlay (assembly + monomer + cut) — colored by dye, kind via dash pattern.
+                    Uses enumerateAllSpeciesWithIds so labels are short tags (A1/M2/C3) with
+                    full nomenclature in the sidebar / popover / SVG <title>. */}
                 {showSpecies && lane.dyes.map(dye => {
                   if (dye === "O") return null;
-                  // Resolve the gRNA the user picked (if any) so cut products can be enumerated.
-                  let pickedGrna = null;
-                  if (speciesGrnaIdx >= 0 && speciesGrnaIdx < 1000) {
-                    const labEntry = LAB_GRNA_CATALOG[speciesGrnaIdx];
-                    if (labEntry && normalizeSpacer(labEntry.spacer).length === 20) {
-                      const norm = normalizeSpacer(labEntry.spacer);
-                      const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
-                      pickedGrna = candidateGrnas.find(g => g.protospacer === norm || g.protospacer === rc) || null;
-                      if (pickedGrna) pickedGrna = { ...pickedGrna, name: labEntry.name };
-                    }
-                  } else if (speciesGrnaIdx >= 1000) {
-                    pickedGrna = candidateGrnas[speciesGrnaIdx - 1000] || null;
-                  }
-                  const overhangs = pickedGrna ? speciesOverhangs : [];
-                  const species = expectedSpeciesForDye(dye, componentSizes, constructSize, pickedGrna ? [pickedGrna] : [], overhangs)
+                  const species = (allSpeciesWithIds || [])
+                    .filter(sp => sp.dye === dye)
                     .filter(sp => sp.size >= range[0] && sp.size <= range[1])
                     .filter(sp => !hiddenSpeciesIds.has(speciesId(sp, dye)));
                   if (species.length === 0) return null;
@@ -2246,7 +2317,9 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                       {species.map((sp, idx) => {
                         const x = xScale(sp.size);
                         const row = place(sp.size);
-                        const labelY = lane.top + 22 + row * 11;
+                        const labelY = lane.top + 14 + row * 13;
+                        const tag = sp.displayId || "?";
+                        const tagW = Math.max(14, tag.length * 6.2);
                         return (
                           <g key={`sp-${idx}`}>
                             <line
@@ -2255,17 +2328,26 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                               strokeDasharray={SPECIES_DASH[sp.kind] || "1 2"}
                               opacity="0.7"
                             />
-                            <line x1={x - 1} x2={x - 1} y1={labelY - 6} y2={labelY + 1} stroke={dyeColor} strokeWidth="2" />
-                            <text
-                              x={x + 2} y={labelY}
-                              fontSize="8"
-                              fill={dyeColor}
-                              fontWeight="600"
-                              style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 2.5 }}
-                            >
-                              <title>{sp.fullLabel || sp.label}</title>
-                              {`${sp.label} · ${sp.size} bp`}
-                            </text>
+                            {/* Compact tag pill: lane-dye background + monospace ID */}
+                            <g>
+                              <rect
+                                x={x - tagW / 2} y={labelY - 7}
+                                width={tagW} height={11} rx={2.5}
+                                fill={dyeColor} opacity="0.92"
+                                stroke="white" strokeWidth="0.8"
+                              />
+                              <text
+                                x={x} y={labelY + 1.5}
+                                fontSize="8.5"
+                                fill="white"
+                                fontWeight="700"
+                                textAnchor="middle"
+                                style={{ fontFamily: "JetBrains Mono, monospace" }}
+                              >
+                                <title>{sp.fullLabel || sp.label} · {sp.size} bp</title>
+                                {tag}
+                              </text>
+                            </g>
                           </g>
                         );
                       })}
@@ -3485,6 +3567,32 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
   });
   const [pinnedPeak, setPinnedPeak] = useState(null);
 
+  const allSpeciesWithIdsCmp = useMemo(() => {
+    if (!showSpecies) return [];
+    return enumerateAllSpeciesWithIds({
+      componentSizes: componentSizes || {},
+      constructSize: (constructSeq || "").length || 226,
+      gRNAs: (() => {
+        if (speciesGrnaIdx < 0) return [];
+        if (speciesGrnaIdx < 1000) {
+          const e = LAB_GRNA_CATALOG[speciesGrnaIdx];
+          if (!e || normalizeSpacer(e.spacer).length !== 20) return [];
+          const norm = normalizeSpacer(e.spacer);
+          const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
+          const cands = (() => {
+            if (!constructSeq) return [];
+            return findGrnas(constructSeq, targetStart, targetEnd);
+          })();
+          const cand = cands.find(g => g.protospacer === norm || g.protospacer === rc);
+          return cand ? [{ ...cand, name: e.name }] : [];
+        }
+        return [];
+      })(),
+      overhangs: speciesOverhangs,
+      dyes: [dye],
+    });
+  }, [showSpecies, componentSizes, constructSeq, targetStart, targetEnd, speciesGrnaIdx, speciesOverhangs, dye]);
+
   const candidateGrnas = useMemo(() => {
     if (!constructSeq) return [];
     return findGrnas(constructSeq, targetStart, targetEnd).map(g => ({
@@ -3783,12 +3891,9 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
 
           {/* Expected SPECIES overlay across all samples (one set of lines tied to the selected dye) */}
           {showSpecies && (() => {
-            const species = expectedSpeciesForDye(
-              dye, componentSizes || {}, constructSize,
-              pickedGrna ? [pickedGrna] : [],
-              pickedGrna ? speciesOverhangs : []
-            ).filter(sp => sp.size >= range[0] && sp.size <= range[1])
-             .filter(sp => !hiddenSpeciesIds.has(speciesId(sp, dye)));
+            const species = (allSpeciesWithIdsCmp || [])
+              .filter(sp => sp.size >= range[0] && sp.size <= range[1])
+              .filter(sp => !hiddenSpeciesIds.has(speciesId(sp, dye)));
             if (!species.length) return null;
             // Color comes from the active dye; kind via stroke-dash pattern.
             const dyeColor = DYE[dye].color;
@@ -3807,7 +3912,9 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
                 {species.map((sp, idx) => {
                   const x = xScale(sp.size);
                   const row = place(sp.size);
-                  const labelY = m.t + 14 + row * 12;
+                  const labelY = m.t + 14 + row * 13;
+                  const tag = sp.displayId || "?";
+                  const tagW = Math.max(16, tag.length * 7);
                   return (
                     <g key={`spec-${idx}`}>
                       <line
@@ -3816,9 +3923,20 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
                         strokeDasharray={SPECIES_DASH[sp.kind] || "1 2"}
                         opacity="0.65"
                       />
-                      <text x={x + 3} y={labelY} fontSize="9" fill={dyeColor} fontWeight="600" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 3 }}>
-                        <title>{sp.fullLabel || sp.label}</title>
-                        {sp.label} · {sp.size} bp
+                      <rect
+                        x={x - tagW / 2} y={labelY - 8}
+                        width={tagW} height={12} rx={2.5}
+                        fill={dyeColor} opacity="0.92"
+                        stroke="white" strokeWidth="0.8"
+                      />
+                      <text
+                        x={x} y={labelY + 1}
+                        fontSize="9" fontWeight="700"
+                        fill="white" textAnchor="middle"
+                        style={{ fontFamily: "JetBrains Mono, monospace" }}
+                      >
+                        <title>{sp.fullLabel || sp.label} · {sp.size} bp</title>
+                        {tag}
                       </text>
                     </g>
                   );
