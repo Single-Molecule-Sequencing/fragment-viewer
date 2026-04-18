@@ -411,3 +411,99 @@ export function autoCalibrateDyeOffsets(peaksBySample, expectedByDye, tol = 3.0,
   const n = Object.values(matchesByDye).reduce((t, a) => t + a.length, 0);
   return { offsets, matchesByDye, n };
 }
+
+// ----------------------------------------------------------------------
+// Per-sample peak classification helpers (issue #16). These were previously
+// anonymous top-level functions in FragmentViewer.jsx; lifted here so the
+// main viewer + split tabs can share one classification pipeline.
+// ----------------------------------------------------------------------
+
+// HELPERS
+// ======================================================================
+
+export const fmtBp  = v => (v === null || v === undefined || isNaN(v)) ? "—" : v.toFixed(2);
+export const fmtInt = v => (v === null || v === undefined || isNaN(v)) ? "—" : Math.round(v).toLocaleString();
+
+// Find the tallest peak for a sample/dye within a size window.
+export function dominantPeak(peaks, sample, dye, lo = 50, hi = 500) {
+  const arr = peaks[sample]?.[dye] || [];
+  let best = null;
+  for (const p of arr) {
+    const [size, height] = p;
+    if (size >= lo && size <= hi && (!best || height > best[1])) best = p;
+  }
+  return best ? { size: best[0], height: best[1], area: best[2], width: best[3] } : null;
+}
+
+// Classify a peak relative to target and expected positions.
+export function classifyPeak(size, target, expectedMap, tol) {
+  for (const dye of SAMPLE_DYES) {
+    if (Math.abs(size - expectedMap[dye]) <= tol) return { kind: "target", dye };
+  }
+  if (size < 50) return { kind: "small", dye: null };                 // primer/adapter dimer region
+  if (target && size > target + 50) return { kind: "daisy", dye: null }; // daisy-chain or concatemer
+  return { kind: "other", dye: null };
+}
+
+// Compute per-sample auto defaults: target = median of dominant B/G/Y/R peaks;
+// expected_dye = dominant peak position within window of target.
+export function computeAutoDefaults(peaks) {
+  const cfg = {};
+  for (const sample of Object.keys(peaks)) {
+    const doms = {};
+    for (const d of SAMPLE_DYES) doms[d] = dominantPeak(peaks, sample, d);
+
+    // Target: use the minimum size among dominants (shorter strand = reference)
+    const sizes = SAMPLE_DYES.map(d => doms[d]?.size).filter(v => v !== undefined);
+    let target = sizes.length ? [...sizes].sort((a,b) => a-b)[0] : 200;
+
+    const expected = {};
+    for (const d of SAMPLE_DYES) {
+      if (doms[d] && Math.abs(doms[d].size - target) < 15) {
+        expected[d] = +doms[d].size.toFixed(2);
+      } else {
+        expected[d] = +target.toFixed(2);
+      }
+    }
+    cfg[sample] = {
+      target: +target.toFixed(2),
+      expected,
+      tolerance: 2.0,
+      chemistry: "custom",
+    };
+  }
+  return cfg;
+}
+
+// Peak ID: for each sample/dye, find nearest observed peak to expected within tol.
+export function identifyPeaks(peaks, cfg) {
+  const results = {};
+  for (const sample of Object.keys(cfg)) {
+    const sres = {};
+    const s = cfg[sample];
+    for (const d of SAMPLE_DYES) {
+      const target = s.expected[d];
+      const arr = peaks[sample]?.[d] || [];
+      let best = null;
+      for (const [size, height, area, width] of arr) {
+        const delta = size - target;
+        if (Math.abs(delta) <= s.tolerance) {
+          if (!best || Math.abs(delta) < Math.abs(best.delta)) {
+            best = { size, height, area, width, delta };
+          }
+        }
+      }
+      // Total channel area (for purity metric)
+      let totalArea = 0;
+      for (const [, , area] of arr) totalArea += area;
+      sres[d] = {
+        expected: target,
+        match: best,
+        purity: best && totalArea > 0 ? best.area / totalArea : null,
+        totalArea,
+      };
+    }
+    results[sample] = sres;
+  }
+  return results;
+}

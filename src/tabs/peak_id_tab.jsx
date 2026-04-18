@@ -19,19 +19,14 @@ import { LAB_GRNA_CATALOG, matchLabCatalog, normalizeSpacer } from "../lib/grna_
 import { productSize, findGrnas, predictCutProducts } from "../lib/biology.js";
 import { AssemblyProductsCard } from "../components/diagrams.jsx";
 import {
-  DATA,
-  classifyPeak,
-  dominantPeak,
-  identifyPeaks,
-  computeAutoDefaults,
-  fmtBp, fmtInt,
-  expectedSpeciesForDye,
-  speciesAtSize,
-  speciesId,
-  speciesSchematicProps,
-  SpeciesSchematic,
-  SPECIES_DASH,
-} from "../FragmentViewer.jsx";
+  classifyPeak, dominantPeak, identifyPeaks, computeAutoDefaults,
+} from "../lib/analysis.js";
+import {
+  expectedSpeciesForDye, speciesAtSize, speciesId,
+  SPECIES_DASH, TARGET_REACTANTS,
+} from "../lib/species.js";
+import { SpeciesSchematic, speciesSchematicProps } from "../components/species.jsx";
+import { DATA, fmtBp, fmtInt } from "../FragmentViewer.jsx";
 
 export function PeakSpeciesPopover({ hover, componentSizes, constructSize, gRNAs, overhangs, tol = 2.5, onClose }) {
   const popoverRef = useRef(null);

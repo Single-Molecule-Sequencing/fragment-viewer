@@ -14,6 +14,7 @@ import { DYE, SAMPLE_DYES, CONSTRUCT, resolveDyeColor } from "../lib/constants.j
 import { matchLabCatalog } from "../lib/grna_catalog.js";
 import {
   findGrnas, predictCutProducts, reverseComplement, productSize,
+  componentSizesFrom,
 } from "../lib/biology.js";
 import {
   ConstructDiagram, ProductFragmentViz, TargetSequenceView,

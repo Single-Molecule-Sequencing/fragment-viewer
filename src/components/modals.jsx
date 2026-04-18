@@ -29,6 +29,9 @@ import {
   buildCombinedSvg, mergeRefs,
 } from "../lib/export.js";
 import { buildPeakTableCSV } from "../lib/viewstate.js";
+import {
+  topNpeaksPerDye, sumHeight,
+} from "../lib/report.js";
 // Still in monolith (pending future extraction).
 import {
   buildReportMarkdown, SpeciesLegend,

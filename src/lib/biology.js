@@ -386,3 +386,14 @@ export function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, 
 
   return out;
 }
+
+// ----------------------------------------------------------------------
+// componentSizesFrom: given a CONSTRUCT object (from lib/constants.js),
+// return a { key: size } map usable as the `componentSizes` prop driving
+// productSize() across the app.
+// ----------------------------------------------------------------------
+export function componentSizesFrom(construct) {
+  const map = {};
+  for (const c of construct.components) map[c.key] = c.size;
+  return map;
+}
