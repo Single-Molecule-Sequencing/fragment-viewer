@@ -1,0 +1,65 @@
+id: fragment-viewer
+title: Fragment Analysis Viewer
+description: |
+  Interactive React/JSX viewer and Cas9 cut-product predictor for the Athey lab
+  Cleavage-Ligation-Cycling (CLC) fluorescent-adapter fragment analysis assay.
+  Visualizes 4-dye CE electropherograms from the 226 bp V059_gRNA3 construct
+  and predicts Cas9 cut products with automated peak classification.
+
+repo: Single-Molecule-Sequencing/fragment-viewer
+repo_path: /mnt/d/University of Michigan Dropbox/Gregory Farnum/Claude/Projects/fragment-viewer
+default_branch: main
+language: jsx
+status: active
+
+owners:
+  - greg
+  - isaac
+  - nina
+  - rachel
+
+papers:
+  []
+
+related_projects:
+  - cas9-targeted-sequencing
+  - golden-gate
+  - smaseq
+
+skills:
+  - fragment-viewer
+  - cas9-guide-mapper
+  - grna-variant-checker
+  - golden-gate-assembly
+
+data_locations:
+  raw: data/blue_export.txt
+  parsed: data/fa_data.json
+  reference_construct: data/V059_gRNA3_construct.dna
+  calibrations: data/calibrations/
+
+knowledge_base:
+  path: ~/lab_knowledge.db
+  tables:
+    - lab_grnas
+    - fragment_analysis_experiments
+
+artifact_runtime:
+  allowed_npm_imports:
+    - lucide-react
+    - recharts
+    - mathjs
+    - lodash
+    - d3
+    - shadcn/ui
+
+ci:
+  workflow: .github/workflows/validate.yml
+  checks:
+    - jsx-parse
+    - biology-sync
+    - python-syntax
+    - python-lint
+    - ingest-roundtrip
+
+last_updated: 2026-04-18

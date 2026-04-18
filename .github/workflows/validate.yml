@@ -17,7 +17,9 @@ jobs:
       - name: Install esbuild
         run: npm install -g esbuild
       - name: Parse FragmentViewer.jsx
-        run: esbuild --loader=jsx --bundle=false --log-level=warning src/FragmentViewer.jsx > /dev/null
+        run: esbuild --loader:.jsx=jsx --bundle=false --log-level=warning src/FragmentViewer.jsx > /dev/null
+      - name: Parse FragmentViewer.scaffold.jsx
+        run: esbuild --loader:.jsx=jsx --bundle=false --log-level=warning src/FragmentViewer.scaffold.jsx > /dev/null
 
   biology-sync:
     runs-on: ubuntu-latest
@@ -25,11 +27,26 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify BIOLOGY.md and DYE_STRAND in sync
         run: |
-          # Both files should reference the (B,Y) + (G,R) pairing convention
-          grep -q "Adapter 1 is labeled by the (B, Y) pair" docs/BIOLOGY.md || { echo "::error::BIOLOGY.md missing (B,Y) + (G,R) pairing statement"; exit 1; }
-          grep -qE "DYE_STRAND\s*=" src/FragmentViewer.jsx || { echo "::error::DYE_STRAND map not found in FragmentViewer.jsx"; exit 1; }
-          grep -qE "B[:\s]*\{.*strand:\s*['\"]bot['\"]" src/FragmentViewer.jsx || { echo "::warning::Could not verify B strand assignment"; }
-          echo "BIOLOGY.md ↔ FragmentViewer.jsx consistency check passed"
+          grep -q "Adapter 1 is labeled by the (B, Y) pair" docs/BIOLOGY.md \
+            || { echo "::error::BIOLOGY.md missing (B,Y) + (G,R) pairing statement"; exit 1; }
+          grep -qE "DYE_STRAND\s*=" src/FragmentViewer.jsx \
+            || { echo "::error::DYE_STRAND map not found in FragmentViewer.jsx"; exit 1; }
+          grep -qE "B[:\s]*\{.*strand:\s*['\"]bot['\"]" src/FragmentViewer.jsx \
+            || { echo "::warning::Could not verify B strand assignment"; }
+          echo "BIOLOGY.md and FragmentViewer.jsx consistency check passed"
+
+  catalog-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Count empty spacers in LAB_GRNA_CATALOG
+        run: |
+          EMPTY=$(grep -c 'spacer: ""' src/FragmentViewer.jsx || true)
+          TOTAL=$(grep -cE '\{\s*name:' src/FragmentViewer.jsx || true)
+          echo "::notice::LAB_GRNA_CATALOG: ${EMPTY} of ${TOTAL} entries have empty spacers"
+          if [ "$EMPTY" -gt 0 ]; then
+            echo "::warning::${EMPTY} catalog entries lack a 20 nt spacer; matchLabCatalog will not light up for them"
+          fi
 
   python-syntax:
     runs-on: ubuntu-latest
@@ -38,8 +55,54 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install ruff
+        run: pip install ruff
       - name: Compile Python scripts
         run: |
           python -m py_compile scripts/build_artifact.py
           python -m py_compile scripts/ingest_to_kb.py
-          echo "Python scripts parse clean"
+      - name: Lint scripts
+        run: ruff check scripts/
+
+  ingest-roundtrip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: build_artifact round-trip on sample data
+        run: |
+          python scripts/build_artifact.py data/blue_export.txt \
+            --out /tmp/round_trip.jsx --json-out /tmp/round_trip.json
+          test -s /tmp/round_trip.jsx
+          test -s /tmp/round_trip.json
+          python -c "import json; d=json.load(open('/tmp/round_trip.json')); assert len(d['peaks'])==10, f'expected 10 samples, got {len(d[\"peaks\"])}'"
+      - name: ingest_to_kb round-trip into temp sqlite
+        run: |
+          python scripts/ingest_to_kb.py --all --kb /tmp/test_kb.db
+          python -c "import sqlite3; c=sqlite3.connect('/tmp/test_kb.db'); n=c.execute('SELECT COUNT(*) FROM lab_grnas').fetchone()[0]; assert n>=11, f'expected >=11 lab_grnas, got {n}'"
+
+  fa-data-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate data/fa_data.json shape
+        run: |
+          python -c "
+          import json, sys
+          d = json.load(open('data/fa_data.json'))
+          assert 'peaks' in d, 'missing top-level peaks key'
+          for sample, dyes in d['peaks'].items():
+              assert isinstance(dyes, dict), f'{sample} peaks not a dict'
+              for dye, arr in dyes.items():
+                  assert dye in ('B','G','Y','R','O'), f'{sample}: unknown dye {dye}'
+                  for row in arr:
+                      assert len(row) == 4, f'{sample}/{dye}: row should be [size,height,area,width], got {row}'
+                      for v in row:
+                          assert isinstance(v, (int,float)), f'{sample}/{dye}: non-numeric {v}'
+          print(f'fa_data.json: {len(d[\"peaks\"])} samples valid')
+          "
