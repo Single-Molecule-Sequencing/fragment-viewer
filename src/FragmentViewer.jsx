@@ -2165,6 +2165,8 @@ export default function FragmentViewer() {
   // Whether any per-dye offset has been calibrated away from zero.
   const calibrated = ["B", "G", "Y", "R"].some(k => Math.abs(dyeOffsets[k] || 0) > 1e-6);
 
+  const [reportOpen, setReportOpen] = useState(false);
+
   return (
     <div key={dataKey} className="h-screen flex flex-col bg-zinc-50 text-zinc-900 font-sans antialiased">
       <PrintStyles />
@@ -2173,6 +2175,18 @@ export default function FragmentViewer() {
         sampleCount={samples.length}
         onUpload={handleNewPeaks}
         onResetCalibration={() => setDyeOffsets({ B: 0, G: 0, Y: 0, R: 0 })}
+        onOpenReport={() => setReportOpen(true)}
+      />
+      <ReportModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        samples={samples}
+        peaksBySample={DATA.peaks}
+        dyeOffsets={dyeOffsets}
+        componentSizes={componentSizes}
+        constructSize={constructSize}
+        targetStart={targetStart}
+        targetEnd={targetEnd}
       />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar tab={tab} setTab={setTab} />
@@ -2210,13 +2224,211 @@ function PrintStyles() {
         button, input[type="number"], input[type="file"], select, textarea { display: none !important; }
         .print-show { display: block !important; }
       }
+      /* When the report modal is printing, hide everything outside the report
+         container so the browser "Save as PDF" produces a clean document with
+         no navigation chrome, modal backdrop, or tab content bleeding in.    */
+      body.fv-report-printing > *:not(.fv-report-root) { display: none !important; }
+      body.fv-report-printing .fv-report-root { position: static !important; background: white !important; box-shadow: none !important; max-width: none !important; }
+      body.fv-report-printing .fv-report-root .fv-report-actions { display: none !important; }
+      body.fv-report-printing .fv-report-root .fv-report-backdrop { display: none !important; }
+      @media print {
+        body.fv-report-printing { background: white !important; }
+        body.fv-report-printing .fv-report-root { padding: 0 !important; }
+      }
     `}</style>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Report builder — one-click summary of the current dataset.
+// Renders a printable panel with sample metadata, per-sample peak summary,
+// dye-offset snapshot, and preprocessing configuration. Two deliverables:
+// (a) "Print / Save as PDF" triggers the browser's Save-as-PDF dialog with
+//     body-class-scoped CSS that hides everything except the report; and
+// (b) "Download Markdown" writes a report.md compatible with the lab's
+//     pandoc+xelatex+DejaVu Sans PDF recipe.
+// ----------------------------------------------------------------------
+function topNpeaksPerDye(peaks, n = 3) {
+  const out = {};
+  for (const d of ["B", "G", "Y", "R"]) {
+    const arr = (peaks?.[d] || []).slice().sort((a, b) => b[1] - a[1]).slice(0, n);
+    out[d] = arr.map(p => ({ size: p[0], height: p[1] }));
+  }
+  return out;
+}
+
+function sumHeight(peaks) {
+  let t = 0;
+  for (const d of ["B", "G", "Y", "R"]) {
+    for (const p of (peaks?.[d] || [])) t += p[1];
+  }
+  return t;
+}
+
+export function buildReportMarkdown({ samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd, generatedAt }) {
+  const lines = [];
+  const dateStr = (generatedAt || new Date()).toISOString().slice(0, 10);
+  lines.push(`# Fragment Viewer report`);
+  lines.push("");
+  lines.push(`- **Date:** ${dateStr}`);
+  lines.push(`- **Samples:** ${samples.length}`);
+  lines.push(`- **Construct size:** ${constructSize} bp (target window ${targetStart}–${targetEnd})`);
+  lines.push(`- **Dye offsets (bp):** B=${dyeOffsets.B.toFixed(3)} · G=${dyeOffsets.G.toFixed(3)} · Y=${dyeOffsets.Y.toFixed(3)} · R=${dyeOffsets.R.toFixed(3)}`);
+  lines.push("");
+  lines.push(`## Sample summary`);
+  lines.push("");
+  lines.push(`| Sample | Total peaks | ΣHeight | Top B | Top G | Top Y | Top R |`);
+  lines.push(`|---|---:|---:|---|---|---|---|`);
+  for (const s of samples) {
+    const p = peaksBySample[s] || {};
+    const nPeaks = ["B", "G", "Y", "R", "O"].reduce((t, d) => t + (p[d]?.length || 0), 0);
+    const total = sumHeight(p);
+    const top = topNpeaksPerDye(p, 1);
+    const fmt = (arr) => (arr.length ? `${arr[0].size.toFixed(2)} (h=${arr[0].height.toFixed(0)})` : "—");
+    lines.push(`| ${s} | ${nPeaks} | ${total.toFixed(0)} | ${fmt(top.B)} | ${fmt(top.G)} | ${fmt(top.Y)} | ${fmt(top.R)} |`);
+  }
+  lines.push("");
+  lines.push(`## Construct components (bp)`);
+  lines.push("");
+  lines.push("| Component | Size |");
+  lines.push("|---|---:|");
+  for (const k of Object.keys(componentSizes || {})) {
+    lines.push(`| ${k} | ${componentSizes[k]} |`);
+  }
+  lines.push("");
+  lines.push(`---`);
+  lines.push(``);
+  lines.push(`*Generated by Fragment Viewer. Build PDF with:*`);
+  lines.push("```bash");
+  lines.push(`pandoc report.md -o report.pdf --toc --number-sections \\`);
+  lines.push(`  --pdf-engine=xelatex \\`);
+  lines.push(`  -V mainfont='DejaVu Sans' -V monofont='DejaVu Sans Mono'`);
+  lines.push("```");
+  return lines.join("\n");
+}
+
+function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd }) {
+  if (!open) return null;
+  const generatedAt = useMemo(() => new Date(), [open]);
+  const dateStr = generatedAt.toISOString().slice(0, 10);
+  const printSafePrint = () => {
+    document.body.classList.add("fv-report-printing");
+    // The next tick lets the class-scoped display:none apply before the
+    // browser print pipeline snapshots the DOM.
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => document.body.classList.remove("fv-report-printing"), 250);
+    }, 50);
+  };
+  const downloadMd = () => {
+    const md = buildReportMarkdown({
+      samples, peaksBySample, dyeOffsets, componentSizes,
+      constructSize, targetStart, targetEnd, generatedAt,
+    });
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fragment_report_${dateStr}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className="fv-report-root fixed inset-0 z-50 flex items-start justify-center pt-8 pb-8 px-4 overflow-auto">
+      <div className="fv-report-backdrop fixed inset-0 bg-black/40 no-print" onClick={onClose} />
+      <div className="relative w-full max-w-3xl bg-white rounded-xl border border-zinc-200 shadow-2xl">
+        <header className="flex items-start justify-between gap-3 px-5 py-4 border-b border-zinc-200">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Fragment Viewer report</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">{dateStr} · {samples.length} sample{samples.length === 1 ? "" : "s"} · construct {constructSize} bp</p>
+          </div>
+          <div className="fv-report-actions flex items-center gap-1.5 no-print">
+            <ToolButton icon={FileDown} variant="primary" onClick={printSafePrint} title="Open the browser print dialog — choose 'Save as PDF' for a self-contained deliverable">
+              Print / Save as PDF
+            </ToolButton>
+            <ToolButton icon={FileDown} variant="secondary" onClick={downloadMd} title="Download a markdown source compatible with the lab's pandoc+xelatex PDF recipe (see rendered block for the exact command)">
+              Markdown
+            </ToolButton>
+            <ToolButton variant="ghost" onClick={onClose}>Close</ToolButton>
+          </div>
+        </header>
+        <div className="px-5 py-4 space-y-5">
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dataset</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <Stat label="Samples" value={samples.length} />
+              <Stat label="Construct" value={`${constructSize} bp`} hint={`target ${targetStart}–${targetEnd}`} />
+              <Stat label="Total peaks" value={samples.reduce((t, s) => t + ["B","G","Y","R","O"].reduce((tt, d) => tt + (peaksBySample[s]?.[d]?.length || 0), 0), 0)} />
+              <Stat label="Calibrated" value={["B","G","Y","R"].some(k => Math.abs(dyeOffsets[k]) > 1e-6) ? "yes" : "no"} hint="dye offsets nonzero" />
+            </div>
+          </section>
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dye mobility offsets (bp)</h3>
+            <div className="grid grid-cols-4 gap-2 text-xs">
+              {["B", "G", "Y", "R"].map(d => (
+                <div key={d} className="flex items-center justify-between px-2.5 py-2 rounded-lg border border-zinc-200 bg-zinc-50">
+                  <DyeChip dye={d} />
+                  <span className="font-mono text-zinc-800 tabular-nums">{dyeOffsets[d].toFixed(3)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Per-sample summary</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="text-left text-zinc-500 border-b border-zinc-200">
+                    <th className="py-1.5 pr-3 font-medium">Sample</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Peaks</th>
+                    <th className="py-1.5 px-2 font-medium text-right">ΣHeight</th>
+                    {["B","G","Y","R"].map(d => (
+                      <th key={d} className="py-1.5 px-2 font-medium">
+                        <span className="inline-flex items-center gap-1">
+                          <DyeChip dye={d} /> <span className="text-zinc-400 font-normal">top 1</span>
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {samples.map(s => {
+                    const p = peaksBySample[s] || {};
+                    const nPeaks = ["B","G","Y","R","O"].reduce((t, d) => t + (p[d]?.length || 0), 0);
+                    const total = sumHeight(p);
+                    const top = topNpeaksPerDye(p, 1);
+                    return (
+                      <tr key={s} className="border-b border-zinc-100 hover:bg-zinc-50">
+                        <td className="py-1.5 pr-3 font-mono text-zinc-800 truncate max-w-[18ch]" title={s}>{s}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-zinc-700">{nPeaks}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-zinc-700">{total.toFixed(0)}</td>
+                        {["B","G","Y","R"].map(d => (
+                          <td key={d} className="py-1.5 px-2 font-mono text-zinc-600 tabular-nums">
+                            {top[d].length ? `${top[d][0].size.toFixed(2)} (${top[d][0].height.toFixed(0)})` : <span className="text-zinc-300">—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section className="text-[11px] text-zinc-500">
+            Generated by Fragment Viewer at {generatedAt.toISOString()}. Print as PDF for a deliverable, or download as markdown and render with{" "}
+            <code className="font-mono">pandoc … --pdf-engine=xelatex -V mainfont='DejaVu Sans'</code> (the lab's canonical PDF recipe).
+          </section>
+        </div>
+      </div>
+    </div>
   );
 }
 
 // Top toolbar. Brand + construct chip + global actions. 48px tall.
 // Dark bar gives the eye a stable anchor; main pane reads as the work surface.
-function Toolbar({ sampleCount, onUpload, onResetCalibration }) {
+function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport }) {
   return (
     <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
       <div className="flex items-center gap-2.5">
@@ -2246,8 +2458,8 @@ function Toolbar({ sampleCount, onUpload, onResetCalibration }) {
         <ToolButton icon={RotateCcw} variant="dark" title="Reset all per-dye mobility offsets to zero" onClick={onResetCalibration}>
           Reset calib.
         </ToolButton>
-        <ToolButton icon={FileDown} variant="dark" title="Open browser print dialog (Save as PDF)" onClick={() => window.print()}>
-          PDF
+        <ToolButton icon={FileDown} variant="dark" title="Build a one-page report: sample summary, offsets, top peaks — saveable as PDF or markdown" onClick={onOpenReport}>
+          Report
         </ToolButton>
       </div>
     </header>
@@ -2864,6 +3076,17 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
             </label>
             {hasRawTrace && showRawTrace && (
               <>
+                <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden" title="Raw = preprocessed DATA1..4 overlay. Residual = raw − modeled gaussians (centered on 0).">
+                  {[
+                    { k: "raw",      l: "Raw" },
+                    { k: "residual", l: "Residual" },
+                  ].map(o => (
+                    <button key={o.k} onClick={() => setOverlayMode(o.k)}
+                      className={`px-2 py-1 text-xs ${overlayMode === o.k ? "bg-fuchsia-600 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
                 <label className="flex items-center gap-2">
                   <span className="text-zinc-600">Raw α</span>
                   <input type="range" min="0.1" max="1" step="0.05" value={rawOpacity}
@@ -3135,26 +3358,48 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
 
                 {/* Raw unsmoothed signal overlay. Rendered only when the user
                     enables "Show unsmoothed raw signal" and the sample has an
-                    .fsa-derived trace. Walks the preprocessed samples keyed
-                    to bp-space and draws a polyline per dye. Color matches
-                    the channel but opacity is user-tunable so it can sit
-                    above or below the modeled trace. */}
+                    .fsa-derived trace. In "raw" mode, draws preprocessed raw
+                    samples on top of the modeled trace. In "residual" mode,
+                    draws raw − modeled centered on a zero line at lane
+                    midheight — negative residuals go below, positive above. */}
+                {showRawTrace && hasRawTrace && overlayMode === "residual" && (
+                  <g key={`resid-zero-${li}`} pointerEvents="none">
+                    <line x1={m.l} x2={m.l + plotW}
+                          y1={lane.top + lane.h / 2} y2={lane.top + lane.h / 2}
+                          stroke="#0ea5e9" strokeDasharray="4 3" strokeWidth="0.8" opacity="0.55" />
+                    <text x={m.l + 4} y={lane.top + lane.h / 2 - 2} fontSize="8" fill="#0ea5e9" fontWeight="600">
+                      0 (residual)
+                    </text>
+                  </g>
+                )}
                 {showRawTrace && hasRawTrace && lane.dyes.map(dye => {
                   const r = rawByChannel[dye];
                   if (!r || !r.xs.length) return null;
-                  const { xs, ys } = r;
+                  const { xs, ys, residual } = r;
+                  // Residual mode uses a symmetric scale around lane midline:
+                  // ±yMax/2 fills the lane. Raw mode uses the standard yScale.
+                  const laneMid = lane.top + lane.h / 2;
+                  const residHalf = lane.h / 2;
+                  const residRange = Math.max(lane.yMax / 2, 100);
+                  const yOf = residual
+                    ? (v) => laneMid - Math.max(-residHalf, Math.min(residHalf, (v / residRange) * residHalf))
+                    : (v) => yScale(Math.max(0, v));
                   let d = "";
                   for (let i = 0; i < xs.length; i++) {
                     const px = xScale(xs[i]);
-                    const py = yScale(Math.max(0, ys[i]));
+                    const py = yOf(ys[i]);
                     d += (i === 0 ? "M" : "L") + px.toFixed(1) + "," + py.toFixed(1);
                   }
+                  const stroke = residual ? "#c026d3" : DYE[dye].color;
                   return (
                     <path key={`raw-${li}-${dye}`} d={d} fill="none"
-                          stroke={DYE[dye].color} strokeWidth={rawStroke}
-                          opacity={rawOpacity} strokeDasharray="2 1"
+                          stroke={stroke} strokeWidth={rawStroke}
+                          opacity={rawOpacity}
+                          strokeDasharray={residual ? "none" : "2 1"}
                           vectorEffect="non-scaling-stroke">
-                      <title>{`${dye} raw (${prep.smooth === "savgol" ? `SG ${prep.savgolWindow}/${prep.savgolOrder}` : "unsmoothed"}${prep.baseline ? ", baseline-subtracted" : ""}${prep.clip ? `, clipped@${prep.clipCeiling}` : ""})`}</title>
+                      <title>{residual
+                        ? `${dye} residual (raw − modeled gaussians)`
+                        : `${dye} raw (${prep.smooth === "savgol" ? `SG ${prep.savgolWindow}/${prep.savgolOrder}` : "unsmoothed"}${prep.baseline ? ", baseline-subtracted" : ""}${prep.clip ? `, clipped@${prep.clipCeiling}` : ""})`}</title>
                     </path>
                   );
                 })}
@@ -3980,6 +4225,71 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
     for (const dye of ["B", "G", "Y", "R"]) setDyeOffset(dye, 0);
   };
 
+  // Auto-calibrate from ALL loaded samples against a chosen gRNA's predicted
+  // cut sizes (blunt + +4 sticky chemistries, which are what the lab sees on
+  // real runs). Median signed residual per dye becomes the new offset.
+  // Robust to outliers (wrong peaks, primer-dimers) — needs ≥3 matches per
+  // dye before applying; below that it leaves the dye's offset untouched and
+  // surfaces a warning.
+  const [calibGrnaIdx, setCalibGrnaIdx] = useState(0);
+  const [calibResult, setCalibResult] = useState(null);
+  const calibrateFromRun = () => {
+    // Build the expected-sizes table for the picked gRNA's cut products at
+    // the two chemistries we see in practice (blunt and +4 sticky). Each
+    // dye gets a list of possible cut-product sizes — we'll try to match
+    // every one against observed peaks and take the median of residuals.
+    const grnaEntry = LAB_GRNA_CATALOG[calibGrnaIdx];
+    if (!grnaEntry) { setCalibResult({ error: "Pick a gRNA from the lab catalog" }); return; }
+    const norm = normalizeSpacer(grnaEntry.spacer);
+    if (norm.length !== 20) { setCalibResult({ error: `${grnaEntry.name}: spacer length ${norm.length} (need 20)` }); return; }
+    const candidates = findGrnas(constructSeq, targetStart, targetEnd);
+    const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
+    const grna = candidates.find(g => g.protospacer === norm || g.protospacer === rc);
+    if (!grna) { setCalibResult({ error: `${grnaEntry.name} spacer not found in construct target window` }); return; }
+    const expectedByDye = { B: [], G: [], Y: [], R: [] };
+    for (const oh of [0, 4]) {
+      const pr = predictCutProducts(grna, constructSize, oh);
+      for (const dye of ["B", "G", "Y", "R"]) {
+        if (pr[dye] && pr[dye].length > 0) expectedByDye[dye].push(pr[dye].length);
+      }
+    }
+    // Also include assembly-product sizes so well-behaved blunt controls
+    // (with no cut products but full/partial ligation products visible) can
+    // also drive calibration.
+    for (const prod of ASSEMBLY_PRODUCTS) {
+      if (!prod.dyes) continue;
+      for (const dye of prod.dyes) {
+        if (expectedByDye[dye]) expectedByDye[dye].push(productSize(prod, componentSizes));
+      }
+    }
+    const { offsets, matchesByDye, n } = autoCalibrateDyeOffsets(
+      DATA.peaks, expectedByDye, 3.0, dyeOffsets
+    );
+    // Per-dye gate: apply only dyes with ≥3 matches; others keep current offset.
+    const minMatches = 3;
+    const applied = { B: dyeOffsets.B, G: dyeOffsets.G, Y: dyeOffsets.Y, R: dyeOffsets.R };
+    const skipped = [];
+    for (const dye of ["B", "G", "Y", "R"]) {
+      if (matchesByDye[dye].length >= minMatches) {
+        applied[dye] = Math.round(offsets[dye] * 1000) / 1000;
+      } else {
+        skipped.push(`${dye}(${matchesByDye[dye].length})`);
+      }
+    }
+    for (const dye of ["B", "G", "Y", "R"]) setDyeOffset(dye, applied[dye]);
+    setCalibResult({
+      grna: grnaEntry.name,
+      applied,
+      matches: {
+        B: matchesByDye.B.length, G: matchesByDye.G.length,
+        Y: matchesByDye.Y.length, R: matchesByDye.R.length,
+      },
+      n,
+      skipped,
+      nSamples: Object.keys(DATA.peaks).length,
+    });
+  };
+
   const handleApplySequence = () => {
     const cleaned = seqDraft.replace(/\s+/g, "").toUpperCase();
     if (!/^[ACGTN]*$/.test(cleaned)) { setSeqError("Only A/C/G/T/N allowed"); return; }
@@ -4045,8 +4355,20 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
         className="mb-3"
         actions={
           <>
-            <ToolButton variant="primary" onClick={handleAutoCalibrate} title="Set per-dye offsets so the tallest peak in each channel aligns with its closest blunt prediction">
+            <ToolButton variant="primary" onClick={handleAutoCalibrate} title="Set per-dye offsets so the tallest peak in each channel aligns with its closest blunt prediction (single-sample heuristic)">
               Auto-calibrate
+            </ToolButton>
+            <select value={calibGrnaIdx} onChange={e => setCalibGrnaIdx(parseInt(e.target.value, 10))}
+                    className="px-2 py-1 text-xs border border-zinc-300 rounded bg-white focus-ring max-w-[22ch]">
+              {LAB_GRNA_CATALOG
+                .map((g, i) => ({ g, i }))
+                .filter(({ g }) => normalizeSpacer(g.spacer).length === 20)
+                .map(({ g, i }) => (
+                  <option key={`cal-${i}`} value={i}>{g.name}</option>
+                ))}
+            </select>
+            <ToolButton variant="primary" onClick={calibrateFromRun} title="Auto-calibrate across ALL loaded samples using the picked gRNA's predicted cut sizes (blunt + +4) plus assembly-product sizes. Median residual per dye, robust to outliers, requires ≥3 matches per dye before applying.">
+              Calibrate from run
             </ToolButton>
             <ToolButton variant="secondary" onClick={handleResetOffsets}>
               Reset
@@ -4108,6 +4430,26 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
             </div>
           ))}
         </div>
+        {calibResult && (
+          calibResult.error ? (
+            <div className="mt-3 px-3 py-2 rounded-md bg-rose-50 border border-rose-200 text-xs text-rose-800">
+              <AlertTriangle size={12} className="inline mr-1" /> {calibResult.error}
+            </div>
+          ) : (
+            <div className="mt-3 px-3 py-2 rounded-md bg-emerald-50 border border-emerald-200 text-xs text-emerald-900">
+              <CheckCircle2 size={12} className="inline mr-1" />
+              Calibrated from <span className="font-semibold">{calibResult.nSamples}</span> sample{calibResult.nSamples === 1 ? "" : "s"} against <span className="font-mono font-semibold">{calibResult.grna}</span> ({calibResult.n} total matches):{" "}
+              {["B","G","Y","R"].map(d => (
+                <span key={d} className="inline-block mr-2 font-mono">
+                  {d}={calibResult.applied[d].toFixed(3)} <span className="text-emerald-700/70">(n={calibResult.matches[d]})</span>
+                </span>
+              ))}
+              {calibResult.skipped.length > 0 && (
+                <span className="ml-2 text-amber-700">· skipped (&lt;3 matches): {calibResult.skipped.join(", ")}</span>
+              )}
+            </div>
+          )
+        )}
       </Panel>
 
       {/* Per-dye cluster cards */}
