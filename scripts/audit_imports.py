@@ -37,7 +37,13 @@ REACT_HOOKS = {
     "useLayoutEffect", "createPortal", "forwardRef", "memo",
 }
 # Props commonly destructured as PascalCase (e.g. `({ icon: Icon })`)
-PROP_FALSE_POSITIVES = {"Icon"}
+# and known lucide-icon names that are also plain English nouns appearing
+# as JSX text content (e.g. `<label>Upload<input...></label>`).
+FALSE_POSITIVES = {
+    "Icon",
+    "Upload", "Download", "Save", "Search", "Check", "X",
+    "Link", "Copy", "Edit", "Delete", "Plus", "Minus",
+}
 
 
 def exported_names(files: list[Path]) -> set[str]:
@@ -56,11 +62,33 @@ def exported_names(files: list[Path]) -> set[str]:
     return out
 
 
+def lucide_icons_used(files: list[Path]) -> set[str]:
+    """Every name anyone in the repo ever imported from lucide-react."""
+    icons: set[str] = set()
+    for f in files:
+        src = f.read_text()
+        for m in re.finditer(
+            r"import\s*\{\s*([^}]+?)\s*\}\s*from\s+['\"]lucide-react['\"]",
+            src,
+        ):
+            icons.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", m.group(1)))
+    return icons
+
+
 def source_side_missing() -> list[tuple[str, str]]:
     lib_files = list((SRC / "lib").glob("*.js"))
     comp_files = list((SRC / "components").glob("*.jsx"))
     tab_files = list((SRC / "tabs").glob("*.jsx"))
-    known = exported_names(lib_files + comp_files + tab_files) | REACT_HOOKS
+    all_src = lib_files + comp_files + tab_files + [SRC / "FragmentViewer.jsx"]
+    # Known names that must be imported before use. Combine:
+    #   - every exported name from any lib/component/tab file
+    #   - React hooks + createPortal
+    #   - every lucide-react icon anyone has ever imported
+    known = (
+        exported_names(lib_files + comp_files + tab_files)
+        | REACT_HOOKS
+        | lucide_icons_used(all_src)
+    )
 
     missing: list[tuple[str, str]] = []
     # Include lib/ in the check — v0.27.0 slipped through because biology.js
@@ -86,7 +114,7 @@ def source_side_missing() -> list[tuple[str, str]]:
             )
         )
         used = set(re.findall(r"\b([A-Za-z_][A-Za-z0-9_]+)\b", sc))
-        unresolved = (used & known) - import_ids - decl_ids - PROP_FALSE_POSITIVES
+        unresolved = (used & known) - import_ids - decl_ids - FALSE_POSITIVES
         for m in sorted(unresolved):
             missing.append((str(f.relative_to(ROOT)), m))
     return missing

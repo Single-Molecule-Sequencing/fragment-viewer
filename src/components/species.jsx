@@ -13,6 +13,7 @@
 // live in src/lib/species.js.
 
 import { useState, useMemo } from "react";
+import { Layers } from "lucide-react";
 import { Panel, Pill, ToolButton, DyeChip } from "./primitives.jsx";
 import {
   DYE, DYE_HEX, CONSTRUCT, ASSEMBLY_PRODUCTS, resolveDyeColor,
