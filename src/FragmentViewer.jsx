@@ -34,7 +34,7 @@ const CHEMISTRY_PRESETS = [
 // Fluor Adapter 1 carries 6-FAM (Blue) + TAMRA (Yellow).
 // Fluor Adapter 2 carries HEX (Green) + ROX (Red).
 // ----------------------------------------------------------------------
-const CONSTRUCT = {
+export const CONSTRUCT = {
   total: 226,
   // Full 226 bp construct sequence from the SnapGene file (top strand 5' to 3').
   seq: "CGTACGATGCGTACGACCGATGCCAGGAGACGTGCTGAGGTCCATAGCCTGGACGCTCAGTCGGCAGGTGCCAGAACGTTCCCTGGGAAGGCCCCATGGAAGCCCAGGACTGAGCCACCACCCTCAGCCTCGTCACCTCACCACAGGACTGGCTACCTCTCTGGGCCCTCAGGGATCCAATCGAGTCGCAGGTACCCAGCGGCGATCCGATGACCGTACGTCGACC",
@@ -58,7 +58,7 @@ const CONSTRUCT = {
 // HEX    = Oligo C (25 nt) - BOT strand 5' end, at construct position 226
 // ROX    = Oligo D (29 nt) - TOP strand 3' end, at construct position 226
 // ----------------------------------------------------------------------
-const DYE_STRAND = {
+export const DYE_STRAND = {
   B: { strand: "bot", fragment: "left",  end: "3'", pos: 1,   oligoLen: 29 },  // 6-FAM
   Y: { strand: "top", fragment: "left",  end: "5'", pos: 1,   oligoLen: 25 },  // TAMRA
   G: { strand: "bot", fragment: "right", end: "5'", pos: 226, oligoLen: 25 },  // HEX
@@ -66,7 +66,7 @@ const DYE_STRAND = {
 };
 
 // Possible assembly products. Each specifies which components are present and which dyes are predicted to appear.
-const ASSEMBLY_PRODUCTS = [
+export const ASSEMBLY_PRODUCTS = [
   { id: "full",           name: "Full ligation (all 5 parts)",            parts: ["ad1","oh1","br1","target","br2","oh2","ad2"], dyes: ["B","Y","G","R"] },
   { id: "no_ad2",         name: "Missing Adapter 2 (everything except Ad2)", parts: ["ad1","oh1","br1","target","br2","oh2"],        dyes: ["B","Y"] },
   { id: "no_ad1",         name: "Missing Adapter 1 (everything except Ad1)", parts: ["oh1","br1","target","br2","oh2","ad2"],        dyes: ["G","R"] },
@@ -82,7 +82,7 @@ const ASSEMBLY_PRODUCTS = [
 // ----------------------------------------------------------------------
 // Cas9 gRNA / PAM / cut-site prediction
 // ----------------------------------------------------------------------
-function reverseComplement(s) {
+export function reverseComplement(s) {
   const m = { A: "T", T: "A", G: "C", C: "G", N: "N" };
   return s.toUpperCase().split("").reverse().map(c => m[c] || c).join("");
 }
@@ -90,7 +90,7 @@ function reverseComplement(s) {
 // Find all gRNA candidates in the target region. Returns list of objects:
 // { id, strand, pam_seq, protospacer, target_pos, cut_construct }
 // where cut_construct = last position in the LEFT fragment (top-strand cut position).
-function findGrnas(fullConstruct, targetStart, targetEnd) {
+export function findGrnas(fullConstruct, targetStart, targetEnd) {
   const seq = fullConstruct.toUpperCase();
   const targetSeq = seq.substring(targetStart - 1, targetEnd);  // 0-indexed slice
   const out = [];
@@ -147,7 +147,7 @@ function findGrnas(fullConstruct, targetStart, targetEnd) {
 // Predict ssDNA products from a Cas9 cut.
 // overhang_nt > 0 means 5' overhang of N nt (top cut at cut_construct, bot cut at cut_construct + N)
 // overhang_nt = 0 means blunt cut.
-function predictCutProducts(grna, constructSize, overhang_nt = 0) {
+export function predictCutProducts(grna, constructSize, overhang_nt = 0) {
   const X = grna.cut_construct;  // 1-indexed last base of LEFT fragment on TOP strand
   const topLeft  = X;
   const topRight = constructSize - X;
@@ -267,7 +267,7 @@ function locateCustomGrna(grnaSeq, fullConstruct, targetStart, targetEnd) {
 //      abundance, best-guess identity, chemistry interpretation
 // ======================================================================
 
-function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, constructSize, componentSizes, assemblyProducts, grnaCatalog, dyeOffsets, heightThreshold, matchTol, clusterTol, overhangsToConsider) {
+export function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, constructSize, componentSizes, assemblyProducts, grnaCatalog, dyeOffsets, heightThreshold, matchTol, clusterTol, overhangsToConsider) {
   const grnas = findGrnas(constructSeq, targetStart, targetEnd);
 
   // Pre-compute all predictions per dye. Predictions are { size, label, kind, detail }
@@ -378,8 +378,9 @@ function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, constru
             ? (p.bestMatch.pred.grnaName + "|" + p.bestMatch.pred.fragment)
             : p.bestMatch.pred.label;
           const w = p.area * (1 / (1 + Math.abs(p.bestMatch.delta)));
-          voteMap.set(key, (voteMap.get(key) || { w: 0, pred: p.bestMatch.pred }).pred
-            ? { w: (voteMap.get(key).w + w), pred: p.bestMatch.pred }
+          const existing = voteMap.get(key);
+          voteMap.set(key, existing
+            ? { w: existing.w + w, pred: existing.pred }
             : { w, pred: p.bestMatch.pred });
         }
       }
@@ -429,7 +430,7 @@ function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, constru
   return out;
 }
 
-const LAB_GRNA_CATALOG = [
+export const LAB_GRNA_CATALOG = [
   // --- Active fragment analysis construct (V059_gRNA3) ---
   { name: "V059_gRNA3",             spacer: "",                         source: "SnapGene V059_gRNA3 file",  target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset; exact spacer TBD by user." },
 
@@ -454,12 +455,12 @@ const LAB_GRNA_CATALOG = [
 ];
 
 // Normalize spacer for comparison (uppercase, DNA only, strip U's)
-function normalizeSpacer(s) {
+export function normalizeSpacer(s) {
   return (s || "").toUpperCase().replace(/U/g, "T").replace(/[^ACGT]/g, "");
 }
 
 // Match a candidate gRNA against the lab catalog; returns catalog entry or null.
-function matchLabCatalog(grna) {
+export function matchLabCatalog(grna) {
   const cand = normalizeSpacer(grna.protospacer);
   if (cand.length !== 20) return null;
   const candRC = cand.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
@@ -477,7 +478,7 @@ function productSize(product, componentSizes) {
   return sum;
 }
 
-function componentSizesFrom(construct) {
+export function componentSizesFrom(construct) {
   const map = {};
   for (const c of construct.components) map[c.key] = c.size;
   return map;

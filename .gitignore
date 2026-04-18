@@ -2,6 +2,9 @@
 node_modules/
 dist/
 .cache/
+.vite/
+coverage/
+package-lock.json
 
 # Python
 __pycache__/
