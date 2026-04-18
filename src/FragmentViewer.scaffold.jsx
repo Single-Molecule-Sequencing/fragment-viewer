@@ -280,9 +280,193 @@ export function callPeaksFromTrace(trace, idxToBp, { heightThresh = 100, minSepS
   });
 }
 
+// ----------------------------------------------------------------------
+// Signal preprocessing (pure functions; all operate on plain number arrays).
+// Exported so tests cover them and advanced users can import from scripts.
+// ----------------------------------------------------------------------
+
+// Rolling-minimum baseline: returns a same-length array whose value at
+// index i is min(trace[i-w .. i+w]). Used as a cheap CE baseline estimator
+// — the true baseline sits under the peaks, so local minima approximate it.
+// Default window (201 samples ≈ 0.5 s on 3730 at 10 Hz) is wide enough to
+// ignore peaks (typical FWHM ~5 samples) but narrow enough to track slow
+// dye leak / capillary drift. Edges clamp instead of wrapping.
+export function rollingBaseline(trace, window = 201) {
+  if (!trace || !trace.length) return [];
+  const w = Math.max(3, Math.floor(window / 2) * 2 + 1);
+  const half = (w - 1) / 2;
+  const n = trace.length;
+  const out = new Array(n);
+  // Naive O(n*w) is fine for w~201 and n~11000 (~2.2M ops, sub-100ms in JS).
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(n - 1, i + half);
+    let m = Infinity;
+    for (let j = lo; j <= hi; j++) if (trace[j] < m) m = trace[j];
+    out[i] = m;
+  }
+  return out;
+}
+
+// Subtract a baseline estimate; never returns negative (clamps to 0).
+export function subtractBaseline(trace, baseline) {
+  if (!trace) return [];
+  if (!baseline || baseline.length !== trace.length) return trace.slice();
+  const n = trace.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = Math.max(0, trace[i] - baseline[i]);
+  return out;
+}
+
+// Savitzky–Golay smoothing (symmetric coefficients, order 2 or 4, odd window
+// 5/7/9/11/13/15/17/19/21). For CE traces with FWHM ~3-6 samples, window 7 +
+// order 2 preserves peak height while killing shot noise. Pre-computed coeffs
+// from the classic Savitzky-Golay 1964 tables; see references/savgol-coefs.md
+// if we grow more options. Edges fall back to pass-through.
+const SAVGOL_COEFS = {
+  "5_2":  [-3, 12, 17, 12, -3].map(c => c / 35),
+  "7_2":  [-2, 3, 6, 7, 6, 3, -2].map(c => c / 21),
+  "9_2":  [-21, 14, 39, 54, 59, 54, 39, 14, -21].map(c => c / 231),
+  "11_2": [-36, 9, 44, 69, 84, 89, 84, 69, 44, 9, -36].map(c => c / 429),
+  "13_2": [-11, 0, 9, 16, 21, 24, 25, 24, 21, 16, 9, 0, -11].map(c => c / 143),
+  "15_2": [-78, -13, 42, 87, 122, 147, 162, 167, 162, 147, 122, 87, 42, -13, -78].map(c => c / 1105),
+  "17_2": [-21, -6, 7, 18, 27, 34, 39, 42, 43, 42, 39, 34, 27, 18, 7, -6, -21].map(c => c / 323),
+  "19_2": [-136, -51, 24, 89, 144, 189, 224, 249, 264, 269, 264, 249, 224, 189, 144, 89, 24, -51, -136].map(c => c / 2261),
+  "21_2": [-171, -76, 9, 84, 149, 204, 249, 284, 309, 324, 329, 324, 309, 284, 249, 204, 149, 84, 9, -76, -171].map(c => c / 3059),
+  "7_4":  [5, -30, 75, 131, 75, -30, 5].map(c => c / 231),
+  "9_4":  [15, -55, 30, 135, 179, 135, 30, -55, 15].map(c => c / 429),
+};
+export function savitzkyGolay(trace, window = 7, order = 2) {
+  if (!trace || !trace.length) return [];
+  const key = `${window}_${order}`;
+  const c = SAVGOL_COEFS[key];
+  if (!c) return trace.slice(); // unsupported param combo → pass-through
+  const half = (c.length - 1) / 2;
+  const n = trace.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    if (i < half || i >= n - half) { out[i] = trace[i]; continue; }
+    let s = 0;
+    for (let k = 0; k < c.length; k++) s += c[k] * trace[i - half + k];
+    out[i] = s;
+  }
+  return out;
+}
+
+// Clip trace at a ceiling (optional; saturated signal is already clipped by
+// the instrument's ADC at 32767 for 16-bit dyes). Users can model a lower
+// ceiling to visually flatten saturating peaks instead of having them dwarf
+// the rest of the lane.
+export function clipSaturated(trace, ceiling = 32000) {
+  if (!trace || !trace.length) return [];
+  const n = trace.length;
+  const out = new Array(n);
+  const c = Math.max(1, ceiling);
+  for (let i = 0; i < n; i++) out[i] = Math.min(c, trace[i]);
+  return out;
+}
+
+// Apply a full preprocessing chain to a single trace. Order matters: clip →
+// baseline-subtract → smooth. All options default to no-op. Exposed so the
+// UI can wire one control per step and we can test the composed behavior.
+export function preprocessTrace(trace, opts = {}) {
+  if (!trace || !trace.length) return [];
+  let t = trace.slice();
+  if (opts.clip && opts.clipCeiling > 0) t = clipSaturated(t, opts.clipCeiling);
+  if (opts.baseline) {
+    const bl = rollingBaseline(t, opts.baselineWindow || 201);
+    t = subtractBaseline(t, bl);
+  }
+  if (opts.smooth === "savgol") {
+    t = savitzkyGolay(t, opts.savgolWindow || 7, opts.savgolOrder || 2);
+  }
+  return t;
+}
+
+// Evaluate the modeled sum-of-gaussians at a single bp position. Mirrors the
+// peak-rendering path in buildGaussianPath but returns a scalar so we can
+// sample it at arbitrary x. Used by computeResidual for the residual view
+// and by the auto-dye-offset calibrator for expected-vs-observed matching.
+export function evaluateGaussianSum(peaks, xBp, smoothing = 1) {
+  if (!peaks || !peaks.length) return 0;
+  let y = 0;
+  for (const p of peaks) {
+    const sigma = Math.max((p[3] || 0.5) / 2.355 * smoothing, 0.12);
+    const z = (xBp - p[0]) / sigma;
+    if (z > 5 || z < -5) continue;
+    y += p[1] * Math.exp(-0.5 * z * z);
+  }
+  return y;
+}
+
+// Compute raw - modeled point-by-point. Signed: negative where the Gaussian
+// model overshoots (e.g. tails of a too-wide fitted width), positive where
+// the raw trace has signal the peak table missed (shoulders, unmodeled dyes,
+// primer-dimer). Drives the "residual" overlay mode in TraceTab.
+export function computeResidual(xs, ys, peaks, smoothing = 1) {
+  if (!xs || !ys || xs.length !== ys.length) return [];
+  const out = new Array(xs.length);
+  for (let i = 0; i < xs.length; i++) {
+    out[i] = ys[i] - evaluateGaussianSum(peaks, xs[i], smoothing);
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------------
+// Auto-calibration: per-dye mobility offsets from observed vs. expected.
+// ----------------------------------------------------------------------
+// Given peaks-by-sample, a list of expected sizes per dye, and a search
+// tolerance, compute the median signed residual (observed - expected)
+// across all matched pairs per dye. That median becomes the new offset.
+//
+// Why median: immune to spurious peaks that don't belong to the expected
+// species set (primer-dimers, ladder bleed, LIZ spill). We trim matches
+// to a tolerance window to avoid pulling offsets toward random peaks.
+//
+// Returns { offsets: {B,G,Y,R}, matchesByDye: {B: [...], ...}, n: total matches }.
+export function autoCalibrateDyeOffsets(peaksBySample, expectedByDye, tol = 3.0, currentOffsets = { B:0, G:0, Y:0, R:0 }) {
+  const matchesByDye = { B: [], G: [], Y: [], R: [] };
+  for (const sample of Object.keys(peaksBySample || {})) {
+    const dyes = peaksBySample[sample] || {};
+    for (const dye of ["B", "G", "Y", "R"]) {
+      const expSizes = expectedByDye?.[dye];
+      const observed = dyes[dye];
+      if (!expSizes || !expSizes.length || !observed || !observed.length) continue;
+      for (const exp of expSizes) {
+        // Shift expected by the currently-applied offset so we're searching
+        // in the same bp frame as the observed peaks. After calibration the
+        // caller replaces the offset entirely (not adds to it).
+        const target = exp + (currentOffsets[dye] || 0);
+        let best = null;
+        let bestDist = Infinity;
+        for (const p of observed) {
+          const d = Math.abs(p[0] - target);
+          if (d < bestDist && d <= tol) { bestDist = d; best = p; }
+        }
+        if (best) matchesByDye[dye].push(best[0] - exp);
+      }
+    }
+  }
+  const median = (arr) => {
+    if (!arr.length) return 0;
+    const s = arr.slice().sort((a, b) => a - b);
+    const n = s.length;
+    return n % 2 === 1 ? s[(n - 1) / 2] : 0.5 * (s[n / 2 - 1] + s[n / 2]);
+  };
+  const offsets = {
+    B: median(matchesByDye.B),
+    G: median(matchesByDye.G),
+    Y: median(matchesByDye.Y),
+    R: median(matchesByDye.R),
+  };
+  const n = Object.values(matchesByDye).reduce((t, a) => t + a.length, 0);
+  return { offsets, matchesByDye, n };
+}
+
 // One-shot .fsa → peaks-by-dye for a single sample. Returns
-// {sampleName, peaks, meta, calibrated} where peaks matches the
-// GeneMapper TSV schema for the four lab dye letters B/G/Y/R + O.
+// {sampleName, peaks, meta, calibrated, traces, interp} where peaks matches
+// the GeneMapper TSV schema and traces preserves the raw int16 samples per
+// dye so the UI can render unsmoothed signal + preprocess on demand.
 export function parseFsaArrayBuffer(arrayBuffer, fileName = "sample") {
   const { entries } = parseAbifBuffer(arrayBuffer);
   const get = (k) => entries[k]?.value;
@@ -290,16 +474,30 @@ export function parseFsaArrayBuffer(arrayBuffer, fileName = "sample") {
   const liz = trace(105);
   const interp = calibrateLizJs(liz);
   const peaks = {};
+  const traces = {};
   if (interp) {
     for (const [ch, dye] of [[1, "B"], [2, "G"], [3, "Y"], [4, "R"]]) {
       const t = trace(ch);
-      if (t) peaks[dye] = callPeaksFromTrace(t, interp);
+      if (t) {
+        peaks[dye] = callPeaksFromTrace(t, interp);
+        traces[dye] = t;
+      }
     }
-    if (liz) peaks.O = callPeaksFromTrace(liz, interp, { heightThresh: 200, minSepSamples: 10 });
+    if (liz) {
+      peaks.O = callPeaksFromTrace(liz, interp, { heightThresh: 200, minSepSamples: 10 });
+      traces.O = liz;
+    }
+  }
+  // Pre-sample the calibration so consumers don't need to re-run interp per
+  // render. Array of length = trace length; bpAxis[i] = bp size at sample i.
+  let bpAxis = null;
+  if (interp && liz) {
+    bpAxis = new Float32Array(liz.length);
+    for (let i = 0; i < liz.length; i++) bpAxis[i] = interp(i);
   }
   // Sample name preference: filename stem (TUBE1/SMPL1 are typically just
   // well-plate positions like A1/B12 which lose the experiment context).
-  const stem = fileName.replace(/\.[Ff][Ss][Aa]$/, "").replace(/^.*[\\/]/, "");
+  const stem = fileName.replace(/\.[Ff][Ss][Aa]$/, "").replace(/\.[Aa][Bb]1$/, "").replace(/^.*[\\/]/, "");
   const meta = {
     instrument_model: get("MODL1"),
     dye_chemistry: [1, 2, 3, 4, 5].map(i => get(`DyeN${i}`) || "").filter(Boolean),
@@ -308,7 +506,7 @@ export function parseFsaArrayBuffer(arrayBuffer, fileName = "sample") {
     n_data_points: liz ? liz.length : 0,
     calibration_anchors: interp ? GS500LIZ_SIZES.length : 0,
   };
-  return { sampleName: stem, peaks, meta, calibrated: !!interp };
+  return { sampleName: stem, peaks, meta, calibrated: !!interp, traces, bpAxis };
 }
 
 // ----------------------------------------------------------------------
@@ -331,16 +529,18 @@ function DropOverlay({ onData }) {
     const tsv = arr.filter(f => /\.(txt|tsv|csv)$/i.test(f.name));
     try {
       const merged = {};
+      const mergedTraces = {};
       let warnings = [];
       for (const f of fsa) {
         const buf = await f.arrayBuffer();
-        const { sampleName, peaks, calibrated } = parseFsaArrayBuffer(buf, f.name);
+        const { sampleName, peaks, calibrated, traces, bpAxis } = parseFsaArrayBuffer(buf, f.name);
         if (!calibrated) {
           warnings.push(`${sampleName}: LIZ size standard not calibratable; skipped`);
           continue;
         }
         const key = merged[sampleName] ? `${sampleName}_${f.name.replace(/\.[Ff][Ss][Aa]$/, "")}` : sampleName;
         merged[key] = peaks;
+        mergedTraces[key] = { ...traces, bpAxis };
       }
       for (const f of tsv) {
         const text = await f.text();
@@ -353,7 +553,7 @@ function DropOverlay({ onData }) {
         return;
       }
       if (warnings.length) setError(warnings.join("; "));
-      onData(merged);
+      onData(merged, mergedTraces);
     } catch (e) {
       setError(e.message || "Failed to parse file(s)");
     }
@@ -430,27 +630,29 @@ function UploadButton({ onData }) {
       <input
         ref={inputRef}
         type="file"
-        accept=".txt,.tsv,.csv,.fsa"
+        accept=".txt,.tsv,.csv,.fsa,.ab1"
         multiple
         onChange={async (e) => {
           const files = Array.from(e.target.files || []);
           if (files.length === 0) return;
           try {
             const merged = {};
+            const mergedTraces = {};
             for (const f of files) {
-              if (/\.fsa$/i.test(f.name)) {
+              if (/\.fsa$/i.test(f.name) || /\.ab1$/i.test(f.name)) {
                 const buf = await f.arrayBuffer();
-                const { sampleName, peaks, calibrated } = parseFsaArrayBuffer(buf, f.name);
+                const { sampleName, peaks, calibrated, traces, bpAxis } = parseFsaArrayBuffer(buf, f.name);
                 if (calibrated) {
                   const key = merged[sampleName] ? `${sampleName}_${f.name.replace(/\.[Ff][Ss][Aa]$/, "")}` : sampleName;
                   merged[key] = peaks;
+                  mergedTraces[key] = { ...traces, bpAxis };
                 }
               } else {
                 const parsed = parseGenemapperTSV(await f.text());
                 Object.assign(merged, parsed.peaks);
               }
             }
-            if (Object.keys(merged).length > 0) onData(merged);
+            if (Object.keys(merged).length > 0) onData(merged, mergedTraces);
           } catch (err) {
             console.error("[fragment-viewer] file parse failed:", err);
           }
@@ -466,6 +668,12 @@ function UploadButton({ onData }) {
 // DATA — peak table, shipped as a JS literal by the build step
 // ======================================================================
 const DATA = __DATA__;
+
+// Raw trace store (populated on .fsa ingest; empty for the seeded peak-table
+// dataset). Keyed by sample → {B,G,Y,R,O: Int16Array, bpAxis: Float32Array}.
+// Kept on DATA so that the remount-by-key pattern in FragmentViewer picks it
+// up alongside DATA.peaks without any new prop-drilling.
+DATA.traces = DATA.traces || {};
 
 // ======================================================================
 // CONSTANTS — dyes, size standard, lab defaults
@@ -894,7 +1102,7 @@ export function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, 
 
 export const LAB_GRNA_CATALOG = [
   // --- Active fragment analysis construct (V059_gRNA3) ---
-  { name: "V059_gRNA3",             spacer: "AGTCCTGTGGTGAGGTGACG", source: "User-supplied 2026-04-18; bot-strand match in V059 target window (RC = CGTCACCTCACCACAGGACT on top)", target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset. Bot-strand PAM (CCT on top, AGG on bot)." },
+  { name: "V059_gRNA3",             spacer: "AGTCCTGTGGTGAGGTGACG", source: "= grna_cyp2d6_rachel03 in cas9-targeted grna_master.tsv (Rachel gRNA 3.0, V0-59 plasmid). Bot-strand match in V059 target window (RC = CGTCACCTCACCACAGGACT on top). User-supplied spacer 2026-04-18.", target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset. Bot-strand PAM (CCT on top, AGG on bot)." },
 
   // --- CYP2D6 pilot panel (chr22, GRCh38) ---
   // Coordinates from pilot_grna_positions.bed; sequences to be filled in from the GRCh38 reference
@@ -1903,8 +2111,9 @@ export default function FragmentViewer() {
   // and force every useState/useMemo in the subtree to re-initialize from the new
   // (mutated) DATA.peaks. Avoids prop-drilling peaks into all 5 tab components.
   const [dataKey, setDataKey] = useState(0);
-  const handleNewPeaks = (newPeaks) => {
+  const handleNewPeaks = (newPeaks, newTraces) => {
     DATA.peaks = newPeaks;
+    if (newTraces && typeof newTraces === "object") DATA.traces = newTraces;
     setDataKey(k => k + 1);
   };
 
@@ -1956,6 +2165,8 @@ export default function FragmentViewer() {
   // Whether any per-dye offset has been calibrated away from zero.
   const calibrated = ["B", "G", "Y", "R"].some(k => Math.abs(dyeOffsets[k] || 0) > 1e-6);
 
+  const [reportOpen, setReportOpen] = useState(false);
+
   return (
     <div key={dataKey} className="h-screen flex flex-col bg-zinc-50 text-zinc-900 font-sans antialiased">
       <PrintStyles />
@@ -1964,6 +2175,18 @@ export default function FragmentViewer() {
         sampleCount={samples.length}
         onUpload={handleNewPeaks}
         onResetCalibration={() => setDyeOffsets({ B: 0, G: 0, Y: 0, R: 0 })}
+        onOpenReport={() => setReportOpen(true)}
+      />
+      <ReportModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        samples={samples}
+        peaksBySample={DATA.peaks}
+        dyeOffsets={dyeOffsets}
+        componentSizes={componentSizes}
+        constructSize={constructSize}
+        targetStart={targetStart}
+        targetEnd={targetEnd}
       />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar tab={tab} setTab={setTab} />
@@ -2001,13 +2224,211 @@ function PrintStyles() {
         button, input[type="number"], input[type="file"], select, textarea { display: none !important; }
         .print-show { display: block !important; }
       }
+      /* When the report modal is printing, hide everything outside the report
+         container so the browser "Save as PDF" produces a clean document with
+         no navigation chrome, modal backdrop, or tab content bleeding in.    */
+      body.fv-report-printing > *:not(.fv-report-root) { display: none !important; }
+      body.fv-report-printing .fv-report-root { position: static !important; background: white !important; box-shadow: none !important; max-width: none !important; }
+      body.fv-report-printing .fv-report-root .fv-report-actions { display: none !important; }
+      body.fv-report-printing .fv-report-root .fv-report-backdrop { display: none !important; }
+      @media print {
+        body.fv-report-printing { background: white !important; }
+        body.fv-report-printing .fv-report-root { padding: 0 !important; }
+      }
     `}</style>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Report builder — one-click summary of the current dataset.
+// Renders a printable panel with sample metadata, per-sample peak summary,
+// dye-offset snapshot, and preprocessing configuration. Two deliverables:
+// (a) "Print / Save as PDF" triggers the browser's Save-as-PDF dialog with
+//     body-class-scoped CSS that hides everything except the report; and
+// (b) "Download Markdown" writes a report.md compatible with the lab's
+//     pandoc+xelatex+DejaVu Sans PDF recipe.
+// ----------------------------------------------------------------------
+function topNpeaksPerDye(peaks, n = 3) {
+  const out = {};
+  for (const d of ["B", "G", "Y", "R"]) {
+    const arr = (peaks?.[d] || []).slice().sort((a, b) => b[1] - a[1]).slice(0, n);
+    out[d] = arr.map(p => ({ size: p[0], height: p[1] }));
+  }
+  return out;
+}
+
+function sumHeight(peaks) {
+  let t = 0;
+  for (const d of ["B", "G", "Y", "R"]) {
+    for (const p of (peaks?.[d] || [])) t += p[1];
+  }
+  return t;
+}
+
+export function buildReportMarkdown({ samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd, generatedAt }) {
+  const lines = [];
+  const dateStr = (generatedAt || new Date()).toISOString().slice(0, 10);
+  lines.push(`# Fragment Viewer report`);
+  lines.push("");
+  lines.push(`- **Date:** ${dateStr}`);
+  lines.push(`- **Samples:** ${samples.length}`);
+  lines.push(`- **Construct size:** ${constructSize} bp (target window ${targetStart}–${targetEnd})`);
+  lines.push(`- **Dye offsets (bp):** B=${dyeOffsets.B.toFixed(3)} · G=${dyeOffsets.G.toFixed(3)} · Y=${dyeOffsets.Y.toFixed(3)} · R=${dyeOffsets.R.toFixed(3)}`);
+  lines.push("");
+  lines.push(`## Sample summary`);
+  lines.push("");
+  lines.push(`| Sample | Total peaks | ΣHeight | Top B | Top G | Top Y | Top R |`);
+  lines.push(`|---|---:|---:|---|---|---|---|`);
+  for (const s of samples) {
+    const p = peaksBySample[s] || {};
+    const nPeaks = ["B", "G", "Y", "R", "O"].reduce((t, d) => t + (p[d]?.length || 0), 0);
+    const total = sumHeight(p);
+    const top = topNpeaksPerDye(p, 1);
+    const fmt = (arr) => (arr.length ? `${arr[0].size.toFixed(2)} (h=${arr[0].height.toFixed(0)})` : "—");
+    lines.push(`| ${s} | ${nPeaks} | ${total.toFixed(0)} | ${fmt(top.B)} | ${fmt(top.G)} | ${fmt(top.Y)} | ${fmt(top.R)} |`);
+  }
+  lines.push("");
+  lines.push(`## Construct components (bp)`);
+  lines.push("");
+  lines.push("| Component | Size |");
+  lines.push("|---|---:|");
+  for (const k of Object.keys(componentSizes || {})) {
+    lines.push(`| ${k} | ${componentSizes[k]} |`);
+  }
+  lines.push("");
+  lines.push(`---`);
+  lines.push(``);
+  lines.push(`*Generated by Fragment Viewer. Build PDF with:*`);
+  lines.push("```bash");
+  lines.push(`pandoc report.md -o report.pdf --toc --number-sections \\`);
+  lines.push(`  --pdf-engine=xelatex \\`);
+  lines.push(`  -V mainfont='DejaVu Sans' -V monofont='DejaVu Sans Mono'`);
+  lines.push("```");
+  return lines.join("\n");
+}
+
+function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd }) {
+  if (!open) return null;
+  const generatedAt = useMemo(() => new Date(), [open]);
+  const dateStr = generatedAt.toISOString().slice(0, 10);
+  const printSafePrint = () => {
+    document.body.classList.add("fv-report-printing");
+    // The next tick lets the class-scoped display:none apply before the
+    // browser print pipeline snapshots the DOM.
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => document.body.classList.remove("fv-report-printing"), 250);
+    }, 50);
+  };
+  const downloadMd = () => {
+    const md = buildReportMarkdown({
+      samples, peaksBySample, dyeOffsets, componentSizes,
+      constructSize, targetStart, targetEnd, generatedAt,
+    });
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fragment_report_${dateStr}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <div className="fv-report-root fixed inset-0 z-50 flex items-start justify-center pt-8 pb-8 px-4 overflow-auto">
+      <div className="fv-report-backdrop fixed inset-0 bg-black/40 no-print" onClick={onClose} />
+      <div className="relative w-full max-w-3xl bg-white rounded-xl border border-zinc-200 shadow-2xl">
+        <header className="flex items-start justify-between gap-3 px-5 py-4 border-b border-zinc-200">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Fragment Viewer report</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">{dateStr} · {samples.length} sample{samples.length === 1 ? "" : "s"} · construct {constructSize} bp</p>
+          </div>
+          <div className="fv-report-actions flex items-center gap-1.5 no-print">
+            <ToolButton icon={FileDown} variant="primary" onClick={printSafePrint} title="Open the browser print dialog — choose 'Save as PDF' for a self-contained deliverable">
+              Print / Save as PDF
+            </ToolButton>
+            <ToolButton icon={FileDown} variant="secondary" onClick={downloadMd} title="Download a markdown source compatible with the lab's pandoc+xelatex PDF recipe (see rendered block for the exact command)">
+              Markdown
+            </ToolButton>
+            <ToolButton variant="ghost" onClick={onClose}>Close</ToolButton>
+          </div>
+        </header>
+        <div className="px-5 py-4 space-y-5">
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dataset</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <Stat label="Samples" value={samples.length} />
+              <Stat label="Construct" value={`${constructSize} bp`} hint={`target ${targetStart}–${targetEnd}`} />
+              <Stat label="Total peaks" value={samples.reduce((t, s) => t + ["B","G","Y","R","O"].reduce((tt, d) => tt + (peaksBySample[s]?.[d]?.length || 0), 0), 0)} />
+              <Stat label="Calibrated" value={["B","G","Y","R"].some(k => Math.abs(dyeOffsets[k]) > 1e-6) ? "yes" : "no"} hint="dye offsets nonzero" />
+            </div>
+          </section>
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dye mobility offsets (bp)</h3>
+            <div className="grid grid-cols-4 gap-2 text-xs">
+              {["B", "G", "Y", "R"].map(d => (
+                <div key={d} className="flex items-center justify-between px-2.5 py-2 rounded-lg border border-zinc-200 bg-zinc-50">
+                  <DyeChip dye={d} />
+                  <span className="font-mono text-zinc-800 tabular-nums">{dyeOffsets[d].toFixed(3)}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Per-sample summary</h3>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="text-left text-zinc-500 border-b border-zinc-200">
+                    <th className="py-1.5 pr-3 font-medium">Sample</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Peaks</th>
+                    <th className="py-1.5 px-2 font-medium text-right">ΣHeight</th>
+                    {["B","G","Y","R"].map(d => (
+                      <th key={d} className="py-1.5 px-2 font-medium">
+                        <span className="inline-flex items-center gap-1">
+                          <DyeChip dye={d} /> <span className="text-zinc-400 font-normal">top 1</span>
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {samples.map(s => {
+                    const p = peaksBySample[s] || {};
+                    const nPeaks = ["B","G","Y","R","O"].reduce((t, d) => t + (p[d]?.length || 0), 0);
+                    const total = sumHeight(p);
+                    const top = topNpeaksPerDye(p, 1);
+                    return (
+                      <tr key={s} className="border-b border-zinc-100 hover:bg-zinc-50">
+                        <td className="py-1.5 pr-3 font-mono text-zinc-800 truncate max-w-[18ch]" title={s}>{s}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-zinc-700">{nPeaks}</td>
+                        <td className="py-1.5 px-2 text-right tabular-nums text-zinc-700">{total.toFixed(0)}</td>
+                        {["B","G","Y","R"].map(d => (
+                          <td key={d} className="py-1.5 px-2 font-mono text-zinc-600 tabular-nums">
+                            {top[d].length ? `${top[d][0].size.toFixed(2)} (${top[d][0].height.toFixed(0)})` : <span className="text-zinc-300">—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          <section className="text-[11px] text-zinc-500">
+            Generated by Fragment Viewer at {generatedAt.toISOString()}. Print as PDF for a deliverable, or download as markdown and render with{" "}
+            <code className="font-mono">pandoc … --pdf-engine=xelatex -V mainfont='DejaVu Sans'</code> (the lab's canonical PDF recipe).
+          </section>
+        </div>
+      </div>
+    </div>
   );
 }
 
 // Top toolbar. Brand + construct chip + global actions. 48px tall.
 // Dark bar gives the eye a stable anchor; main pane reads as the work surface.
-function Toolbar({ sampleCount, onUpload, onResetCalibration }) {
+function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport }) {
   return (
     <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
       <div className="flex items-center gap-2.5">
@@ -2037,8 +2458,8 @@ function Toolbar({ sampleCount, onUpload, onResetCalibration }) {
         <ToolButton icon={RotateCcw} variant="dark" title="Reset all per-dye mobility offsets to zero" onClick={onResetCalibration}>
           Reset calib.
         </ToolButton>
-        <ToolButton icon={FileDown} variant="dark" title="Open browser print dialog (Save as PDF)" onClick={() => window.print()}>
-          PDF
+        <ToolButton icon={FileDown} variant="dark" title="Build a one-page report: sample summary, offsets, top peaks — saveable as PDF or markdown" onClick={onOpenReport}>
+          Report
         </ToolButton>
       </div>
     </header>
@@ -2178,6 +2599,43 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const [labelPeaks, setLabelPeaks] = useState(true);
   const [showExpected, setShowExpected] = useState(true);
   const [showSpecies, setShowSpecies] = useState(false);
+
+  // Y-axis scaling. "auto" = per-lane peak * 1.12 (legacy default);
+  // "shared" = max across visible lanes (useful when comparing channels);
+  // "manual" = user-specified ceiling (bypasses zoom multiplier).
+  const [yScaleMode, setYScaleMode] = useState("auto");
+  const [yZoom, setYZoom] = useState(1.0);            // applied to auto/shared (0.2–5)
+  const [yMaxManual, setYMaxManual] = useState(10000);
+  const [peakLabelThreshold, setPeakLabelThreshold] = useState(5); // % of yMax below which peak labels are hidden
+  const [gridDensity, setGridDensity] = useState("normal"); // "fine" | "normal" | "sparse"
+  const [traceOpacity, setTraceOpacity] = useState(0.95);
+  const [fillOpacity, setFillOpacity] = useState(0.20);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Raw-trace overlay. Only available for samples loaded from .fsa (traces
+  // persisted from parseFsaArrayBuffer). TSV-only samples have no raw data.
+  const [showRawTrace, setShowRawTrace] = useState(false);
+  const [rawOpacity, setRawOpacity] = useState(0.85);
+  const [rawStroke, setRawStroke] = useState(0.8);
+
+  // Overlay interpretation: "raw" draws the preprocessed raw trace on top of
+  // the modeled Gaussian; "residual" draws raw − modeled, centered on a zero
+  // line. Residual mode makes shoulders, splits, and unmodeled baseline
+  // features pop visually without needing any statistical cutoff.
+  const [overlayMode, setOverlayMode] = useState("raw"); // "raw" | "residual"
+
+  // Preprocessing pipeline applied to raw trace before rendering. Purely
+  // visual — never mutates the stored traces or the called peak table.
+  const [prep, setPrep] = useState({
+    smooth: "none",        // "none" | "savgol"
+    savgolWindow: 7,
+    savgolOrder: 2,
+    baseline: false,
+    baselineWindow: 201,
+    clip: false,
+    clipCeiling: 30000,
+  });
+  const setPrepField = (k, v) => setPrep(p => ({ ...p, [k]: v }));
   // Default to V059_gRNA3 (index 0 in LAB_GRNA_CATALOG, populated 2026-04-18).
   const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(0);
   const [speciesOverhangs, setSpeciesOverhangs] = useState([0, 4]);  // chemistries to overlay when a gRNA is selected
@@ -2197,6 +2655,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   });
 
   const peaks = DATA.peaks[sample] || {};
+  const rawBundle = (DATA.traces && DATA.traces[sample]) || null;
+  const hasRawTrace = !!(rawBundle && rawBundle.bpAxis);
   const s = cfg[sample];
 
   const presets = sample.startsWith("gRNA3")
@@ -2216,7 +2676,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     return out;
   }, [peaks, range]);
 
-  // Per-lane y-max (in visible range)
+  // Per-lane y-max (in visible range). This is the "auto" base; the effective
+  // lane ceiling also folds in yScaleMode + yZoom + manual override.
   const yMaxByChannel = useMemo(() => {
     const out = {};
     for (const d of DYE_ORDER) {
@@ -2232,6 +2693,59 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     return Math.max(...activeChannels.map(d => yMaxByChannel[d]));
   }, [activeChannels, yMaxByChannel]);
 
+  // Resolve the effective lane ceiling for a given dye. yZoom=1 is identity;
+  // yZoom>1 shrinks the ceiling (zooms in on small peaks); yZoom<1 grows it
+  // (zooms out so tall peaks stop hitting the roof). Manual mode bypasses zoom.
+  const yForLane = (d) => {
+    if (yScaleMode === "manual") return Math.max(10, yMaxManual);
+    const base = yScaleMode === "shared" ? sharedYMax : yMaxByChannel[d];
+    return Math.max(10, base / Math.max(0.01, yZoom));
+  };
+
+  // Preprocessed raw-trace samples per dye, constrained to the visible bp
+  // range. We return {xs: bp[], ys: height[]} for each channel so the render
+  // pass can walk them in one loop and build a polyline path. Subsampled to
+  // ~plotW resolution so we don't over-draw on wide plots.
+  const rawByChannel = useMemo(() => {
+    if (!showRawTrace || !hasRawTrace) return {};
+    const bpAxis = rawBundle.bpAxis;
+    const out = {};
+    // Find raw-sample indices that fall inside the visible bp window.
+    // bpAxis is monotonically non-decreasing (LIZ-derived); use binary search.
+    const findIdx = (bp) => {
+      let lo = 0, hi = bpAxis.length - 1;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (bpAxis[m] < bp) lo = m + 1; else hi = m; }
+      return lo;
+    };
+    const iLo = Math.max(0, findIdx(range[0]) - 2);
+    const iHi = Math.min(bpAxis.length - 1, findIdx(range[1]) + 2);
+    for (const d of DYE_ORDER) {
+      const src = rawBundle[d];
+      if (!src || src.length === 0) continue;
+      const pre = preprocessTrace(src, prep);
+      // Downsample: keep ~1500 points max in the visible window, regardless of
+      // zoom (raw trace at 10 Hz * 30 min = 18000 pts; without this we'd ship
+      // 18k SVG verts to every mount).
+      const nPts = Math.min(iHi - iLo + 1, 1500);
+      const step = Math.max(1, Math.floor((iHi - iLo + 1) / nPts));
+      const xs = [];
+      const ys = [];
+      for (let i = iLo; i <= iHi; i += step) { xs.push(bpAxis[i]); ys.push(pre[i]); }
+      // In residual mode, subtract the modeled Gaussian sum at every sampled
+      // bp. Use the peaks for that dye in this sample and the same smoothing
+      // multiplier that drives the rendered trace so the residual is against
+      // what the user is actually looking at.
+      if (overlayMode === "residual") {
+        const dyePeaks = peaks[d] || [];
+        const resid = computeResidual(xs, ys, dyePeaks, smoothing);
+        out[d] = { xs, ys: resid, residual: true };
+      } else {
+        out[d] = { xs, ys, residual: false };
+      }
+    }
+    return out;
+  }, [showRawTrace, hasRawTrace, rawBundle, range, prep, overlayMode, peaks, smoothing]);
+
   // Geometry
   const W = 920;
   const lanesCount = stackChannels ? Math.max(1, activeChannels.length) : 1;
@@ -2243,18 +2757,22 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const xScale = sz => m.l + ((sz - range[0]) / (range[1] - range[0])) * plotW;
 
   const lanes = stackChannels
-    ? activeChannels.map((d, i) => ({ dyes: [d], top: m.t + i * (laneH + laneGap), h: laneH, yMax: yMaxByChannel[d] }))
-    : [{ dyes: activeChannels, top: m.t, h: laneH, yMax: sharedYMax }];
+    ? activeChannels.map((d, i) => ({ dyes: [d], top: m.t + i * (laneH + laneGap), h: laneH, yMax: yForLane(d) }))
+    : [{ dyes: activeChannels, top: m.t, h: laneH, yMax: yScaleMode === "manual" ? Math.max(10, yMaxManual) : Math.max(10, sharedYMax / Math.max(0.01, yZoom)) }];
 
-  // X ticks
+  // X ticks — step scales with span and with user-selected grid density
+  // (fine halves the step, sparse doubles it). Always produces integer-ish
+  // tick values so the axis reads cleanly.
   const xTicks = useMemo(() => {
     const span = range[1] - range[0];
-    const step = span <= 15 ? 2 : span <= 40 ? 5 : span <= 120 ? 20 : 50;
+    let step = span <= 15 ? 2 : span <= 40 ? 5 : span <= 120 ? 20 : 50;
+    if (gridDensity === "fine") step = Math.max(1, Math.round(step / 2));
+    if (gridDensity === "sparse") step = step * 2;
     const first = Math.ceil(range[0] / step) * step;
     const t = [];
     for (let v = first; v <= range[1]; v += step) t.push(v);
     return t;
-  }, [range]);
+  }, [range, gridDensity]);
 
   // Drag-to-zoom
   const svgRef = useRef(null);
@@ -2464,7 +2982,188 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
           <input type="checkbox" checked={showLadder} onChange={e => setShowLadder(e.target.checked)} className="w-3.5 h-3.5 accent-orange-500" />
           LIZ ladder marks
         </label>
+        <button
+          onClick={() => setShowAdvanced(v => !v)}
+          className={`px-2 py-1 text-xs rounded border transition ${showAdvanced ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"}`}
+          title="Y-axis scaling, raw trace, preprocessing, display tuning"
+        >
+          Advanced {showAdvanced ? "▾" : "▸"}
+        </button>
       </div>
+
+      {/* Advanced display panel — collapsible, stays out of the way for 95% of views.
+          Groups the Y-axis controls, raw-trace options, and preprocessing pipeline. */}
+      {showAdvanced && (
+        <div className="bg-zinc-50 border border-zinc-300 rounded-lg p-3 mb-2 text-xs space-y-3 no-print">
+          {/* Y-axis scaling group */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="font-semibold uppercase tracking-wide text-zinc-600">Y-axis</span>
+            <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden">
+              {[
+                { k: "auto",   l: "Auto (per-lane)" },
+                { k: "shared", l: "Shared" },
+                { k: "manual", l: "Manual" },
+              ].map(o => (
+                <button key={o.k} onClick={() => setYScaleMode(o.k)}
+                  className={`px-2 py-1 ${yScaleMode === o.k ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>
+                  {o.l}
+                </button>
+              ))}
+            </div>
+            {yScaleMode !== "manual" && (
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-600">Y-zoom</span>
+                <input type="range" min="0.2" max="5" step="0.1" value={yZoom}
+                       onChange={e => setYZoom(parseFloat(e.target.value))} className="accent-zinc-700 w-32" />
+                <span className="tabular-nums text-zinc-600 w-10">{yZoom.toFixed(1)}x</span>
+                <button onClick={() => setYZoom(1.0)} className="px-1.5 py-0.5 border border-zinc-300 rounded bg-white hover:bg-zinc-100" title="Reset to 1.0x">
+                  <RotateCcw size={11} />
+                </button>
+              </label>
+            )}
+            {yScaleMode === "manual" && (
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-600">Y-max</span>
+                <input type="number" min="100" step="100" value={yMaxManual}
+                       onChange={e => setYMaxManual(Math.max(10, parseFloat(e.target.value) || 100))}
+                       className="w-24 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
+                <span className="text-zinc-500">RFU</span>
+              </label>
+            )}
+          </div>
+
+          {/* Display tuning group */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="font-semibold uppercase tracking-wide text-zinc-600">Display</span>
+            <label className="flex items-center gap-2">
+              <span className="text-zinc-600">Grid</span>
+              <select value={gridDensity} onChange={e => setGridDensity(e.target.value)}
+                      className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+                <option value="fine">Fine</option>
+                <option value="normal">Normal</option>
+                <option value="sparse">Sparse</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2" title="Stroke opacity of the modeled trace line (peak-table gaussian path)">
+              <span className="text-zinc-600">Trace α</span>
+              <input type="range" min="0.1" max="1" step="0.05" value={traceOpacity}
+                     onChange={e => setTraceOpacity(parseFloat(e.target.value))} className="accent-zinc-700 w-24" />
+              <span className="tabular-nums text-zinc-600 w-10">{traceOpacity.toFixed(2)}</span>
+            </label>
+            <label className="flex items-center gap-2" title="Fill opacity of the modeled trace">
+              <span className="text-zinc-600">Fill α</span>
+              <input type="range" min="0" max="0.6" step="0.02" value={fillOpacity}
+                     onChange={e => setFillOpacity(parseFloat(e.target.value))} className="accent-zinc-700 w-24" />
+              <span className="tabular-nums text-zinc-600 w-10">{fillOpacity.toFixed(2)}</span>
+            </label>
+            <label className="flex items-center gap-2" title="Hide peak labels whose height is below this % of the lane Y-max (declutters busy traces)">
+              <span className="text-zinc-600">Label ≥</span>
+              <input type="range" min="0" max="50" step="1" value={peakLabelThreshold}
+                     onChange={e => setPeakLabelThreshold(parseFloat(e.target.value))} className="accent-zinc-700 w-24" />
+              <span className="tabular-nums text-zinc-600 w-10">{peakLabelThreshold}%</span>
+            </label>
+          </div>
+
+          {/* Raw trace group */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="font-semibold uppercase tracking-wide text-zinc-600">Raw trace</span>
+            <label className={`flex items-center gap-1 ${hasRawTrace ? "cursor-pointer" : "opacity-50"}`}
+                   title={hasRawTrace ? "Overlay the unsmoothed instrument signal (DATA1..4 from the .fsa)" : "Raw trace not available — this sample was loaded from GeneMapper TSV (peaks only). Load .fsa / .ab1 to enable."}>
+              <input type="checkbox" checked={showRawTrace} disabled={!hasRawTrace}
+                     onChange={e => setShowRawTrace(e.target.checked)} className="w-3.5 h-3.5 accent-fuchsia-600" />
+              <span className="font-medium text-zinc-700">Show unsmoothed raw signal</span>
+              {!hasRawTrace && <span className="ml-1 text-zinc-500">(load .fsa/.ab1)</span>}
+            </label>
+            {hasRawTrace && showRawTrace && (
+              <>
+                <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden" title="Raw = preprocessed DATA1..4 overlay. Residual = raw − modeled gaussians (centered on 0).">
+                  {[
+                    { k: "raw",      l: "Raw" },
+                    { k: "residual", l: "Residual" },
+                  ].map(o => (
+                    <button key={o.k} onClick={() => setOverlayMode(o.k)}
+                      className={`px-2 py-1 text-xs ${overlayMode === o.k ? "bg-fuchsia-600 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
+                <label className="flex items-center gap-2">
+                  <span className="text-zinc-600">Raw α</span>
+                  <input type="range" min="0.1" max="1" step="0.05" value={rawOpacity}
+                         onChange={e => setRawOpacity(parseFloat(e.target.value))} className="accent-fuchsia-600 w-24" />
+                  <span className="tabular-nums text-zinc-600 w-10">{rawOpacity.toFixed(2)}</span>
+                </label>
+                <label className="flex items-center gap-2">
+                  <span className="text-zinc-600">Stroke</span>
+                  <input type="range" min="0.4" max="2" step="0.1" value={rawStroke}
+                         onChange={e => setRawStroke(parseFloat(e.target.value))} className="accent-fuchsia-600 w-24" />
+                  <span className="tabular-nums text-zinc-600 w-10">{rawStroke.toFixed(1)}</span>
+                </label>
+              </>
+            )}
+          </div>
+
+          {/* Preprocessing pipeline (only applies to raw trace) */}
+          {hasRawTrace && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 border-t border-zinc-200">
+              <span className="font-semibold uppercase tracking-wide text-zinc-600">Preprocess</span>
+              <label className="flex items-center gap-2">
+                <span className="text-zinc-600">Smooth</span>
+                <select value={prep.smooth} onChange={e => setPrepField("smooth", e.target.value)}
+                        className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+                  <option value="none">None (raw)</option>
+                  <option value="savgol">Savitzky–Golay</option>
+                </select>
+              </label>
+              {prep.smooth === "savgol" && (
+                <>
+                  <label className="flex items-center gap-2">
+                    <span className="text-zinc-600">Window</span>
+                    <select value={prep.savgolWindow} onChange={e => setPrepField("savgolWindow", parseInt(e.target.value, 10))}
+                            className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+                      {[5, 7, 9, 11, 13, 15, 17, 19, 21].map(w => <option key={w} value={w}>{w}</option>)}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <span className="text-zinc-600">Order</span>
+                    <select value={prep.savgolOrder} onChange={e => setPrepField("savgolOrder", parseInt(e.target.value, 10))}
+                            className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+                      <option value={2}>2 (quadratic)</option>
+                      {prep.savgolWindow >= 7 && prep.savgolWindow <= 9 && <option value={4}>4 (quartic)</option>}
+                    </select>
+                  </label>
+                </>
+              )}
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={prep.baseline}
+                       onChange={e => setPrepField("baseline", e.target.checked)} className="w-3.5 h-3.5 accent-emerald-600" />
+                <span className="text-zinc-700">Baseline subtract</span>
+              </label>
+              {prep.baseline && (
+                <label className="flex items-center gap-2">
+                  <span className="text-zinc-600">Window</span>
+                  <input type="number" min="11" max="2001" step="2" value={prep.baselineWindow}
+                         onChange={e => setPrepField("baselineWindow", Math.max(11, parseInt(e.target.value, 10) || 201))}
+                         className="w-20 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
+                </label>
+              )}
+              <label className="flex items-center gap-1 cursor-pointer" title="Cap the raw signal at a ceiling (tames saturated peaks without touching the peak table)">
+                <input type="checkbox" checked={prep.clip}
+                       onChange={e => setPrepField("clip", e.target.checked)} className="w-3.5 h-3.5 accent-amber-600" />
+                <span className="text-zinc-700">Clip saturated</span>
+              </label>
+              {prep.clip && (
+                <label className="flex items-center gap-2">
+                  <span className="text-zinc-600">Ceiling</span>
+                  <input type="number" min="1000" step="500" value={prep.clipCeiling}
+                         onChange={e => setPrepField("clipCeiling", Math.max(100, parseInt(e.target.value, 10) || 30000))}
+                         className="w-24 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
+                </label>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Electropherogram */}
       <div className="bg-white rounded-lg border border-zinc-200 p-2 mb-2">
@@ -2641,8 +3340,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                     );
                     return (
                       <g key={`tr-${li}-${dye}`}>
-                        <path d={path.fill}   fill={DYE[dye].color} opacity={stackChannels ? 0.20 : 0.10} />
-                        <path d={path.stroke} fill="none" stroke={DYE[dye].color} strokeWidth={1.5} opacity={dye === "O" ? 0.65 : 0.95} />
+                        <path d={path.fill}   fill={DYE[dye].color} opacity={stackChannels ? fillOpacity : fillOpacity * 0.5} />
+                        <path d={path.stroke} fill="none" stroke={DYE[dye].color} strokeWidth={1.5} opacity={dye === "O" ? traceOpacity * 0.68 : traceOpacity} />
                       </g>
                     );
                   } else {
@@ -2657,13 +3356,64 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   }
                 })}
 
-                {/* Peak labels — show the top 4 tallest peaks in visible range */}
+                {/* Raw unsmoothed signal overlay. Rendered only when the user
+                    enables "Show unsmoothed raw signal" and the sample has an
+                    .fsa-derived trace. In "raw" mode, draws preprocessed raw
+                    samples on top of the modeled trace. In "residual" mode,
+                    draws raw − modeled centered on a zero line at lane
+                    midheight — negative residuals go below, positive above. */}
+                {showRawTrace && hasRawTrace && overlayMode === "residual" && (
+                  <g key={`resid-zero-${li}`} pointerEvents="none">
+                    <line x1={m.l} x2={m.l + plotW}
+                          y1={lane.top + lane.h / 2} y2={lane.top + lane.h / 2}
+                          stroke="#0ea5e9" strokeDasharray="4 3" strokeWidth="0.8" opacity="0.55" />
+                    <text x={m.l + 4} y={lane.top + lane.h / 2 - 2} fontSize="8" fill="#0ea5e9" fontWeight="600">
+                      0 (residual)
+                    </text>
+                  </g>
+                )}
+                {showRawTrace && hasRawTrace && lane.dyes.map(dye => {
+                  const r = rawByChannel[dye];
+                  if (!r || !r.xs.length) return null;
+                  const { xs, ys, residual } = r;
+                  // Residual mode uses a symmetric scale around lane midline:
+                  // ±yMax/2 fills the lane. Raw mode uses the standard yScale.
+                  const laneMid = lane.top + lane.h / 2;
+                  const residHalf = lane.h / 2;
+                  const residRange = Math.max(lane.yMax / 2, 100);
+                  const yOf = residual
+                    ? (v) => laneMid - Math.max(-residHalf, Math.min(residHalf, (v / residRange) * residHalf))
+                    : (v) => yScale(Math.max(0, v));
+                  let d = "";
+                  for (let i = 0; i < xs.length; i++) {
+                    const px = xScale(xs[i]);
+                    const py = yOf(ys[i]);
+                    d += (i === 0 ? "M" : "L") + px.toFixed(1) + "," + py.toFixed(1);
+                  }
+                  const stroke = residual ? "#c026d3" : DYE[dye].color;
+                  return (
+                    <path key={`raw-${li}-${dye}`} d={d} fill="none"
+                          stroke={stroke} strokeWidth={rawStroke}
+                          opacity={rawOpacity}
+                          strokeDasharray={residual ? "none" : "2 1"}
+                          vectorEffect="non-scaling-stroke">
+                      <title>{residual
+                        ? `${dye} residual (raw − modeled gaussians)`
+                        : `${dye} raw (${prep.smooth === "savgol" ? `SG ${prep.savgolWindow}/${prep.savgolOrder}` : "unsmoothed"}${prep.baseline ? ", baseline-subtracted" : ""}${prep.clip ? `, clipped@${prep.clipCeiling}` : ""})`}</title>
+                    </path>
+                  );
+                })}
+
+                {/* Peak labels — show the top 4 tallest peaks in visible range,
+                    subject to the user-settable min-height threshold. */}
                 {labelPeaks && (() => {
                   const labeled = [];
+                  const minH = (lane.yMax * peakLabelThreshold) / 100;
                   for (const dye of lane.dyes) {
                     if (dye === "O") continue;
                     const lp = (peaksByChannel[dye] || [])
                       .filter(p => p.size >= range[0] && p.size <= range[1])
+                      .filter(p => p.height >= minH)
                       .sort((a, b) => b.height - a.height)
                       .slice(0, 4);
                     for (const p of lp) labeled.push({ ...p, dye });
@@ -3475,6 +4225,71 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
     for (const dye of ["B", "G", "Y", "R"]) setDyeOffset(dye, 0);
   };
 
+  // Auto-calibrate from ALL loaded samples against a chosen gRNA's predicted
+  // cut sizes (blunt + +4 sticky chemistries, which are what the lab sees on
+  // real runs). Median signed residual per dye becomes the new offset.
+  // Robust to outliers (wrong peaks, primer-dimers) — needs ≥3 matches per
+  // dye before applying; below that it leaves the dye's offset untouched and
+  // surfaces a warning.
+  const [calibGrnaIdx, setCalibGrnaIdx] = useState(0);
+  const [calibResult, setCalibResult] = useState(null);
+  const calibrateFromRun = () => {
+    // Build the expected-sizes table for the picked gRNA's cut products at
+    // the two chemistries we see in practice (blunt and +4 sticky). Each
+    // dye gets a list of possible cut-product sizes — we'll try to match
+    // every one against observed peaks and take the median of residuals.
+    const grnaEntry = LAB_GRNA_CATALOG[calibGrnaIdx];
+    if (!grnaEntry) { setCalibResult({ error: "Pick a gRNA from the lab catalog" }); return; }
+    const norm = normalizeSpacer(grnaEntry.spacer);
+    if (norm.length !== 20) { setCalibResult({ error: `${grnaEntry.name}: spacer length ${norm.length} (need 20)` }); return; }
+    const candidates = findGrnas(constructSeq, targetStart, targetEnd);
+    const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
+    const grna = candidates.find(g => g.protospacer === norm || g.protospacer === rc);
+    if (!grna) { setCalibResult({ error: `${grnaEntry.name} spacer not found in construct target window` }); return; }
+    const expectedByDye = { B: [], G: [], Y: [], R: [] };
+    for (const oh of [0, 4]) {
+      const pr = predictCutProducts(grna, constructSize, oh);
+      for (const dye of ["B", "G", "Y", "R"]) {
+        if (pr[dye] && pr[dye].length > 0) expectedByDye[dye].push(pr[dye].length);
+      }
+    }
+    // Also include assembly-product sizes so well-behaved blunt controls
+    // (with no cut products but full/partial ligation products visible) can
+    // also drive calibration.
+    for (const prod of ASSEMBLY_PRODUCTS) {
+      if (!prod.dyes) continue;
+      for (const dye of prod.dyes) {
+        if (expectedByDye[dye]) expectedByDye[dye].push(productSize(prod, componentSizes));
+      }
+    }
+    const { offsets, matchesByDye, n } = autoCalibrateDyeOffsets(
+      DATA.peaks, expectedByDye, 3.0, dyeOffsets
+    );
+    // Per-dye gate: apply only dyes with ≥3 matches; others keep current offset.
+    const minMatches = 3;
+    const applied = { B: dyeOffsets.B, G: dyeOffsets.G, Y: dyeOffsets.Y, R: dyeOffsets.R };
+    const skipped = [];
+    for (const dye of ["B", "G", "Y", "R"]) {
+      if (matchesByDye[dye].length >= minMatches) {
+        applied[dye] = Math.round(offsets[dye] * 1000) / 1000;
+      } else {
+        skipped.push(`${dye}(${matchesByDye[dye].length})`);
+      }
+    }
+    for (const dye of ["B", "G", "Y", "R"]) setDyeOffset(dye, applied[dye]);
+    setCalibResult({
+      grna: grnaEntry.name,
+      applied,
+      matches: {
+        B: matchesByDye.B.length, G: matchesByDye.G.length,
+        Y: matchesByDye.Y.length, R: matchesByDye.R.length,
+      },
+      n,
+      skipped,
+      nSamples: Object.keys(DATA.peaks).length,
+    });
+  };
+
   const handleApplySequence = () => {
     const cleaned = seqDraft.replace(/\s+/g, "").toUpperCase();
     if (!/^[ACGTN]*$/.test(cleaned)) { setSeqError("Only A/C/G/T/N allowed"); return; }
@@ -3540,8 +4355,20 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
         className="mb-3"
         actions={
           <>
-            <ToolButton variant="primary" onClick={handleAutoCalibrate} title="Set per-dye offsets so the tallest peak in each channel aligns with its closest blunt prediction">
+            <ToolButton variant="primary" onClick={handleAutoCalibrate} title="Set per-dye offsets so the tallest peak in each channel aligns with its closest blunt prediction (single-sample heuristic)">
               Auto-calibrate
+            </ToolButton>
+            <select value={calibGrnaIdx} onChange={e => setCalibGrnaIdx(parseInt(e.target.value, 10))}
+                    className="px-2 py-1 text-xs border border-zinc-300 rounded bg-white focus-ring max-w-[22ch]">
+              {LAB_GRNA_CATALOG
+                .map((g, i) => ({ g, i }))
+                .filter(({ g }) => normalizeSpacer(g.spacer).length === 20)
+                .map(({ g, i }) => (
+                  <option key={`cal-${i}`} value={i}>{g.name}</option>
+                ))}
+            </select>
+            <ToolButton variant="primary" onClick={calibrateFromRun} title="Auto-calibrate across ALL loaded samples using the picked gRNA's predicted cut sizes (blunt + +4) plus assembly-product sizes. Median residual per dye, robust to outliers, requires ≥3 matches per dye before applying.">
+              Calibrate from run
             </ToolButton>
             <ToolButton variant="secondary" onClick={handleResetOffsets}>
               Reset
@@ -3603,6 +4430,26 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
             </div>
           ))}
         </div>
+        {calibResult && (
+          calibResult.error ? (
+            <div className="mt-3 px-3 py-2 rounded-md bg-rose-50 border border-rose-200 text-xs text-rose-800">
+              <AlertTriangle size={12} className="inline mr-1" /> {calibResult.error}
+            </div>
+          ) : (
+            <div className="mt-3 px-3 py-2 rounded-md bg-emerald-50 border border-emerald-200 text-xs text-emerald-900">
+              <CheckCircle2 size={12} className="inline mr-1" />
+              Calibrated from <span className="font-semibold">{calibResult.nSamples}</span> sample{calibResult.nSamples === 1 ? "" : "s"} against <span className="font-mono font-semibold">{calibResult.grna}</span> ({calibResult.n} total matches):{" "}
+              {["B","G","Y","R"].map(d => (
+                <span key={d} className="inline-block mr-2 font-mono">
+                  {d}={calibResult.applied[d].toFixed(3)} <span className="text-emerald-700/70">(n={calibResult.matches[d]})</span>
+                </span>
+              ))}
+              {calibResult.skipped.length > 0 && (
+                <span className="ml-2 text-amber-700">· skipped (&lt;3 matches): {calibResult.skipped.join(", ")}</span>
+              )}
+            </div>
+          )
+        )}
       </Panel>
 
       {/* Per-dye cluster cards */}
