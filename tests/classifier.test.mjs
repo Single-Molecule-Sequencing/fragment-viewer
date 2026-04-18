@@ -235,12 +235,38 @@ describe("expectedSpeciesForDye", () => {
     expect(monomers[0].size).toBe(29);
   });
 
-  it("emits cut-product entries when gRNAs and overhangs are passed", () => {
+  it("enumerates cut products from EVERY target-containing reactant", () => {
     const grnas = findGrnas(CONSTRUCT.seq, CONSTRUCT.targetRange.start, CONSTRUCT.targetRange.end);
     const species = expectedSpeciesForDye("B", sizes, CONSTRUCT.total, [grnas[0]], [0, 4]);
     const cuts = species.filter(s => s.kind === "cut");
-    // 2 chemistries x 1 gRNA -> 2 cut entries on this dye
-    expect(cuts.length).toBe(2);
+    // B is on Adapter 1 (LEFT side), present in 3 reactants:
+    // full, no_ad2, ad1_br1_target. With 2 chemistries: 3 x 2 = 6 cuts.
+    expect(cuts.length).toBe(6);
+    const sources = new Set(cuts.map(c => c.source_reactant));
+    expect(sources.has("full")).toBe(true);
+    expect(sources.has("no_ad2")).toBe(true);
+    expect(sources.has("ad1_br1_target")).toBe(true);
+    // Bot-strand B should NOT appear from no_ad1 or target_ad2 (no LEFT-side B dye on those)
+    expect(sources.has("no_ad1")).toBe(false);
+    expect(sources.has("target_ad2")).toBe(false);
+  });
+
+  it("partial-reactant cut sizes match full-reactant sizes on shared dyes", () => {
+    const grnas = findGrnas(CONSTRUCT.seq, CONSTRUCT.targetRange.start, CONSTRUCT.targetRange.end);
+    const species = expectedSpeciesForDye("B", sizes, CONSTRUCT.total, [grnas[0]], [0]);
+    const cuts = species.filter(s => s.kind === "cut");
+    // All 3 cut entries (full, no_ad2, ad1_br1_target) on B at blunt should
+    // be the SAME size (the documented invariant: partial reactants only add
+    // signal at full-reactant cut sizes, no new peak positions).
+    const sizes_b = cuts.map(c => c.size);
+    expect(new Set(sizes_b).size).toBe(1);
+  });
+
+  it("G dye cut entries come only from full + Missing Ad1 + Target+Br2+Ad2", () => {
+    const grnas = findGrnas(CONSTRUCT.seq, CONSTRUCT.targetRange.start, CONSTRUCT.targetRange.end);
+    const species = expectedSpeciesForDye("G", sizes, CONSTRUCT.total, [grnas[0]], [0]);
+    const sources = new Set(species.filter(s => s.kind === "cut").map(c => c.source_reactant));
+    expect(sources).toEqual(new Set(["full", "no_ad1", "target_ad2"]));
   });
 });
 

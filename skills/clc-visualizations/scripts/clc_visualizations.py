@@ -27,7 +27,6 @@ from cas9_cut_predictor import (  # noqa: E402
 )
 
 # Mirror of ASSEMBLY_PRODUCTS in fragment-viewer/src/FragmentViewer.jsx.
-# Order matters only for stable label sort in the overlay.
 ASSEMBLY_PRODUCTS = [
     {"id": "full",           "name": "Full ligation",                "parts": ["ad1","oh1","br1","target","br2","oh2","ad2"], "dyes": ["B","Y","G","R"]},
     {"id": "no_ad2",         "name": "Missing Ad2",                  "parts": ["ad1","oh1","br1","target","br2","oh2"],        "dyes": ["B","Y"]},
@@ -36,6 +35,61 @@ ASSEMBLY_PRODUCTS = [
     {"id": "target_ad2",     "name": "Target+Br2+Ad2",               "parts": ["target","br2","oh2","ad2"],                    "dyes": ["G","R"]},
     {"id": "adapter_dimer",  "name": "Adapter dimer",                "parts": ["ad1","oh1","oh2","ad2"],                        "dyes": ["B","Y","G","R"]},
 ]
+
+# Mirror of TARGET_REACTANTS in fragment-viewer/src/FragmentViewer.jsx.
+# Each entry's cut at construct pos X is valid only if construct_start <= X
+# <= construct_end. left_dyes / right_dyes encode which terminal Ad is
+# present in this reactant.
+TARGET_REACTANTS = [
+    {"id": "full",            "name": "Full ligation",                          "size": 226, "construct_start": 1,  "construct_end": 226, "left_dyes": ["B","Y"], "right_dyes": ["G","R"]},
+    {"id": "no_ad2",          "name": "Missing Ad2 (Ad1+OH1+Br1+Tgt+Br2+OH2)",  "size": 201, "construct_start": 1,  "construct_end": 201, "left_dyes": ["B","Y"], "right_dyes": []},
+    {"id": "no_ad1",          "name": "Missing Ad1 (OH1+Br1+Tgt+Br2+OH2+Ad2)",  "size": 201, "construct_start": 26, "construct_end": 226, "left_dyes": [],         "right_dyes": ["G","R"]},
+    {"id": "ad1_br1_target",  "name": "Ad1+OH1+Br1+Target only",                "size": 172, "construct_start": 1,  "construct_end": 172, "left_dyes": ["B","Y"], "right_dyes": []},
+    {"id": "target_ad2",      "name": "Target+Br2+OH2+Ad2 only",                "size": 172, "construct_start": 55, "construct_end": 226, "left_dyes": [],         "right_dyes": ["G","R"]},
+]
+
+
+def predict_cut_from_reactant(grna, reactant, overhang_nt=0):
+    """Predict labeled ssDNA cut products from one parent reactant. Returns
+    {dye: product} for dyes that physically sit on a labeled terminus of
+    this reactant; returns None if the cut is outside the reactant range.
+    Mirrors predictCutFromReactant in fragment-viewer JSX.
+    """
+    X = grna["cut_construct"]
+    if X < reactant["construct_start"] or X > reactant["construct_end"]:
+        return None
+    cut_in_reactant = X - reactant["construct_start"] + 1
+    left_len = cut_in_reactant
+    right_len = reactant["size"] - cut_in_reactant
+
+    pam_on_top = grna["strand"] == "top"
+    left_is_proximal = not pam_on_top
+    top_is_non_template = pam_on_top
+
+    products = {}
+    for dye in reactant["left_dyes"]:
+        is_bot = dye in ("B", "G")
+        ln = left_len + overhang_nt if is_bot else left_len
+        products[dye] = {
+            "length": ln, "fragment": "LEFT",
+            "strand": "bot" if is_bot else "top",
+            "template": ("template" if top_is_non_template else "non-template") if is_bot else ("non-template" if top_is_non_template else "template"),
+            "pam_side": "proximal" if left_is_proximal else "distal",
+            "source_reactant": reactant["id"],
+            "source_reactant_name": reactant["name"],
+        }
+    for dye in reactant["right_dyes"]:
+        is_bot = dye in ("B", "G")
+        ln = right_len - overhang_nt if is_bot else right_len
+        products[dye] = {
+            "length": ln, "fragment": "RIGHT",
+            "strand": "bot" if is_bot else "top",
+            "template": ("template" if top_is_non_template else "non-template") if is_bot else ("non-template" if top_is_non_template else "template"),
+            "pam_side": "distal" if left_is_proximal else "proximal",
+            "source_reactant": reactant["id"],
+            "source_reactant_name": reactant["name"],
+        }
+    return products
 
 
 # Stroke patterns per kind. Color comes from the dye palette; pattern conveys kind.
@@ -47,12 +101,7 @@ SPECIES_DASH = {
 
 
 def cas9_nomenclature_label(grna, dye, dye_product, overhang_nt, lab_mark=""):
-    """Mirror of cas9NomenclatureLabel() in the JSX.
-
-    Returns dict {compact, full}. Compact is for inline rendering on the trace
-    where space is tight; full is the canonical Cas9 nomenclature for caption /
-    legend / hover.
-    """
+    """Mirror of cas9NomenclatureLabel() in the JSX. Returns dict {compact, full}."""
     gname = grna.get("name") or f"cand-{grna.get('id', '?')}"
     if overhang_nt == 0:
         chem = "blunt"
@@ -60,11 +109,15 @@ def cas9_nomenclature_label(grna, dye, dye_product, overhang_nt, lab_mark=""):
         chem = f"+{overhang_nt}nt 5'OH"
     else:
         chem = f"{overhang_nt}nt 3'OH"
-    compact = f"{lab_mark}{gname} {dye_product['fragment']}/{dye_product['strand']}/{dye} {chem}"
+    src_id = dye_product.get("source_reactant")
+    src_name = dye_product.get("source_reactant_name") or src_id
+    from_tag = f" from: {src_name}" if src_id else ""
+    from_short = f" ({src_id})" if src_id else ""
+    compact = f"{lab_mark}{gname} {dye_product['fragment']}/{dye_product['strand']}/{dye} {chem}{from_short}"
     full = (
         f"{lab_mark}{gname} | {grna['strand']}-strand PAM {grna['pam_seq']} cut@{grna['cut_construct']}"
         f" | {dye_product['fragment']} ssDNA {dye_product['strand']}/{dye} ({dye_product['template']}, PAM-{dye_product['pam_side']})"
-        f" | {chem} | {dye_product['length']} nt"
+        f"{from_tag} | {chem} | {dye_product['length']} nt"
     )
     return {"compact": compact, "full": full}
 
@@ -91,20 +144,26 @@ def expected_species_for_dye(dye, components, construct_size=226, gRNAs=None, ov
     if dye in monomers:
         size, label = monomers[dye]
         out.append({"size": size, "label": label, "kind": "monomer"})
+    # Cas9 cut products from EVERY target-containing reactant. Partial-reactant
+    # cuts land on the same bp as full-reactant cuts on the dyes that survive,
+    # so this surfaces the source ambiguity rather than introducing new peaks.
     for g in (gRNAs or []):
         for oh in (overhangs or [0]):
-            products = predict_cut_products(g, construct_size, oh)
-            p = products.get(dye)
-            if not p:
-                continue
-            labels = cas9_nomenclature_label(g, dye, p, oh)
-            out.append({
-                "size": p["length"],
-                "label": labels["compact"],
-                "fullLabel": labels["full"],
-                "kind": "cut",
-            })
-    # Default fullLabel = label for non-cut entries
+            for reactant in TARGET_REACTANTS:
+                products = predict_cut_from_reactant(g, reactant, oh)
+                if not products:
+                    continue
+                p = products.get(dye)
+                if not p:
+                    continue
+                labels = cas9_nomenclature_label(g, dye, p, oh)
+                out.append({
+                    "size": p["length"],
+                    "label": labels["compact"],
+                    "fullLabel": labels["full"],
+                    "kind": "cut",
+                    "source_reactant": reactant["id"],
+                })
     out = [({**s, "fullLabel": s["label"]} if "fullLabel" not in s else s) for s in out]
     return sorted(out, key=lambda s: s["size"])
 from genemapper_parser import parse_genemapper_path  # noqa: E402

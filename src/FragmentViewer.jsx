@@ -843,6 +843,117 @@ export function LabInventoryPanel({ candidates = [] }) {
   );
 }
 
+// ----------------------------------------------------------------------
+// Target-containing reactants (the substrates Cas9 can actually cut).
+// Each entry has a (construct_start, construct_end) range in the original
+// 226 bp full-construct coordinates plus dye topology at each terminus.
+// Cuts at full-construct position X land in this reactant only if
+// construct_start <= X <= construct_end.
+//
+// IMPORTANT: cut products from partial reactants land on the SAME bp as
+// full-reactant cuts on the dyes that survive (Missing Ad2 + cut at X ->
+// Y/B peak at X, identical to Full + cut at X on Y/B). Including partial
+// reactants therefore does not add new peak positions; it surfaces the
+// AMBIGUITY in which parent reactant a given peak could come from.
+// ----------------------------------------------------------------------
+export const TARGET_REACTANTS = [
+  { id: "full",            name: "Full ligation",                size: 226, construct_start: 1,  construct_end: 226, left_dyes: ["B","Y"], right_dyes: ["G","R"] },
+  { id: "no_ad2",          name: "Missing Ad2 (Ad1+OH1+Br1+Tgt+Br2+OH2)", size: 201, construct_start: 1,  construct_end: 201, left_dyes: ["B","Y"], right_dyes: [] },
+  { id: "no_ad1",          name: "Missing Ad1 (OH1+Br1+Tgt+Br2+OH2+Ad2)", size: 201, construct_start: 26, construct_end: 226, left_dyes: [],         right_dyes: ["G","R"] },
+  { id: "ad1_br1_target",  name: "Ad1+OH1+Br1+Target only",      size: 172, construct_start: 1,  construct_end: 172, left_dyes: ["B","Y"], right_dyes: [] },
+  { id: "target_ad2",      name: "Target+Br2+OH2+Ad2 only",      size: 172, construct_start: 55, construct_end: 226, left_dyes: [],         right_dyes: ["G","R"] },
+];
+
+// Predict the labeled ssDNA cut products produced when Cas9 cuts the given
+// reactant at grna.cut_construct (full-construct coordinates) with the given
+// chemistry. Returns dict of {dye: product} for dyes that are physically
+// present on a labeled terminus of this reactant; returns null if the cut
+// position is outside the reactant's construct range.
+export function predictCutFromReactant(grna, reactant, overhang_nt = 0) {
+  const X = grna.cut_construct;
+  if (X < reactant.construct_start || X > reactant.construct_end) return null;
+  const cutInReactant = X - reactant.construct_start + 1;
+  const leftLen = cutInReactant;
+  const rightLen = reactant.size - cutInReactant;
+
+  const pamOnTop = grna.strand === "top";
+  const leftIsProximal = !pamOnTop;
+  const topIsNonTemplate = pamOnTop;
+
+  const products = {};
+  // LEFT-side dyes (carried on Ad1 if present at this end of the reactant)
+  for (const dye of reactant.left_dyes) {
+    const isBottomStrand = (dye === "B" || dye === "G");
+    const len = isBottomStrand ? leftLen + overhang_nt : leftLen;
+    products[dye] = {
+      length: len,
+      fragment: "LEFT",
+      strand: isBottomStrand ? "bot" : "top",
+      template: isBottomStrand
+        ? (topIsNonTemplate ? "template" : "non-template")
+        : (topIsNonTemplate ? "non-template" : "template"),
+      pam_side: leftIsProximal ? "proximal" : "distal",
+      source_reactant: reactant.id,
+      source_reactant_name: reactant.name,
+    };
+  }
+  // RIGHT-side dyes (carried on Ad2 if present at this end of the reactant)
+  for (const dye of reactant.right_dyes) {
+    const isBottomStrand = (dye === "B" || dye === "G");
+    const len = isBottomStrand ? rightLen - overhang_nt : rightLen;
+    products[dye] = {
+      length: len,
+      fragment: "RIGHT",
+      strand: isBottomStrand ? "bot" : "top",
+      template: isBottomStrand
+        ? (topIsNonTemplate ? "template" : "non-template")
+        : (topIsNonTemplate ? "non-template" : "template"),
+      pam_side: leftIsProximal ? "distal" : "proximal",
+      source_reactant: reactant.id,
+      source_reactant_name: reactant.name,
+    };
+  }
+  return products;
+}
+
+// ----------------------------------------------------------------------
+// Generic SVG -> PNG export (browser-native; no npm deps).
+// Serializes the given <svg> element, paints it onto a white canvas at 2x
+// scale, and triggers a download. Used by the per-figure Export buttons.
+// ----------------------------------------------------------------------
+export function exportSvgAsPng(svgEl, filename, scale = 2) {
+  if (!svgEl) return;
+  const xml = new XMLSerializer().serializeToString(svgEl);
+  const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+    const w = (vb && vb.width)  || svgEl.clientWidth  || 800;
+    const h = (vb && vb.height) || svgEl.clientHeight || 400;
+    const canvas = document.createElement("canvas");
+    canvas.width  = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(url);
+    canvas.toBlob(blob => {
+      if (!blob) return;
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename || "fragment-viewer.png";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+    }, "image/png");
+  };
+  img.onerror = () => URL.revokeObjectURL(url);
+  img.src = url;
+}
+
 // Cas9 nomenclature for a single ssDNA cut product.
 // Two forms are produced so the renderer can keep inline labels readable
 // while the full annotation is available on hover (JSX <title>) or in a
@@ -856,12 +967,18 @@ export function cas9NomenclatureLabel({ grna, dye, dyeProduct, overhang_nt, labM
   const chem = overhang_nt === 0
     ? "blunt"
     : (overhang_nt > 0 ? `+${overhang_nt}nt 5'OH` : `${overhang_nt}nt 3'OH`);
+  const fromTag = dyeProduct.source_reactant
+    ? ` from: ${dyeProduct.source_reactant_name || dyeProduct.source_reactant}`
+    : "";
+  const fromShort = dyeProduct.source_reactant
+    ? ` (${dyeProduct.source_reactant})`
+    : "";
   const compact =
-    `${labMark}${gname} ${dyeProduct.fragment}/${dyeProduct.strand}/${dye} ${chem}`;
+    `${labMark}${gname} ${dyeProduct.fragment}/${dyeProduct.strand}/${dye} ${chem}${fromShort}`;
   const full =
     `${labMark}${gname} | ${grna.strand}-strand PAM ${grna.pam_seq} cut@${grna.cut_construct}` +
     ` | ${dyeProduct.fragment} ssDNA ${dyeProduct.strand}/${dye} (${dyeProduct.template}, PAM-${dyeProduct.pam_side})` +
-    ` | ${chem} | ${dyeProduct.length} nt`;
+    `${fromTag} | ${chem} | ${dyeProduct.length} nt`;
   return { compact, full };
 }
 
@@ -898,22 +1015,30 @@ export function expectedSpeciesForDye(dye, components, constructSize = 226, gRNA
     out.push({ size: monomers[dye].size, label: monomers[dye].label, kind: "monomer" });
   }
 
-  // Cas9 cut products with both compact and full Cas9 nomenclature
+  // Cas9 cut products: enumerate over EVERY target-containing reactant the
+  // assay can produce (full + 4 partial-ligation species). Each reactant
+  // contributes labeled cut products only on the dyes that physically sit on
+  // its termini, so e.g. "Missing Ad1" never lights up Y or B even if the cut
+  // position is inside its target window.
   for (const g of gRNAs) {
     if (!g) continue;
     const inv = inventoryStatus(g);
     const labMark = inv.status === "exact" ? "LAB✓ " : (inv.status === "name" ? "name~ " : "");
     for (const oh of overhangs) {
-      const products = predictCutProducts(g, constructSize, oh);
-      const p = products[dye];
-      if (!p) continue;
-      const labels = cas9NomenclatureLabel({ grna: g, dye, dyeProduct: p, overhang_nt: oh, labMark });
-      out.push({
-        size: p.length,
-        label: labels.compact,
-        fullLabel: labels.full,
-        kind: "cut",
-      });
+      for (const reactant of TARGET_REACTANTS) {
+        const products = predictCutFromReactant(g, reactant, oh);
+        if (!products) continue;
+        const p = products[dye];
+        if (!p) continue;
+        const labels = cas9NomenclatureLabel({ grna: g, dye, dyeProduct: p, overhang_nt: oh, labMark });
+        out.push({
+          size: p.length,
+          label: labels.compact,
+          fullLabel: labels.full,
+          kind: "cut",
+          source_reactant: reactant.id,
+        });
+      }
     }
   }
 
