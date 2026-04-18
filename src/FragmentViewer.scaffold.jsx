@@ -1198,20 +1198,21 @@ export const LAB_GRNA_CATALOG = [
   { name: "V059_gRNA3",             spacer: "AGTCCTGTGGTGAGGTGACG", source: "= grna_cyp2d6_rachel03 in cas9-targeted grna_master.tsv (Rachel gRNA 3.0, V0-59 plasmid). Bot-strand match in V059 target window (RC = CGTCACCTCACCACAGGACT on top). User-supplied spacer 2026-04-18.", target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset. Bot-strand PAM (CCT on top, AGG on bot)." },
 
   // --- CYP2D6 pilot panel (chr22, GRCh38) ---
-  // Coordinates from pilot_grna_positions.bed; sequences to be filled in from the GRCh38 reference
-  { name: "CYP2D6_upstream_1",      spacer: "",   source: "pilot_grna_positions.bed",  target: "chr22:42120246-42120266 (+)", notes: "CYP2D6 upstream pilot panel, member 1" },
-  { name: "CYP2D6_upstream_2",      spacer: "",   source: "pilot_grna_positions.bed",  target: "chr22:42120299-42120319 (+)", notes: "CYP2D6 upstream pilot panel, member 2" },
-  { name: "CYP2D6_upstream_3",      spacer: "",   source: "pilot_grna_positions.bed",  target: "chr22:42120483-42120503 (+)", notes: "CYP2D6 upstream pilot panel, member 3" },
-  { name: "CYP2D6_downstream_1",    spacer: "",   source: "pilot_grna_positions.bed",  target: "chr22:42130953-42130973 (+)", notes: "CYP2D6 downstream pilot panel, member 1" },
-  { name: "CYP2D6_downstream_2",    spacer: "",   source: "pilot_grna_positions.bed",  target: "chr22:42131279-42131299 (+)", notes: "CYP2D6 downstream pilot panel, member 2" },
-  { name: "CYP2D6_downstream_3",    spacer: "",   source: "pilot_grna_positions.bed",  target: "chr22:42131304-42131324 (+)", notes: "CYP2D6 downstream pilot panel, member 3" },
+  // Sequences from pilot_grna_positions.bed; 20-bp protospacer, NGG PAM on + strand.
+  // Backfilled 2026-04-18 from /mnt/d/Reference_Files/GCA_000001405.15_GRCh38_no_alt_analysis_set.fasta.
+  { name: "CYP2D6_upstream_1",      spacer: "GGTTTGGTGGCAGCAAGTTG", source: "pilot_grna_positions.bed; GRCh38 chr22:42120246-42120266 (+), PAM=AGG",  target: "chr22:42120246-42120266 (+)", notes: "CYP2D6 upstream pilot panel, member 1" },
+  { name: "CYP2D6_upstream_2",      spacer: "TGCTGAAAGTGAGGAAGACG", source: "pilot_grna_positions.bed; GRCh38 chr22:42120299-42120319 (+), PAM=GGG",  target: "chr22:42120299-42120319 (+)", notes: "CYP2D6 upstream pilot panel, member 2; GGG PAM → expect elevated ±1 wobble per 15485-JL panel-eval v1.6" },
+  { name: "CYP2D6_upstream_3",      spacer: "CCCAGCTACTCAGGAAGCTG", source: "pilot_grna_positions.bed; GRCh38 chr22:42120483-42120503 (+), PAM=AGG",  target: "chr22:42120483-42120503 (+)", notes: "CYP2D6 upstream pilot panel, member 3" },
+  { name: "CYP2D6_downstream_1",    spacer: "TGTGTTGACTGTGCTGCCAG", source: "pilot_grna_positions.bed; GRCh38 chr22:42130953-42130973 (+), PAM=TGG",  target: "chr22:42130953-42130973 (+)", notes: "CYP2D6 downstream pilot panel, member 1" },
+  { name: "CYP2D6_downstream_2",    spacer: "CTGTCACTGGCACTTACCTG", source: "pilot_grna_positions.bed; GRCh38 chr22:42131279-42131299 (+), PAM=GGG",  target: "chr22:42131279-42131299 (+)", notes: "CYP2D6 downstream pilot panel, member 2; GGG PAM → expect elevated ±1 wobble per 15485-JL panel-eval v1.6" },
+  { name: "CYP2D6_downstream_3",    spacer: "TTAGAGCTCCTGATGATGAG", source: "pilot_grna_positions.bed; GRCh38 chr22:42131304-42131324 (+), PAM=TGG",  target: "chr22:42131304-42131324 (+)", notes: "CYP2D6 downstream pilot panel, member 3" },
 
   // --- PureTarget-style subtelomeric pilot guides (multi-chromosome) ---
-  // From pilot_grna_positions.bed; sequences TBD
-  { name: "chr1p_1",                spacer: "",   source: "pilot_grna_positions.bed",  target: "chr1:45335-45355 (+)",      notes: "Subtelomeric pilot, 1p arm" },
-  { name: "chr1p_2",                spacer: "",   source: "pilot_grna_positions.bed",  target: "chr1:46020-46040 (+)",      notes: "Subtelomeric pilot, 1p arm" },
-  { name: "chr1p_3",                spacer: "",   source: "pilot_grna_positions.bed",  target: "chr1:46448-46468 (+)",      notes: "Subtelomeric pilot, 1p arm" },
-  { name: "chr17p_1",               spacer: "",   source: "pilot_grna_positions.bed",  target: "chr17:65117-65137 (+)",     notes: "Subtelomeric pilot, 17p arm" },
+  // From pilot_grna_positions.bed; backfilled 2026-04-18 from GRCh38 no-alt.
+  { name: "chr1p_1",                spacer: "GACAACGTGGATGAACCTAG", source: "pilot_grna_positions.bed; GRCh38 chr1:45335-45355 (+), PAM=AGG",          target: "chr1:45335-45355 (+)",      notes: "Subtelomeric pilot, 1p arm" },
+  { name: "chr1p_2",                spacer: "ATATCATGGATGAGCCTGTG", source: "pilot_grna_positions.bed; GRCh38 chr1:46020-46040 (+), PAM=AGG",          target: "chr1:46020-46040 (+)",      notes: "Subtelomeric pilot, 1p arm" },
+  { name: "chr1p_3",                spacer: "AGAACAAAGCTTCCACAGTG", source: "pilot_grna_positions.bed; GRCh38 chr1:46448-46468 (+), PAM=TGG",          target: "chr1:46448-46468 (+)",      notes: "Subtelomeric pilot, 1p arm" },
+  { name: "chr17p_1",               spacer: "GGCATAAGCTGGATGTAGAG", source: "pilot_grna_positions.bed; GRCh38 chr17:65117-65137 (+), PAM=AGG",         target: "chr17:65117-65137 (+)",     notes: "Subtelomeric pilot, 17p arm" },
 
   // ---- ADD NEW LAB gRNAs BELOW ----
   // { name: "Your_gRNA_Name", spacer: "NNNNNNNNNNNNNNNNNNNN", source: "...", target: "...", notes: "..." },
