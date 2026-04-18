@@ -8,7 +8,6 @@ Interactive capillary-electrophoresis viewer and Cas9 cut-product predictor for 
 
 ## Quick links
 
-- **Live app:** https://single-molecule-sequencing.github.io/fragment-viewer/
 - **Tutorial:** `docs/TUTORIAL.md`
 - **Architecture:** `docs/ARCHITECTURE.md`
 - **Biology model and conventions:** `docs/BIOLOGY.md`
