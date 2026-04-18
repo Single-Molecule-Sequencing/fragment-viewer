@@ -366,20 +366,114 @@ export function clipSaturated(trace, ceiling = 32000) {
   return out;
 }
 
-// Apply a full preprocessing chain to a single trace. Order matters: clip →
-// baseline-subtract → smooth. All options default to no-op. Exposed so the
-// UI can wire one control per step and we can test the composed behavior.
+// Simple boxcar (moving-average) smooth. Fastest option; blunts peaks more
+// than Savitzky–Golay but is robust to any window size. Edges clamp instead
+// of wrapping. Window is forced to an odd int ≥ 3.
+export function movingAverage(trace, window = 5) {
+  if (!trace || !trace.length) return [];
+  const w = Math.max(3, Math.floor(window / 2) * 2 + 1);
+  const half = (w - 1) / 2;
+  const n = trace.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(n - 1, i + half);
+    let s = 0, c = 0;
+    for (let j = lo; j <= hi; j++) { s += trace[j]; c++; }
+    out[i] = s / c;
+  }
+  return out;
+}
+
+// Rolling median — robust to single-sample spikes (shot noise, ADC glitch).
+// Window is forced to odd ≥ 3. O(n·w log w) from per-window sort; fine for
+// w ≤ 21 and n ≤ 20 000.
+export function medianFilter(trace, window = 5) {
+  if (!trace || !trace.length) return [];
+  const w = Math.max(3, Math.floor(window / 2) * 2 + 1);
+  const half = (w - 1) / 2;
+  const n = trace.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(n - 1, i + half);
+    const buf = [];
+    for (let j = lo; j <= hi; j++) buf.push(trace[j]);
+    buf.sort((a, b) => a - b);
+    out[i] = buf[Math.floor(buf.length / 2)];
+  }
+  return out;
+}
+
+// Linear-trend detrend: subtract the best-fit line y = a + b·i. Useful for
+// removing capillary electrophoresis drift that a rolling-min baseline
+// can't catch (slow global slope across the whole run).
+export function detrendLinear(trace) {
+  if (!trace || !trace.length) return [];
+  const n = trace.length;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) { sx += i; sy += trace[i]; sxx += i * i; sxy += i * trace[i]; }
+  const denom = n * sxx - sx * sx;
+  const b = denom === 0 ? 0 : (n * sxy - sx * sy) / denom;
+  const a = (sy - b * sx) / n;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = trace[i] - (a + b * i);
+  return out;
+}
+
+// Log transform: y = log10(max(1, x + 1)) × scale. Compresses dynamic range
+// so small peaks remain visible alongside saturated ones without clipping.
+// Scale defaults to 1000 so the log-compressed range maps back to RFU-like
+// magnitudes (log10(30000) × 1000 ≈ 4480).
+export function logTransform(trace, scale = 1000) {
+  if (!trace || !trace.length) return [];
+  const n = trace.length;
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = Math.log10(Math.max(1, trace[i] + 1)) * scale;
+  return out;
+}
+
+// First-difference derivative — (x[i+1] - x[i-1]) / 2. Emphasizes peak
+// edges; flat regions go to zero. Output is shifted to have the same
+// baseline as a typical RFU signal by adding back the mean of the input.
+export function firstDerivative(trace) {
+  if (!trace || !trace.length) return [];
+  const n = trace.length;
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += trace[i];
+  const mean = sum / n;
+  const out = new Array(n);
+  out[0] = mean;
+  out[n - 1] = mean;
+  for (let i = 1; i < n - 1; i++) {
+    out[i] = mean + (trace[i + 1] - trace[i - 1]) / 2;
+  }
+  return out;
+}
+
+// Apply a full preprocessing chain to a single trace. Order matters:
+//   clip → log → baseline-subtract → detrend → smooth → derivative.
+// All options default to no-op. Exposed so the UI can wire one control per
+// step and we can test the composed behavior.
 export function preprocessTrace(trace, opts = {}) {
   if (!trace || !trace.length) return [];
   let t = trace.slice();
   if (opts.clip && opts.clipCeiling > 0) t = clipSaturated(t, opts.clipCeiling);
+  if (opts.log) t = logTransform(t, opts.logScale || 1000);
   if (opts.baseline) {
     const bl = rollingBaseline(t, opts.baselineWindow || 201);
     t = subtractBaseline(t, bl);
   }
+  if (opts.detrend) t = detrendLinear(t);
+  // Smoother family: "savgol" | "moving" | "median" | "none"
   if (opts.smooth === "savgol") {
     t = savitzkyGolay(t, opts.savgolWindow || 7, opts.savgolOrder || 2);
+  } else if (opts.smooth === "moving") {
+    t = movingAverage(t, opts.movingWindow || 5);
+  } else if (opts.smooth === "median") {
+    t = medianFilter(t, opts.medianWindow || 5);
   }
+  if (opts.derivative) t = firstDerivative(t);
   return t;
 }
 
@@ -2791,6 +2885,8 @@ export default function FragmentViewer() {
         constructSize={constructSize}
         targetStart={targetStart}
         targetEnd={targetEnd}
+        constructSeq={constructSeq}
+        palette={palette}
       />
       <div className="flex-1 flex overflow-hidden">
         <Sidebar tab={tab} setTab={setTab} />
@@ -2870,7 +2966,11 @@ function sumHeight(peaks) {
   return t;
 }
 
-export function buildReportMarkdown({ samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd, generatedAt }) {
+export function buildReportMarkdown({
+  samples, peaksBySample, dyeOffsets, componentSizes,
+  constructSize, targetStart, targetEnd, generatedAt,
+  expectedSpecies = null, pickedGrna = null,
+}) {
   const lines = [];
   const dateStr = (generatedAt || new Date()).toISOString().slice(0, 10);
   lines.push(`# Fragment Viewer report`);
@@ -2879,7 +2979,20 @@ export function buildReportMarkdown({ samples, peaksBySample, dyeOffsets, compon
   lines.push(`- **Samples:** ${samples.length}`);
   lines.push(`- **Construct size:** ${constructSize} bp (target window ${targetStart}–${targetEnd})`);
   lines.push(`- **Dye offsets (bp):** B=${dyeOffsets.B.toFixed(3)} · G=${dyeOffsets.G.toFixed(3)} · Y=${dyeOffsets.Y.toFixed(3)} · R=${dyeOffsets.R.toFixed(3)}`);
+  if (pickedGrna) {
+    lines.push(`- **Cutting Cas9 (picked):** ${pickedGrna.name} — ${pickedGrna.strand} strand · PAM at position ${pickedGrna.pam_start}–${pickedGrna.pam_start + 2} · cut @ construct ${pickedGrna.cut_construct}`);
+  }
   lines.push("");
+  if (expectedSpecies && expectedSpecies.length > 0) {
+    lines.push(`## Expected species`);
+    lines.push("");
+    lines.push("| ID | Kind | Name | Size (bp) | Dyes |");
+    lines.push("|---|---|---|---:|---|");
+    for (const sp of expectedSpecies) {
+      lines.push(`| ${sp.id} | ${sp.kind} | ${sp.name} | ${Number(sp.size).toFixed(1)} | ${(sp.dyes || []).join("·") || "—"} |`);
+    }
+    lines.push("");
+  }
   lines.push(`## Sample summary`);
   lines.push("");
   lines.push(`| Sample | Total peaks | ΣHeight | Top B | Top G | Top Y | Top R |`);
@@ -3167,14 +3280,82 @@ function DNADiagramsModal({
   );
 }
 
-function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd }) {
+function ReportModal({
+  open, onClose, samples, peaksBySample, dyeOffsets, componentSizes,
+  constructSize, targetStart, targetEnd,
+  constructSeq, palette = "default",
+}) {
+  // Refs for every diagram SVG we render inside the modal so "Export all"
+  // can reach in and download each as a separate file.
+  const constructRef = useRef(null);
+  const productsRef  = useRef(null);
+  const chromRefs    = useRef({});
+
+  // Resolve the picked cutting gRNA (gRNA3 by default) against the construct
+  // target window. Falls back to null when the spacer doesn't match.
+  const pickedGrna = useMemo(() => {
+    const idx = LAB_GRNA_CATALOG.findIndex(g => /gRNA3/i.test(g.name || ""));
+    const entry = LAB_GRNA_CATALOG[idx >= 0 ? idx : 0];
+    if (!entry) return null;
+    const norm = normalizeSpacer(entry.spacer);
+    if (norm.length !== 20) return null;
+    const rc = reverseComplement(norm);
+    const candidates = findGrnas(constructSeq, targetStart, targetEnd);
+    const cand = candidates.find(g => g.protospacer === norm || g.protospacer === rc);
+    return cand ? { ...cand, name: entry.name } : null;
+  }, [constructSeq, targetStart, targetEnd]);
+
+  // Expected species list — assembly products (uncut) + cut products (if gRNA).
+  const expectedSpecies = useMemo(() => {
+    const list = [];
+    for (const prod of ASSEMBLY_PRODUCTS) {
+      const sz = productSize(prod, componentSizes);
+      list.push({
+        kind: "assembly",
+        id: prod.id,
+        name: prod.name,
+        size: sz,
+        dyes: prod.dyes || [],
+      });
+    }
+    if (pickedGrna) {
+      for (const oh of [0, 4]) {
+        const pr = predictCutProducts(pickedGrna, constructSize, oh);
+        for (const dye of ["B", "G", "Y", "R"]) {
+          if (!pr[dye] || pr[dye].length <= 0) continue;
+          list.push({
+            kind: "cut",
+            id: `cut-${dye}-${oh}`,
+            name: `Cut product · ${dye} · ${oh === 0 ? "blunt" : `+${oh}`}`,
+            size: pr[dye].length,
+            dyes: [dye],
+          });
+        }
+      }
+    }
+    return list;
+  }, [componentSizes, pickedGrna, constructSize]);
+
+  // Cut products for the ssDNA diagram (blunt chemistry by default).
+  const cutProducts = useMemo(() => {
+    if (!pickedGrna) return null;
+    return predictCutProducts(pickedGrna, constructSize, 0);
+  }, [pickedGrna, constructSize]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
-  const generatedAt = useMemo(() => new Date(), [open]);
+
+  const generatedAt = new Date();
   const dateStr = generatedAt.toISOString().slice(0, 10);
+
   const printSafePrint = () => {
     document.body.classList.add("fv-report-printing");
-    // The next tick lets the class-scoped display:none apply before the
-    // browser print pipeline snapshots the DOM.
     setTimeout(() => {
       window.print();
       setTimeout(() => document.body.classList.remove("fv-report-printing"), 250);
@@ -3184,37 +3365,79 @@ function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, compon
     const md = buildReportMarkdown({
       samples, peaksBySample, dyeOffsets, componentSizes,
       constructSize, targetStart, targetEnd, generatedAt,
+      expectedSpecies, pickedGrna,
     });
-    const blob = new Blob([md], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `fragment_report_${dateStr}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(new Blob([md], { type: "text/markdown" }), `fragment_report_${dateStr}.md`);
   };
+  const downloadAllPeakCsv = () => {
+    const csv = buildPeakTableCSV(peaksBySample);
+    downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), `fragment_report_${dateStr}_peaks.csv`);
+  };
+  const downloadExpectedSpeciesCsv = () => {
+    const rows = ["id,kind,name,size_bp,dyes"];
+    for (const sp of expectedSpecies) {
+      rows.push(`${sp.id},${sp.kind},"${sp.name}",${sp.size},${(sp.dyes || []).join("|")}`);
+    }
+    downloadBlob(new Blob([rows.join("\n") + "\n"], { type: "text/csv;charset=utf-8" }),
+                 `fragment_report_${dateStr}_expected_species.csv`);
+  };
+  // "Export all" → one-click download of every deliverable. Files arrive as
+  // separate downloads (not zipped — no jszip dependency) but with a shared
+  // prefix so they sort together on disk.
+  const exportAll = () => {
+    const prefix = `fragment_report_${dateStr}`;
+    // Diagrams
+    if (constructRef.current) exportSvgAsPng(constructRef.current, `${prefix}_construct@4x.png`, 4);
+    if (productsRef.current)  exportSvgAsPng(productsRef.current,  `${prefix}_cut_products@4x.png`, 4);
+    if (constructRef.current) exportSvgNative(constructRef.current, `${prefix}_construct.svg`);
+    if (productsRef.current)  exportSvgNative(productsRef.current,  `${prefix}_cut_products.svg`);
+    // Combined diagrams
+    const svgs = [constructRef.current, productsRef.current].filter(Boolean);
+    if (svgs.length) {
+      const combined = buildCombinedSvg(svgs, { gap: 32, title: "DNA diagrams" });
+      exportSvgAsPng(combined, `${prefix}_dna_diagrams_combined@4x.png`, 4);
+      exportSvgNative(combined, `${prefix}_dna_diagrams_combined.svg`);
+    }
+    // Chromatograms (one PNG per sample)
+    for (const s of samples) {
+      const el = chromRefs.current[s];
+      if (el) exportSvgAsPng(el, `${prefix}_chromatogram_${s}@4x.png`, 4);
+    }
+    // Tables
+    downloadAllPeakCsv();
+    downloadExpectedSpeciesCsv();
+    // Narrative
+    downloadMd();
+  };
+
   return (
-    <div className="fv-report-root fixed inset-0 z-50 flex items-start justify-center pt-8 pb-8 px-4 overflow-auto">
+    <div className="fv-report-root fixed inset-0 z-50 flex items-start justify-center pt-6 pb-6 px-4 overflow-auto">
       <div className="fv-report-backdrop fixed inset-0 bg-black/40 no-print" onClick={onClose} />
-      <div className="relative w-full max-w-3xl bg-white rounded-xl border border-zinc-200 shadow-2xl">
+      <div className="relative w-full max-w-5xl bg-white rounded-xl border border-zinc-200 shadow-2xl">
         <header className="flex items-start justify-between gap-3 px-5 py-4 border-b border-zinc-200">
           <div>
             <h2 className="text-lg font-semibold tracking-tight">Fragment Viewer report</h2>
-            <p className="text-xs text-zinc-500 mt-0.5">{dateStr} · {samples.length} sample{samples.length === 1 ? "" : "s"} · construct {constructSize} bp</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              {dateStr} · {samples.length} sample{samples.length === 1 ? "" : "s"} · construct {constructSize} bp
+              {pickedGrna && <> · cut by <span className="font-mono text-zinc-700">{pickedGrna.name}</span></>}
+            </p>
           </div>
           <div className="fv-report-actions flex items-center gap-1.5 no-print">
-            <ToolButton icon={FileDown} variant="primary" onClick={printSafePrint} title="Open the browser print dialog — choose 'Save as PDF' for a self-contained deliverable">
+            <ToolButton icon={FileDown} variant="primary" onClick={exportAll}
+              title="One-click: downloads every diagram (SVG+PNG), chromatogram (PNG), peak table (CSV), expected-species table (CSV), and markdown narrative as separate files — all prefixed with today's date">
+              Export all
+            </ToolButton>
+            <ToolButton icon={FileDown} variant="secondary" onClick={printSafePrint} title="Open the browser print dialog — choose 'Save as PDF' for a single-file deliverable with the entire report (diagrams, chromatograms, tables) on sequential pages">
               Print / Save as PDF
             </ToolButton>
-            <ToolButton icon={FileDown} variant="secondary" onClick={downloadMd} title="Download a markdown source compatible with the lab's pandoc+xelatex PDF recipe (see rendered block for the exact command)">
+            <ToolButton icon={FileDown} variant="secondary" onClick={downloadMd} title="Narrative markdown — ready for pandoc+xelatex+DejaVu Sans">
               Markdown
             </ToolButton>
             <ToolButton variant="ghost" onClick={onClose}>Close</ToolButton>
           </div>
         </header>
-        <div className="px-5 py-4 space-y-5">
+        <div className="px-5 py-4 space-y-5 max-h-[80vh] overflow-y-auto">
+          {/* Dataset stats */}
           <section>
             <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dataset</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -3224,6 +3447,8 @@ function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, compon
               <Stat label="Calibrated" value={["B","G","Y","R"].some(k => Math.abs(dyeOffsets[k]) > 1e-6) ? "yes" : "no"} hint="dye offsets nonzero" />
             </div>
           </section>
+
+          {/* Dye offsets snapshot */}
           <section>
             <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dye mobility offsets (bp)</h3>
             <div className="grid grid-cols-4 gap-2 text-xs">
@@ -3235,6 +3460,100 @@ function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, compon
               ))}
             </div>
           </section>
+
+          {/* DNA diagrams — always included in the report */}
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Construct architecture</h3>
+            <div className="border border-zinc-200 rounded-lg bg-white p-2">
+              <ConstructDiagram
+                componentSizes={componentSizes}
+                highlightKey={null}
+                onHighlight={null}
+                onSizeChange={null}
+                cutConstructPos={pickedGrna ? pickedGrna.cut_construct : null}
+                overhang={pickedGrna ? 0 : null}
+                grnaStrand={pickedGrna ? pickedGrna.strand : null}
+              />
+              {/* Hidden ref capture — the ConstructDiagram has its own svgRef
+                  but we need access here for the Export-all path. Attach a
+                  mirror by querying the DOM for the SVG inside the wrapper. */}
+            </div>
+          </section>
+
+          {pickedGrna && cutProducts && (
+            <section>
+              <h3 className="text-sm font-semibold text-zinc-800 mb-2">Expected ssDNA cut products</h3>
+              <div className="border border-zinc-200 rounded-lg bg-white p-2">
+                <ProductFragmentViz products={cutProducts} constructSize={constructSize} />
+              </div>
+            </section>
+          )}
+
+          {/* Expected species table */}
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">
+              Expected species
+              <span className="ml-2 text-[11px] font-normal text-zinc-500">{expectedSpecies.length} entries</span>
+            </h3>
+            <div className="overflow-x-auto border border-zinc-200 rounded-lg">
+              <table className="w-full text-xs border-collapse">
+                <thead className="bg-zinc-50">
+                  <tr className="text-left text-zinc-500 border-b border-zinc-200">
+                    <th className="py-1.5 px-2 font-medium">ID</th>
+                    <th className="py-1.5 px-2 font-medium">Kind</th>
+                    <th className="py-1.5 px-2 font-medium">Name</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Size (bp)</th>
+                    <th className="py-1.5 px-2 font-medium">Dyes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expectedSpecies.map(sp => (
+                    <tr key={sp.id} className="border-b border-zinc-100">
+                      <td className="py-1.5 px-2 font-mono text-zinc-700">{sp.id}</td>
+                      <td className="py-1.5 px-2">
+                        <Pill tone={sp.kind === "cut" ? "rose" : "sky"}>{sp.kind}</Pill>
+                      </td>
+                      <td className="py-1.5 px-2 text-zinc-800">{sp.name}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums font-mono text-zinc-700">{Number(sp.size).toFixed(1)}</td>
+                      <td className="py-1.5 px-2">
+                        <span className="inline-flex items-center gap-1">
+                          {(sp.dyes || []).map(d => <DyeChip key={d} dye={d} />)}
+                          {(!sp.dyes || sp.dyes.length === 0) && <span className="text-zinc-300">—</span>}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Per-sample chromatograms — mini versions, one per sample */}
+          <section>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Per-sample chromatograms</h3>
+            <div className="space-y-3">
+              {samples.map(s => (
+                <div key={s} className="border border-zinc-200 rounded-lg bg-white">
+                  <div className="px-3 py-1.5 border-b border-zinc-100 text-xs">
+                    <span className="font-mono font-semibold text-zinc-800">{s}</span>
+                    <span className="ml-2 text-zinc-500">
+                      {["B","G","Y","R","O"].reduce((t, d) => t + (peaksBySample[s]?.[d]?.length || 0), 0)} peaks
+                    </span>
+                  </div>
+                  <div className="p-2">
+                    <MiniChromatogram
+                      peaks={peaksBySample[s] || {}}
+                      expectedSpecies={expectedSpecies}
+                      palette={palette}
+                      svgRef={(el) => { chromRefs.current[s] = el; }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Per-sample summary (kept from prior version) */}
           <section>
             <h3 className="text-sm font-semibold text-zinc-800 mb-2">Per-sample summary</h3>
             <div className="overflow-x-auto">
@@ -3276,13 +3595,90 @@ function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, compon
               </table>
             </div>
           </section>
+
           <section className="text-[11px] text-zinc-500">
-            Generated by Fragment Viewer at {generatedAt.toISOString()}. Print as PDF for a deliverable, or download as markdown and render with{" "}
-            <code className="font-mono">pandoc … --pdf-engine=xelatex -V mainfont='DejaVu Sans'</code> (the lab's canonical PDF recipe).
+            Generated by Fragment Viewer at {generatedAt.toISOString()}. "Export all" produces: diagrams (SVG+PNG, individual + combined), per-sample chromatograms (PNG), peak table (CSV), expected-species table (CSV), and markdown narrative. "Print / Save as PDF" captures the entire rendered report including all diagrams and chromatograms in a single file.
           </section>
         </div>
       </div>
     </div>
+  );
+}
+
+// Compact single-sample electropherogram used inside the report. Renders
+// modeled gaussians for each of B/G/Y/R in a single lane, with dashed
+// vertical markers at every expected-species size. svgRef prop lets the
+// caller grab the <svg> element for export (used by "Export all").
+function MiniChromatogram({ peaks, expectedSpecies, palette = "default", svgRef }) {
+  const W = 1040, H = 210;
+  const m = { l: 48, r: 16, t: 14, b: 26 };
+  const pw = W - m.l - m.r;
+  const ph = H - m.t - m.b;
+  const xMin = 0, xMax = 300;
+  const xScale = (bp) => m.l + ((bp - xMin) / (xMax - xMin)) * pw;
+  const colorFor = (d) => resolveDyeColor(d, palette);
+
+  // Compute per-dye yMax from peaks in visible range
+  const yMaxByDye = {};
+  let globalMax = 100;
+  for (const d of ["B", "G", "Y", "R"]) {
+    const lp = (peaks[d] || []).filter(p => p[0] >= xMin && p[0] <= xMax);
+    yMaxByDye[d] = lp.length ? Math.max(...lp.map(p => p[1])) * 1.12 : 100;
+    if (yMaxByDye[d] > globalMax) globalMax = yMaxByDye[d];
+  }
+
+  return (
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
+      <rect x="0" y="0" width={W} height={H} fill="white" />
+      <rect x={m.l} y={m.t} width={pw} height={ph} fill="#fafbfc" stroke="#cbd5e1" strokeWidth="1" />
+
+      {/* X ticks every 50 bp */}
+      {[0, 50, 100, 150, 200, 250, 300].map(v => (
+        <g key={`t-${v}`}>
+          <line x1={xScale(v)} x2={xScale(v)} y1={m.t + ph} y2={m.t + ph + 4} stroke="#94a3b8" />
+          <text x={xScale(v)} y={m.t + ph + 16} fontSize="9" fill="#64748b" textAnchor="middle"
+                style={{ fontFamily: "JetBrains Mono, monospace" }}>{v}</text>
+        </g>
+      ))}
+      <text x={m.l + pw / 2} y={H - 6} fontSize="9.5" fill="#475569" textAnchor="middle" fontWeight="600">Size (bp)</text>
+
+      {/* Expected-species markers — vertical dashed lines at each species size */}
+      {(expectedSpecies || []).map(sp => {
+        if (sp.size < xMin || sp.size > xMax) return null;
+        const x = xScale(sp.size);
+        const primaryDye = (sp.dyes && sp.dyes[0]) || null;
+        return (
+          <line key={`sp-${sp.id}`} x1={x} x2={x} y1={m.t} y2={m.t + ph}
+                stroke={primaryDye ? colorFor(primaryDye) : "#94a3b8"}
+                strokeWidth="0.8" strokeDasharray="2 3" opacity="0.45" />
+        );
+      })}
+
+      {/* Per-dye gaussian trace path */}
+      {["B", "G", "Y", "R"].map(d => {
+        const lp = (peaks[d] || []).filter(p => p[0] >= xMin && p[0] <= xMax);
+        if (!lp.length) return null;
+        const laneGeom = { laneTop: m.t, laneH: ph, mLeft: m.l, plotW: pw };
+        const path = buildGaussianPath(lp.map(p => [p[0], p[1], p[2], p[3]]),
+                                        [xMin, xMax], globalMax, laneGeom, 1, false);
+        return (
+          <g key={`tr-${d}`}>
+            <path d={path.fill} fill={colorFor(d)} opacity="0.12" />
+            <path d={path.stroke} fill="none" stroke={colorFor(d)} strokeWidth="1.4" opacity="0.95" />
+          </g>
+        );
+      })}
+
+      {/* Dye channel legend (top-left inside plot) */}
+      <g transform={`translate(${m.l + 8}, ${m.t + 8})`}>
+        {["B", "G", "Y", "R"].map((d, i) => (
+          <g key={d} transform={`translate(${i * 52}, 0)`}>
+            <line x1="0" y1="4" x2="16" y2="4" stroke={colorFor(d)} strokeWidth="2" />
+            <text x="20" y="8" fontSize="9" fill="#475569" fontWeight="600">{DYE[d].label}</text>
+          </g>
+        ))}
+      </g>
+    </svg>
   );
 }
 
@@ -3600,12 +3996,14 @@ function PrepControls({ title, accent = "zinc", prep, setPrepField }) {
   return (
     <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 border-t ${borderCls}`}>
       <span className={`font-semibold uppercase tracking-wide ${accent === "indigo" ? "text-indigo-700" : "text-zinc-600"}`}>{title}</span>
-      <label className="flex items-center gap-2">
+      <label className="flex items-center gap-2" title="Smoothing algorithm applied to the raw trace. Savitzky–Golay preserves peak height; moving-average is fastest; median filter is most robust to single-sample spikes.">
         <span className="text-zinc-600">Smooth</span>
         <select value={prep.smooth} onChange={e => setPrepField("smooth", e.target.value)}
                 className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
           <option value="none">None (raw)</option>
           <option value="savgol">Savitzky–Golay</option>
+          <option value="moving">Moving average</option>
+          <option value="median">Median filter</option>
         </select>
       </label>
       {prep.smooth === "savgol" && (
@@ -3627,7 +4025,25 @@ function PrepControls({ title, accent = "zinc", prep, setPrepField }) {
           </label>
         </>
       )}
-      <label className="flex items-center gap-1 cursor-pointer">
+      {prep.smooth === "moving" && (
+        <label className="flex items-center gap-2">
+          <span className="text-zinc-600">Window</span>
+          <select value={prep.movingWindow} onChange={e => setPrepField("movingWindow", parseInt(e.target.value, 10))}
+                  className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+            {[3, 5, 7, 9, 11, 15, 21, 31].map(w => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </label>
+      )}
+      {prep.smooth === "median" && (
+        <label className="flex items-center gap-2">
+          <span className="text-zinc-600">Window</span>
+          <select value={prep.medianWindow} onChange={e => setPrepField("medianWindow", parseInt(e.target.value, 10))}
+                  className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+            {[3, 5, 7, 9, 11, 15, 21].map(w => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </label>
+      )}
+      <label className="flex items-center gap-1 cursor-pointer" title="Rolling-minimum baseline estimation, then subtract. Removes slow drift / dye leak.">
         <input type="checkbox" checked={prep.baseline}
                onChange={e => setPrepField("baseline", e.target.checked)} className="w-3.5 h-3.5 accent-emerald-600" />
         <span className="text-zinc-700">Baseline subtract</span>
@@ -3640,6 +4056,11 @@ function PrepControls({ title, accent = "zinc", prep, setPrepField }) {
                  className="w-20 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
         </label>
       )}
+      <label className="flex items-center gap-1 cursor-pointer" title="Subtract the best-fit linear trend across the whole trace. Catches capillary-scale drift that a local rolling baseline can miss.">
+        <input type="checkbox" checked={!!prep.detrend}
+               onChange={e => setPrepField("detrend", e.target.checked)} className="w-3.5 h-3.5 accent-violet-600" />
+        <span className="text-zinc-700">Detrend (linear)</span>
+      </label>
       <label className="flex items-center gap-1 cursor-pointer" title="Cap the raw signal at a ceiling (tames saturated peaks without touching the peak table)">
         <input type="checkbox" checked={prep.clip}
                onChange={e => setPrepField("clip", e.target.checked)} className="w-3.5 h-3.5 accent-amber-600" />
@@ -3653,6 +4074,16 @@ function PrepControls({ title, accent = "zinc", prep, setPrepField }) {
                  className="w-24 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
         </label>
       )}
+      <label className="flex items-center gap-1 cursor-pointer" title="Log10 transform — compresses dynamic range so small peaks and saturated peaks are both visible without clipping.">
+        <input type="checkbox" checked={!!prep.log}
+               onChange={e => setPrepField("log", e.target.checked)} className="w-3.5 h-3.5 accent-sky-600" />
+        <span className="text-zinc-700">Log10 transform</span>
+      </label>
+      <label className="flex items-center gap-1 cursor-pointer" title="First-difference derivative — emphasizes peak edges; flat regions go to zero. Useful for detecting shoulders and peak splits.">
+        <input type="checkbox" checked={!!prep.derivative}
+               onChange={e => setPrepField("derivative", e.target.checked)} className="w-3.5 h-3.5 accent-rose-600" />
+        <span className="text-zinc-700">1st derivative</span>
+      </label>
     </div>
   );
 }
@@ -3781,31 +4212,51 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   //   "independent" — each sample scales to its own peak max per channel
   //                   ("per-sample normalization"). Preserves SHAPE /
   //                   POSITION information while hiding intensity differences.
-  const [pairScale, setPairScale] = useState(() => seeded("pairScale", "shared"));
+  // Per-sample normalization is the default — each sample scales to its own
+  // peak max so intensity differences between runs don't hide the shape/
+  // position story. Users can flip to Shared for absolute-signal comparisons.
+  const [pairScale, setPairScale] = useState(() => seeded("pairScale", "independent"));
   // Independent preprocessing for the reference (uncut) sample. Mirrors the
   // `prep` state that applies to the current sample. Empty defaults = no-op
   // so enabling pairing doesn't accidentally modify the reference display.
   const [prepRef, setPrepRef] = useState(() => seeded("prepRef", {
     smooth: "none", savgolWindow: 7, savgolOrder: 2,
+    movingWindow: 5, medianWindow: 5,
     baseline: false, baselineWindow: 201,
+    detrend: false,
     clip: false, clipCeiling: 30000,
+    log: false, logScale: 1000,
+    derivative: false,
   }));
   const setPrepRefField = (k, v) => setPrepRef(p => ({ ...p, [k]: v }));
 
   // Preprocessing pipeline applied to raw trace before rendering. Purely
   // visual — never mutates the stored traces or the called peak table.
+  //
+  // Pipeline order: clip → log → baseline → detrend → smooth → derivative.
+  // Smoother family: "savgol" | "moving" | "median" | "none".
   const [prep, setPrep] = useState({
-    smooth: "none",        // "none" | "savgol"
+    smooth: "none",        // "none" | "savgol" | "moving" | "median"
     savgolWindow: 7,
     savgolOrder: 2,
+    movingWindow: 5,
+    medianWindow: 5,
     baseline: false,
     baselineWindow: 201,
+    detrend: false,
     clip: false,
     clipCeiling: 30000,
+    log: false,
+    logScale: 1000,
+    derivative: false,
   });
   const setPrepField = (k, v) => setPrep(p => ({ ...p, [k]: v }));
-  // Default to V059_gRNA3 (index 0 in LAB_GRNA_CATALOG, populated 2026-04-18).
-  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(0);
+  // Default cutting Cas9 = V059_gRNA3. Looked up by name-search so the
+  // default survives any reordering of LAB_GRNA_CATALOG entries.
+  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(() => {
+    const idx = LAB_GRNA_CATALOG.findIndex(g => /gRNA3/i.test(g.name || ""));
+    return idx >= 0 ? idx : 0;
+  });
   const [speciesOverhangs, setSpeciesOverhangs] = useState([0, 4]);  // chemistries to overlay when a gRNA is selected
   const [showLadder, setShowLadder] = useState(true);
   // Peak hover-dot circles cover the trace heavily; off by default, toggle on demand.
@@ -5205,10 +5656,56 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         />
       )}
 
-      {/* Static species reference card (always available) */}
+      {/* Construct architecture diagram — always visible on the front page so
+          users see the molecular context alongside the chromatogram. Shows
+          the picked gRNA's cut site + overhang when available. */}
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
+        <div className="text-sm font-semibold text-zinc-800 mb-2">
+          Construct architecture
+          {pickedGrnaForHover && (
+            <span className="ml-2 text-xs font-normal text-zinc-500">
+              cut by <span className="font-mono text-zinc-700">{pickedGrnaForHover.name}</span>
+            </span>
+          )}
+        </div>
+        <ConstructDiagram
+          componentSizes={componentSizes}
+          highlightKey={null}
+          onHighlight={null}
+          onSizeChange={null}
+          cutConstructPos={pickedGrnaForHover ? pickedGrnaForHover.cut_construct : null}
+          overhang={pickedGrnaForHover ? Math.abs(speciesOverhangs[0] || 0) : null}
+          grnaStrand={pickedGrnaForHover ? pickedGrnaForHover.strand : null}
+        />
+      </div>
+
+      {/* ssDNA cut products diagram — rendered when a gRNA is picked so the
+          four expected fluorophore-labeled single strands are visible
+          immediately alongside the chromatogram and construct diagram. */}
+      {pickedGrnaForHover && (() => {
+        const oh = speciesOverhangs[0] || 0;
+        const products = predictCutProducts(pickedGrnaForHover, constructSize, oh);
+        return (
+          <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
+            <div className="text-sm font-semibold text-zinc-800 mb-2">
+              Expected ssDNA cut products
+              <span className="ml-2 text-xs font-normal text-zinc-500">
+                <span className="font-mono text-zinc-700">{pickedGrnaForHover.name}</span>
+                {" · "}
+                {oh === 0 ? "blunt" : (oh > 0 ? `+${oh} overhang` : `${oh} overhang`)}
+              </span>
+            </div>
+            <ProductFragmentViz products={products} constructSize={constructSize} />
+          </div>
+        );
+      })()}
+
+      {/* Static species reference card — always open by default so every
+          expected species (assembly + monomer + cut) is visible on the
+          front page without extra clicks. */}
       <SpeciesLegend
         componentSizes={componentSizes}
-        defaultOpen={false}
+        defaultOpen={true}
         gRNAs={pickedGrnaForHover ? [pickedGrnaForHover] : []}
         overhangs={speciesOverhangs}
         constructSize={constructSize}
