@@ -59,10 +59,10 @@ export {
   callPeaksFromTrace, parseFsaArrayBuffer,
 };
 import {
-  LAB_GRNA_CATALOG, normalizeSpacer, matchLabCatalog,
+  LAB_GRNA_CATALOG, normalizeSpacer, matchLabCatalog, inventoryStatus,
 } from "./lib/grna_catalog.js";
 export {
-  LAB_GRNA_CATALOG, normalizeSpacer, matchLabCatalog,
+  LAB_GRNA_CATALOG, normalizeSpacer, matchLabCatalog, inventoryStatus,
 };
 import {
   reverseComplement, findGrnas, predictCutProducts, classifyPeaks,
@@ -82,14 +82,20 @@ export {
 };
 
 // ----------------------------------------------------------------------
-// Design system — small set of primitives reused across tabs.
-// Lives in src/components/primitives.jsx (issue #13 Phase C.1). Re-imported
-// + re-exported here so existing consumers and test imports keep working.
+// UI components lifted out of this monolith under issue #13 (Phase C).
+// All live in src/components/. Re-exported from here so existing
+// consumers and test imports keep working without churn.
 // ----------------------------------------------------------------------
 import {
   Panel, Stat, Pill, DyeChip, Field, ToolButton,
 } from "./components/primitives.jsx";
 export { Panel, Stat, Pill, DyeChip, Field, ToolButton };
+import { ExportMenu } from "./components/export_menu.jsx";
+export { ExportMenu };
+import { LabInventoryBadge, LabInventoryPanel } from "./components/lab_inventory.jsx";
+export { LabInventoryBadge, LabInventoryPanel };
+import PrintStyles from "./components/print_styles.jsx";
+import KeyboardHelpModal from "./components/keyboard_help_modal.jsx";
 
 // ----------------------------------------------------------------------
 // Drag-drop zone for new GeneMapper TSV exports.
@@ -265,102 +271,6 @@ DATA.traces = DATA.traces || {};
 // productSize now lives in src/lib/biology.js (see imports above).
 
 // ----------------------------------------------------------------------
-// Lab inventory cross-check.
-// Given a candidate gRNA (with protospacer) or a name string, decide whether
-// it matches an entry in LAB_GRNA_CATALOG. Three signals, in order:
-//   1. exact spacer match (forward or reverse-complement) when the catalog
-//      entry has a 20-nt spacer
-//   2. name-prefix match (catalog name appears in candidate name or vice versa)
-//   3. otherwise: not in inventory
-// Returns { status, entry?, signal }.
-//   status: "exact" | "name" | "none"
-// ----------------------------------------------------------------------
-export function inventoryStatus(candidate, catalog = LAB_GRNA_CATALOG) {
-  const protoNorm = candidate?.protospacer ? normalizeSpacer(candidate.protospacer) : "";
-  const protoRC = protoNorm.length === 20
-    ? protoNorm.split("").reverse().map(c => ({ A: "T", T: "A", G: "C", C: "G" })[c] || c).join("")
-    : "";
-  const cname = (candidate?.name || "").toLowerCase();
-  for (const entry of catalog) {
-    const ref = normalizeSpacer(entry.spacer);
-    if (ref.length === 20 && (ref === protoNorm || ref === protoRC)) {
-      return { status: "exact", entry, signal: "spacer" };
-    }
-  }
-  if (cname) {
-    for (const entry of catalog) {
-      const ename = (entry.name || "").toLowerCase();
-      if (ename && (cname.includes(ename) || ename.includes(cname))) {
-        return { status: "name", entry, signal: "name" };
-      }
-    }
-  }
-  return { status: "none" };
-}
-
-// Visual chip showing whether a gRNA is in the lab inventory.
-export function LabInventoryBadge({ candidate, compact = false }) {
-  const inv = inventoryStatus(candidate);
-  if (inv.status === "exact") {
-    return <Pill tone="emerald">{compact ? "LAB" : `LAB · ${inv.entry.name}`}</Pill>;
-  }
-  if (inv.status === "name") {
-    return <Pill tone="sky">{compact ? "name?" : `name match · ${inv.entry.name}`}</Pill>;
-  }
-  return <Pill tone="neutral">{compact ? "—" : "not in lab inventory"}</Pill>;
-}
-
-// Summary panel: counts, populated-vs-pending breakdown, per-entry status table.
-export function LabInventoryPanel({ candidates = [] }) {
-  const total = LAB_GRNA_CATALOG.length;
-  const populated = LAB_GRNA_CATALOG.filter(e => normalizeSpacer(e.spacer).length === 20).length;
-  const pending = total - populated;
-  const matchedExact = candidates.filter(c => inventoryStatus(c).status === "exact").length;
-  const matchedName = candidates.filter(c => inventoryStatus(c).status === "name").length;
-  return (
-    <Panel
-      title="Lab gRNA inventory"
-      subtitle={`${total} catalog entries · ${populated} with 20-nt spacer · ${pending} pending upstream data (see .project/UNBLOCK_PROMPTS.md)`}
-      className="mb-3"
-    >
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-        <Stat label="Catalog entries" value={total} />
-        <Stat label="Spacers populated" value={populated} tone={populated > 0 ? "emerald" : "amber"} hint={pending ? `${pending} pending` : null} />
-        <Stat label="Candidates matched (spacer)" value={matchedExact} tone={matchedExact > 0 ? "emerald" : "default"} />
-        <Stat label="Candidates matched (name)" value={matchedName} tone="sky" />
-      </div>
-      <div className="overflow-auto">
-        <table className="w-full text-xs num">
-          <thead>
-            <tr className="text-zinc-500 border-b border-zinc-200">
-              <th className="text-left px-2 py-1 font-medium">name</th>
-              <th className="text-left px-2 py-1 font-medium">target / region</th>
-              <th className="text-left px-2 py-1 font-medium">spacer</th>
-              <th className="text-left px-2 py-1 font-medium">status</th>
-              <th className="text-left px-2 py-1 font-medium">source</th>
-            </tr>
-          </thead>
-          <tbody>
-            {LAB_GRNA_CATALOG.map(entry => {
-              const ok = normalizeSpacer(entry.spacer).length === 20;
-              return (
-                <tr key={entry.name} className="border-b border-zinc-100">
-                  <td className="px-2 py-1 font-mono text-zinc-800">{entry.name}</td>
-                  <td className="px-2 py-1 text-zinc-600">{entry.target}</td>
-                  <td className="px-2 py-1 font-mono text-[10px] text-zinc-500">{entry.spacer || <span className="italic text-amber-700">pending</span>}</td>
-                  <td className="px-2 py-1">{ok ? <Pill tone="emerald">populated</Pill> : <Pill tone="amber">pending</Pill>}</td>
-                  <td className="px-2 py-1 text-zinc-500 text-[11px]">{entry.source}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
-  );
-}
-
-// ----------------------------------------------------------------------
 // Target-containing reactants (the substrates Cas9 can actually cut).
 // Each entry has a (construct_start, construct_end) range in the original
 // 226 bp full-construct coordinates plus dye topology at each terminus.
@@ -431,110 +341,6 @@ export function predictCutFromReactant(grna, reactant, overhang_nt = 0) {
     };
   }
   return products;
-}
-
-// ----------------------------------------------------------------------
-// Generic SVG -> PNG export (browser-native; no npm deps).
-// Serializes the given <svg> element, paints it onto a white canvas at 2x
-// scale, and triggers a download. Used by the per-figure Export buttons.
-// ----------------------------------------------------------------------
-
-// Export menu: a single FileDown button that opens a small popover listing
-// every available format. One component replaces all the scattered "export
-// PNG" buttons so adding a new format is a one-line change here.
-//
-// Props:
-//   svgRef   — React ref pointing at the <svg> element to export.
-//   basename — filename stem; the format-specific suffix is appended.
-//   formats  — array of format keys to show. Defaults to all five below.
-//              Order controls menu order.
-export function ExportMenu({
-  svgRef,
-  basename = "figure",
-  formats = ["svg", "png2", "png4", "png6", "png8", "png4_alpha", "jpg_hi", "jpg_std", "webp_hi"],
-  variant = "secondary",
-  label = "Export",
-}) {
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e) => {
-      if (anchorRef.current && !anchorRef.current.contains(e.target)) setOpen(false);
-    };
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [open]);
-  const doExport = (kind) => {
-    const el = svgRef?.current;
-    if (!el) return;
-    switch (kind) {
-      case "svg":        exportSvgNative(el, `${basename}.svg`); break;
-      case "png2":       exportSvgAsPng(el, `${basename}@2x.png`, 2); break;
-      case "png4":       exportSvgAsPng(el, `${basename}@4x.png`, 4); break;
-      case "png6":       exportSvgAsPng(el, `${basename}@6x.png`, 6); break;
-      case "png8":       exportSvgAsPng(el, `${basename}@8x.png`, 8); break;
-      case "png4_alpha": exportSvgAsPng(el, `${basename}@4x_alpha.png`, 4, { transparent: true }); break;
-      case "jpg_hi":     exportSvgAsJpg(el, `${basename}@4x_q92.jpg`, 4, 0.92); break;
-      case "jpg_std":    exportSvgAsJpg(el, `${basename}@2x_q80.jpg`, 2, 0.80); break;
-      case "webp_hi":    exportSvgAsWebp(el, `${basename}@4x_q92.webp`, 4, 0.92); break;
-      case "webp_alpha": exportSvgAsWebp(el, `${basename}@4x_alpha.webp`, 4, 0.92, { transparent: true }); break;
-      default: break;
-    }
-    setOpen(false);
-  };
-  const entries = {
-    svg:        { group: "Vector",     label: "SVG · vector, editable",   hint: "Best for publication figures (Illustrator / Inkscape)" },
-    png2:       { group: "Raster",     label: "PNG @ 2×",                 hint: "Screens, slides · ~1840 px wide" },
-    png4:       { group: "Raster",     label: "PNG @ 4×",                 hint: "Publication, 300 DPI single column · ~3680 px" },
-    png6:       { group: "Raster",     label: "PNG @ 6×",                 hint: "Posters, 300 DPI double column · ~5520 px" },
-    png8:       { group: "Raster",     label: "PNG @ 8×",                 hint: "Giant prints, zoom-in crops · ~7360 px" },
-    png4_alpha: { group: "Transparent",label: "PNG @ 4× · transparent",   hint: "Alpha channel for compositing in Illustrator / PowerPoint" },
-    jpg_hi:     { group: "Compact",    label: "JPG @ 4× · high quality",  hint: "Q92; ~3-5× smaller than PNG" },
-    jpg_std:    { group: "Compact",    label: "JPG @ 2× · standard",      hint: "Q80; email-friendly size" },
-    webp_hi:    { group: "Compact",    label: "WebP @ 4× · high quality", hint: "Q92; ~25-40% smaller than JPG at equal quality" },
-    webp_alpha: { group: "Transparent",label: "WebP @ 4× · transparent",  hint: "Q92 + alpha; best-in-class size for alpha-channel output" },
-  };
-  // Group for rendered section headers. Preserves `formats` order within
-  // each group so callers can still fully control the menu contents.
-  const groups = [];
-  const seen = new Set();
-  for (const k of formats) {
-    const g = entries[k]?.group || "Other";
-    if (!seen.has(g)) { groups.push(g); seen.add(g); }
-  }
-  return (
-    <div ref={anchorRef} className="relative inline-block">
-      <ToolButton icon={FileDown} variant={variant} onClick={() => setOpen(v => !v)} title="Export this figure — SVG / PNG / JPG / WebP at multiple resolutions, with optional transparent background">
-        {label} {open ? "▾" : "▸"}
-      </ToolButton>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-40 w-72 bg-white border border-zinc-200 rounded-lg shadow-xl overflow-hidden no-print max-h-[80vh] overflow-y-auto">
-          {groups.map(g => (
-            <div key={g}>
-              <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 bg-zinc-50 border-b border-zinc-100">
-                {g}
-              </div>
-              <ul className="divide-y divide-zinc-100">
-                {formats.filter(k => (entries[k]?.group || "Other") === g).map(k => (
-                  <li key={k}>
-                    <button onClick={() => doExport(k)}
-                      className="w-full px-3 py-2 flex items-start gap-2 text-left hover:bg-zinc-50 focus:bg-zinc-100 focus:outline-none">
-                      <FileDown size={13} className="text-zinc-400 mt-0.5 shrink-0" />
-                      <span className="min-w-0">
-                        <span className="block text-xs font-medium text-zinc-800">{entries[k].label}</span>
-                        <span className="block text-[11px] text-zinc-500">{entries[k].hint}</span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 // Peak-table CSV export. Produces a tidy long-format CSV that pairs well
@@ -1540,92 +1346,6 @@ export default function FragmentViewer() {
   );
 }
 
-// Print stylesheet: hide UI chrome (.no-print), expand the main pane, and
-// switch backgrounds to white for PDF export. Triggered by Print to PDF
-// in AutoClassifyTab via window.print().
-function PrintStyles() {
-  return (
-    <style>{`
-      @media print {
-        .no-print { display: none !important; }
-        body, html { background: white !important; }
-        .h-screen { height: auto !important; min-height: auto !important; background: white !important; }
-        main { overflow: visible !important; border: none !important; }
-        button, input[type="number"], input[type="file"], select, textarea { display: none !important; }
-        .print-show { display: block !important; }
-      }
-
-      /* Report-modal print isolation. The modal is portaled to document.body
-         via React createPortal, so it's a DIRECT child of body. */
-      body.fv-report-printing > *:not(.fv-report-root) { display: none !important; }
-      body.fv-report-printing {
-        background: white !important;
-        height: auto !important;
-        min-height: auto !important;
-      }
-      body.fv-report-printing .fv-report-root {
-        position: static !important;
-        inset: auto !important;
-        width: 100% !important;
-        max-width: none !important;
-        max-height: none !important;
-        margin: 0 !important; padding: 0 !important;
-        background: white !important;
-        box-shadow: none !important;
-        border: none !important;
-        overflow: visible !important;
-        display: block !important;
-      }
-      /* Strip scroll clamps on the FIRST TWO container levels only — NOT on
-         SVG children. Earlier universal fv-report-root descendant selector
-         with height:auto !important overrode SVG rect height attributes
-         in SVG2-compliant browsers (CSS beats presentation attrs), collapsing
-         every figure to zero height. The targeted selectors below only touch
-         the outer modal container + the scroll region that Tailwind put
-         max-h + overflow-y-auto on. SVGs stay untouched. */
-      body.fv-report-printing .fv-report-root > * {
-        position: static !important;
-        inset: auto !important;
-        max-height: none !important;
-        overflow: visible !important;
-        max-width: none !important;
-        width: 100% !important;
-        box-shadow: none !important;
-        border-radius: 0 !important;
-      }
-      body.fv-report-printing .fv-report-root > * > * {
-        max-height: none !important;
-        overflow: visible !important;
-      }
-      body.fv-report-printing .fv-report-actions,
-      body.fv-report-printing .fv-report-backdrop,
-      body.fv-report-printing .fv-report-root .no-print { display: none !important; }
-      /* Page break hints for printing */
-      body.fv-report-printing .fv-report-root section {
-        page-break-inside: avoid;
-        break-inside: avoid;
-      }
-      body.fv-report-printing .fv-report-page-break {
-        page-break-before: always;
-        break-before: page;
-      }
-      /* SVGs keep their intrinsic sizing in print. Width constrained to
-         available content area so big diagrams (W=1200) scale to fit. */
-      body.fv-report-printing .fv-report-root svg {
-        max-width: 100% !important;
-        height: auto !important;
-        page-break-inside: avoid;
-        break-inside: avoid;
-      }
-      @media print {
-        html, body { background: white !important; margin: 0 !important; }
-        body.fv-report-printing .fv-report-root { padding: 0 !important; }
-        @page { size: letter portrait; margin: 0.5in; }
-      }
-    `}</style>
-  );
-}
-
 // ----------------------------------------------------------------------
 // Report builder — one-click summary of the current dataset.
 // Renders a printable panel with sample metadata, per-sample peak summary,
@@ -1709,81 +1429,6 @@ export function buildReportMarkdown({
   lines.push(`  -V mainfont='DejaVu Sans' -V monofont='DejaVu Sans Mono'`);
   lines.push("```");
   return lines.join("\n");
-}
-
-// Keyboard shortcut cheat sheet. Opens via `?` key or the `?` toolbar
-// button. Escape closes. Entries are grouped so users can scan by intent
-// instead of memorizing a flat list.
-function KeyboardHelpModal({ open, onClose }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-  if (!open) return null;
-  const groups = [
-    {
-      title: "Navigation",
-      rows: [
-        ["← / →", "Previous / next sample"],
-        ["f",     "Reset zoom to full range"],
-        ["Esc",   "Close modal / clear pin"],
-      ],
-    },
-    {
-      title: "Channels",
-      rows: [
-        ["1 / 2 / 3 / 4", "Toggle B / G / Y / R channel"],
-      ],
-    },
-    {
-      title: "Signal processing",
-      rows: [
-        ["[ / ]", "Decrease / increase smoothing σ multiplier"],
-        ["n",     "Toggle 3σ noise-floor reference line"],
-        ["r",     "Toggle raw unsmoothed trace overlay"],
-      ],
-    },
-    {
-      title: "Help",
-      rows: [
-        ["?", "Open this cheat sheet"],
-      ],
-    },
-  ];
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 pb-10 px-4 overflow-auto no-print">
-      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-white rounded-xl border border-zinc-200 shadow-2xl">
-        <header className="flex items-center justify-between px-5 py-4 border-b border-zinc-200">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">Keyboard shortcuts</h2>
-            <p className="text-xs text-zinc-500 mt-0.5">Press <kbd className="px-1 py-0.5 text-[10px] rounded border border-zinc-300 bg-zinc-50 font-mono">Esc</kbd> to close</p>
-          </div>
-          <ToolButton variant="ghost" onClick={onClose}>Close</ToolButton>
-        </header>
-        <div className="px-5 py-4 space-y-4">
-          {groups.map(g => (
-            <section key={g.title}>
-              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">{g.title}</h3>
-              <ul className="space-y-1.5">
-                {g.rows.map(([k, desc]) => (
-                  <li key={k} className="flex items-center gap-3 text-xs">
-                    <kbd className="inline-block min-w-[4.5ch] text-center px-1.5 py-0.5 rounded border border-zinc-300 bg-zinc-50 font-mono text-zinc-800">{k}</kbd>
-                    <span className="text-zinc-700">{desc}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-          <p className="text-[11px] text-zinc-500 pt-2 border-t border-zinc-100">
-            Shortcuts are ignored when typing in an input, select, or textarea.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // DNA-diagrams modal: renders both the ConstructDiagram (annotated architecture

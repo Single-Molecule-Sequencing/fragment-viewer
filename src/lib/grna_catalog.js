@@ -64,3 +64,34 @@ export function matchLabCatalog(grna, catalog = LAB_GRNA_CATALOG) {
   }
   return null;
 }
+
+// Richer variant of matchLabCatalog: returns a classification object with
+// three possible outcomes ordered by signal strength:
+//   1. "exact" — spacer equality (forward or reverse-complement) against a
+//      catalog entry that has a populated 20-nt spacer. Strongest signal.
+//   2. "name"  — name-prefix / substring match against any catalog entry
+//      (fallback when the candidate lacks a full spacer).
+//   3. "none"  — not in inventory.
+// Returns { status, entry?, signal }.
+export function inventoryStatus(candidate, catalog = LAB_GRNA_CATALOG) {
+  const protoNorm = candidate?.protospacer ? normalizeSpacer(candidate.protospacer) : "";
+  const protoRC = protoNorm.length === 20
+    ? protoNorm.split("").reverse().map(c => ({ A: "T", T: "A", G: "C", C: "G" })[c] || c).join("")
+    : "";
+  const cname = (candidate?.name || "").toLowerCase();
+  for (const entry of catalog) {
+    const ref = normalizeSpacer(entry.spacer);
+    if (ref.length === 20 && (ref === protoNorm || ref === protoRC)) {
+      return { status: "exact", entry, signal: "spacer" };
+    }
+  }
+  if (cname) {
+    for (const entry of catalog) {
+      const ename = (entry.name || "").toLowerCase();
+      if (ename && (cname.includes(ename) || ename.includes(cname))) {
+        return { status: "name", entry, signal: "name" };
+      }
+    }
+  }
+  return { status: "none" };
+}
