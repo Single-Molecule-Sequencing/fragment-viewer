@@ -747,6 +747,58 @@ function productSize(product, componentSizes) {
   return sum;
 }
 
+// ----------------------------------------------------------------------
+// Expected species enumerator (used by the electropherogram overlay).
+// Returns every species the dye CAN show, sorted by ascending bp:
+//   * Assembly / partial-ligation products (full, missing Ad1/Ad2,
+//     adapter dimer, etc) filtered by which dyes actually appear on
+//     each species per ASSEMBLY_PRODUCTS.
+//   * Adapter monomers (pre-ligation single oligos carrying one dye each)
+//     per BIOLOGY.md §3.3.
+//   * Cas9 cut products for any gRNAs passed in, at the chemistries
+//     passed in (blunt by default).
+// Each entry: { size: number_bp, label: string, kind: "assembly"|"monomer"|"cut" }
+// ----------------------------------------------------------------------
+export function expectedSpeciesForDye(dye, components, constructSize = 226, gRNAs = [], overhangs = [0]) {
+  const out = [];
+
+  // Assembly + partial-ligation products
+  for (const p of ASSEMBLY_PRODUCTS) {
+    if (!p.dyes.includes(dye)) continue;
+    out.push({ size: productSize(p, components), label: p.name, kind: "assembly" });
+  }
+
+  // Adapter monomers (single oligos pre-ligation; one dye per oligo)
+  const monomers = {
+    B: { size: 29, label: "Ad1 bot oligo (6-FAM, unligated)" },
+    Y: { size: 25, label: "Ad1 top oligo (TAMRA, unligated)" },
+    G: { size: 25, label: "Ad2 bot oligo (HEX, unligated)" },
+    R: { size: 29, label: "Ad2 top oligo (ROX, unligated)" },
+  };
+  if (monomers[dye]) {
+    out.push({ size: monomers[dye].size, label: monomers[dye].label, kind: "monomer" });
+  }
+
+  // Cas9 cut products for the selected gRNA(s) at the chosen chemistries
+  for (const g of gRNAs) {
+    if (!g) continue;
+    for (const oh of overhangs) {
+      const products = predictCutProducts(g, constructSize, oh);
+      const p = products[dye];
+      if (!p) continue;
+      const ohLbl = oh === 0 ? "blunt" : (oh > 0 ? `+${oh} nt 5'` : `${oh} nt 3'`);
+      const gname = g.name || `cand-${g.id}`;
+      out.push({
+        size: p.length,
+        label: `${gname} ${p.fragment} (${ohLbl})`,
+        kind: "cut",
+      });
+    }
+  }
+
+  return out.sort((a, b) => a.size - b.size);
+}
+
 export function componentSizesFrom(construct) {
   const map = {};
   for (const c of construct.components) map[c.key] = c.size;
@@ -963,7 +1015,7 @@ export default function FragmentViewer() {
         <Sidebar tab={tab} setTab={setTab} />
         <main className="flex-1 overflow-auto bg-zinc-50">
           <div className="px-6 py-5 max-w-[1400px] mx-auto">
-            {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
+            {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} />}
             {tab === "peakid"  && <PeakIdTab  samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
             {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
             {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
@@ -1152,7 +1204,16 @@ function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
 // ======================================================================
 // TAB 1 — Single-sample electropherogram viewer with high-res trace
 // ======================================================================
-function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) {
+function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, constructSeq, targetStart, targetEnd }) {
+  // Candidate gRNAs in the construct's target window; recomputed only when
+  // the construct or target window change (cheap cache-busting).
+  const candidateGrnas = useMemo(() => {
+    if (!constructSeq) return [];
+    return findGrnas(constructSeq, targetStart, targetEnd).map(g => ({
+      ...g, name: `cand-${g.id} ${g.strand}-${g.pam_seq}`,
+    }));
+  }, [constructSeq, targetStart, targetEnd]);
+  const constructSize = (constructSeq || "").length || 226;
   const [sample, setSample] = useState(samples[0]);
   const [channels, setChannels] = useState({ B: true, G: true, Y: true, R: true, O: false });
   const [range, setRange] = useState([0, 260]);
@@ -1162,6 +1223,9 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) {
   const [smoothing, setSmoothing] = useState(1);       // sigma multiplier 0.5 - 3
   const [labelPeaks, setLabelPeaks] = useState(true);
   const [showExpected, setShowExpected] = useState(true);
+  const [showSpecies, setShowSpecies] = useState(false);
+  const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(-1);  // index into LAB_GRNA_CATALOG; -1 = none
+  const [speciesOverhangs, setSpeciesOverhangs] = useState([0, 4]);  // chemistries to overlay when a gRNA is selected
   const [showLadder, setShowLadder] = useState(true);
   const [hover, setHover] = useState(null);
 
@@ -1302,8 +1366,68 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) {
             <input type="checkbox" checked={showExpected} onChange={e => setShowExpected(e.target.checked)} className="w-3.5 h-3.5 accent-zinc-700" />
             Expected
           </label>
+          <label className="flex items-center gap-1 ml-2 cursor-pointer" title="Overlay every species the dye CAN show (assembly products, partial ligation, adapter monomers, optional Cas9 cut products)">
+            <input type="checkbox" checked={showSpecies} onChange={e => setShowSpecies(e.target.checked)} className="w-3.5 h-3.5 accent-sky-600" />
+            Expected species
+          </label>
         </div>
       </div>
+
+      {/* Controls row 3 (species overlay) — visible only when showSpecies is on */}
+      {showSpecies && (
+        <div className="bg-sky-50 border border-sky-200 rounded-lg p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs no-print">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold uppercase tracking-wide text-sky-700">Species overlay</span>
+            <Pill tone="neutral">assembly</Pill>
+            <Pill tone="amber">monomer</Pill>
+            {speciesGrnaIdx >= 0 && <Pill tone="sky">cut</Pill>}
+          </div>
+          <div className="h-5 w-px bg-sky-200" />
+          <label className="flex items-center gap-1.5">
+            <span className="text-zinc-600">gRNA:</span>
+            <select
+              value={speciesGrnaIdx}
+              onChange={e => setSpeciesGrnaIdx(parseInt(e.target.value, 10))}
+              className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white max-w-[28ch] focus-ring"
+            >
+              <option value={-1}>None (no cut overlay)</option>
+              {LAB_GRNA_CATALOG
+                .map((g, i) => ({ g, i }))
+                .filter(({ g }) => normalizeSpacer(g.spacer).length === 20)
+                .map(({ g, i }) => (
+                  <option key={`lab-${i}`} value={i}>{g.name} (lab catalog)</option>
+                ))}
+              {candidateGrnas.length > 0 && (
+                <optgroup label={`Candidates in target window (${candidateGrnas.length})`}>
+                  {candidateGrnas.map((g, i) => (
+                    <option key={`cand-${g.id}`} value={1000 + i}>
+                      {g.name} cut@{g.cut_construct}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+          {speciesGrnaIdx >= 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-zinc-600">chemistry:</span>
+              {[-4, -1, 0, 1, 4].map(oh => {
+                const on = speciesOverhangs.includes(oh);
+                return (
+                  <button
+                    key={oh}
+                    onClick={() => setSpeciesOverhangs(s => on ? s.filter(x => x !== oh) : [...s, oh].sort((a,b)=>a-b))}
+                    className={`px-1.5 py-0.5 rounded border text-[11px] font-mono ${on ? "bg-sky-600 text-white border-sky-700" : "bg-white text-zinc-600 border-zinc-300 hover:border-zinc-400"}`}
+                  >
+                    {oh === 0 ? "blunt" : (oh > 0 ? `+${oh}` : `${oh}`)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <span className="ml-auto text-[11px] text-zinc-500">Lines drawn per dye lane below the trace.</span>
+        </div>
+      )}
 
       {/* Controls row 2: zoom presets + smoothing */}
       <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -1409,6 +1533,60 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) {
                       <text x={x} y={lane.top + 10} fontSize="8" textAnchor="middle" fill="white" fontWeight="600">
                         {exp.toFixed(1)}
                       </text>
+                    </g>
+                  );
+                })}
+
+                {/* Expected SPECIES overlay (assembly + monomer + cut) */}
+                {showSpecies && lane.dyes.map(dye => {
+                  if (dye === "O") return null;
+                  // Resolve the gRNA the user picked (if any) so cut products can be enumerated.
+                  let pickedGrna = null;
+                  if (speciesGrnaIdx >= 0 && speciesGrnaIdx < 1000) {
+                    const labEntry = LAB_GRNA_CATALOG[speciesGrnaIdx];
+                    if (labEntry && normalizeSpacer(labEntry.spacer).length === 20) {
+                      // Find the matching candidate in this construct so we get cut_construct + strand
+                      const norm = normalizeSpacer(labEntry.spacer);
+                      const rc = norm.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
+                      pickedGrna = candidateGrnas.find(g => g.protospacer === norm || g.protospacer === rc) || null;
+                      if (pickedGrna) pickedGrna = { ...pickedGrna, name: labEntry.name };
+                    }
+                  } else if (speciesGrnaIdx >= 1000) {
+                    pickedGrna = candidateGrnas[speciesGrnaIdx - 1000] || null;
+                  }
+                  const overhangs = pickedGrna ? speciesOverhangs : [];
+                  const species = expectedSpeciesForDye(dye, componentSizes, constructSize, pickedGrna ? [pickedGrna] : [], overhangs)
+                    .filter(sp => sp.size >= range[0] && sp.size <= range[1]);
+                  if (species.length === 0) return null;
+                  // Assign each species to a stack row to avoid label collision (label width ~ 7px per char × ~20 chars ≈ 140 px in svg coords; converted via xScale.delta).
+                  const minLabelDx = (range[1] - range[0]) / Math.max(1, plotW / 90);  // ~90 px per label slot
+                  const rows = [];  // last x assigned to each row
+                  const nRows = 4;
+                  const place = (size) => {
+                    for (let r = 0; r < nRows; r++) {
+                      if (rows[r] === undefined || size - rows[r] >= minLabelDx) { rows[r] = size; return r; }
+                    }
+                    rows[nRows - 1] = size;
+                    return nRows - 1;
+                  };
+                  const palette = { assembly: "#52525b", monomer: "#d97706", cut: "#0284c7" };
+                  return (
+                    <g key={`spec-${li}-${dye}`} pointerEvents="none">
+                      {species.map((sp, idx) => {
+                        const x = xScale(sp.size);
+                        const row = place(sp.size);
+                        const stroke = palette[sp.kind] || "#71717a";
+                        const labelY = lane.top + 22 + row * 11;
+                        return (
+                          <g key={`sp-${idx}`}>
+                            <line x1={x} x2={x} y1={lane.top} y2={lane.top + lane.h} stroke={stroke} strokeWidth="0.7" strokeDasharray="1.5 2.5" opacity="0.55" />
+                            <line x1={x - 1} x2={x - 1} y1={labelY - 6} y2={labelY + 1} stroke={stroke} strokeWidth="2" />
+                            <text x={x + 2} y={labelY} fontSize="8" fill={stroke} fontWeight="600" style={{ paintOrder: "stroke", stroke: "white", strokeWidth: 2.5 }}>
+                              {sp.label} · {sp.size}
+                            </text>
+                          </g>
+                        );
+                      })}
                     </g>
                   );
                 })}
