@@ -383,6 +383,86 @@ export function preprocessTrace(trace, opts = {}) {
   return t;
 }
 
+// Evaluate the modeled sum-of-gaussians at a single bp position. Mirrors the
+// peak-rendering path in buildGaussianPath but returns a scalar so we can
+// sample it at arbitrary x. Used by computeResidual for the residual view
+// and by the auto-dye-offset calibrator for expected-vs-observed matching.
+export function evaluateGaussianSum(peaks, xBp, smoothing = 1) {
+  if (!peaks || !peaks.length) return 0;
+  let y = 0;
+  for (const p of peaks) {
+    const sigma = Math.max((p[3] || 0.5) / 2.355 * smoothing, 0.12);
+    const z = (xBp - p[0]) / sigma;
+    if (z > 5 || z < -5) continue;
+    y += p[1] * Math.exp(-0.5 * z * z);
+  }
+  return y;
+}
+
+// Compute raw - modeled point-by-point. Signed: negative where the Gaussian
+// model overshoots (e.g. tails of a too-wide fitted width), positive where
+// the raw trace has signal the peak table missed (shoulders, unmodeled dyes,
+// primer-dimer). Drives the "residual" overlay mode in TraceTab.
+export function computeResidual(xs, ys, peaks, smoothing = 1) {
+  if (!xs || !ys || xs.length !== ys.length) return [];
+  const out = new Array(xs.length);
+  for (let i = 0; i < xs.length; i++) {
+    out[i] = ys[i] - evaluateGaussianSum(peaks, xs[i], smoothing);
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------------
+// Auto-calibration: per-dye mobility offsets from observed vs. expected.
+// ----------------------------------------------------------------------
+// Given peaks-by-sample, a list of expected sizes per dye, and a search
+// tolerance, compute the median signed residual (observed - expected)
+// across all matched pairs per dye. That median becomes the new offset.
+//
+// Why median: immune to spurious peaks that don't belong to the expected
+// species set (primer-dimers, ladder bleed, LIZ spill). We trim matches
+// to a tolerance window to avoid pulling offsets toward random peaks.
+//
+// Returns { offsets: {B,G,Y,R}, matchesByDye: {B: [...], ...}, n: total matches }.
+export function autoCalibrateDyeOffsets(peaksBySample, expectedByDye, tol = 3.0, currentOffsets = { B:0, G:0, Y:0, R:0 }) {
+  const matchesByDye = { B: [], G: [], Y: [], R: [] };
+  for (const sample of Object.keys(peaksBySample || {})) {
+    const dyes = peaksBySample[sample] || {};
+    for (const dye of ["B", "G", "Y", "R"]) {
+      const expSizes = expectedByDye?.[dye];
+      const observed = dyes[dye];
+      if (!expSizes || !expSizes.length || !observed || !observed.length) continue;
+      for (const exp of expSizes) {
+        // Shift expected by the currently-applied offset so we're searching
+        // in the same bp frame as the observed peaks. After calibration the
+        // caller replaces the offset entirely (not adds to it).
+        const target = exp + (currentOffsets[dye] || 0);
+        let best = null;
+        let bestDist = Infinity;
+        for (const p of observed) {
+          const d = Math.abs(p[0] - target);
+          if (d < bestDist && d <= tol) { bestDist = d; best = p; }
+        }
+        if (best) matchesByDye[dye].push(best[0] - exp);
+      }
+    }
+  }
+  const median = (arr) => {
+    if (!arr.length) return 0;
+    const s = arr.slice().sort((a, b) => a - b);
+    const n = s.length;
+    return n % 2 === 1 ? s[(n - 1) / 2] : 0.5 * (s[n / 2 - 1] + s[n / 2]);
+  };
+  const offsets = {
+    B: median(matchesByDye.B),
+    G: median(matchesByDye.G),
+    Y: median(matchesByDye.Y),
+    R: median(matchesByDye.R),
+  };
+  const n = Object.values(matchesByDye).reduce((t, a) => t + a.length, 0);
+  return { offsets, matchesByDye, n };
+}
+
 // One-shot .fsa → peaks-by-dye for a single sample. Returns
 // {sampleName, peaks, meta, calibrated, traces, interp} where peaks matches
 // the GeneMapper TSV schema and traces preserves the raw int16 samples per
@@ -1022,7 +1102,7 @@ export function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, 
 
 export const LAB_GRNA_CATALOG = [
   // --- Active fragment analysis construct (V059_gRNA3) ---
-  { name: "V059_gRNA3",             spacer: "AGTCCTGTGGTGAGGTGACG", source: "User-supplied 2026-04-18; bot-strand match in V059 target window (RC = CGTCACCTCACCACAGGACT on top)", target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset. Bot-strand PAM (CCT on top, AGG on bot)." },
+  { name: "V059_gRNA3",             spacer: "AGTCCTGTGGTGAGGTGACG", source: "= grna_cyp2d6_rachel03 in cas9-targeted grna_master.tsv (Rachel gRNA 3.0, V0-59 plasmid). Bot-strand match in V059 target window (RC = CGTCACCTCACCACAGGACT on top). User-supplied spacer 2026-04-18.", target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset. Bot-strand PAM (CCT on top, AGG on bot)." },
 
   // --- CYP2D6 pilot panel (chr22, GRCh38) ---
   // Coordinates from pilot_grna_positions.bed; sequences to be filled in from the GRCh38 reference
@@ -2326,6 +2406,12 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const [rawOpacity, setRawOpacity] = useState(0.85);
   const [rawStroke, setRawStroke] = useState(0.8);
 
+  // Overlay interpretation: "raw" draws the preprocessed raw trace on top of
+  // the modeled Gaussian; "residual" draws raw − modeled, centered on a zero
+  // line. Residual mode makes shoulders, splits, and unmodeled baseline
+  // features pop visually without needing any statistical cutoff.
+  const [overlayMode, setOverlayMode] = useState("raw"); // "raw" | "residual"
+
   // Preprocessing pipeline applied to raw trace before rendering. Purely
   // visual — never mutates the stored traces or the called peak table.
   const [prep, setPrep] = useState({
@@ -2433,10 +2519,20 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
       const xs = [];
       const ys = [];
       for (let i = iLo; i <= iHi; i += step) { xs.push(bpAxis[i]); ys.push(pre[i]); }
-      out[d] = { xs, ys };
+      // In residual mode, subtract the modeled Gaussian sum at every sampled
+      // bp. Use the peaks for that dye in this sample and the same smoothing
+      // multiplier that drives the rendered trace so the residual is against
+      // what the user is actually looking at.
+      if (overlayMode === "residual") {
+        const dyePeaks = peaks[d] || [];
+        const resid = computeResidual(xs, ys, dyePeaks, smoothing);
+        out[d] = { xs, ys: resid, residual: true };
+      } else {
+        out[d] = { xs, ys, residual: false };
+      }
     }
     return out;
-  }, [showRawTrace, hasRawTrace, rawBundle, range, prep]);
+  }, [showRawTrace, hasRawTrace, rawBundle, range, prep, overlayMode, peaks, smoothing]);
 
   // Geometry
   const W = 920;
