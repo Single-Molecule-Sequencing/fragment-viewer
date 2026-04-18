@@ -55,11 +55,12 @@ jobs:
         run: |
           grep -q "Adapter 1 is labeled by the (B, Y) pair" docs/BIOLOGY.md \
             || { echo "::error::BIOLOGY.md missing (B,Y) + (G,R) pairing statement"; exit 1; }
-          grep -qE "DYE_STRAND\s*=" src/FragmentViewer.jsx \
-            || { echo "::error::DYE_STRAND map not found in FragmentViewer.jsx"; exit 1; }
-          grep -qE "B[:\s]*\{.*strand:\s*['\"]bot['\"]" src/FragmentViewer.jsx \
+          # Issue #13 Phase B.3: DYE_STRAND moved to src/lib/constants.js
+          grep -qE "DYE_STRAND\s*=" src/lib/constants.js \
+            || { echo "::error::DYE_STRAND map not found in src/lib/constants.js"; exit 1; }
+          grep -qE "B[:\s]*\{.*strand:\s*['\"]bot['\"]" src/lib/constants.js \
             || { echo "::warning::Could not verify B strand assignment"; }
-          echo "BIOLOGY.md and FragmentViewer.jsx consistency check passed"
+          echo "BIOLOGY.md and lib/constants.js consistency check passed"
 
   catalog-coverage:
     runs-on: ubuntu-latest
@@ -67,8 +68,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Count empty spacers in LAB_GRNA_CATALOG
         run: |
-          EMPTY=$(grep -c 'spacer: ""' src/FragmentViewer.jsx || true)
-          TOTAL=$(grep -cE '\{\s*name:' src/FragmentViewer.jsx || true)
+          # Issue #13 Phase B.1: LAB_GRNA_CATALOG moved to src/lib/grna_catalog.js
+          EMPTY=$(grep -c 'spacer: ""' src/lib/grna_catalog.js || true)
+          TOTAL=$(grep -cE '\{\s*name:' src/lib/grna_catalog.js || true)
           echo "::notice::LAB_GRNA_CATALOG: ${EMPTY} of ${TOTAL} entries have empty spacers"
           if [ "$EMPTY" -gt 0 ]; then
             echo "::warning::${EMPTY} catalog entries lack a 20 nt spacer; matchLabCatalog will not light up for them"
