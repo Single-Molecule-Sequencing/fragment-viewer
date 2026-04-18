@@ -27,7 +27,10 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          GH_PAGES_BASE: /fragment-viewer/
+          # Private-repo Pages publish at a randomized *.pages.github.io subdomain
+          # root, not under /fragment-viewer/. If the repo is made public this
+          # should change to /fragment-viewer/ so asset paths resolve.
+          GH_PAGES_BASE: /
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
