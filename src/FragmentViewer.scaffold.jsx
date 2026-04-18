@@ -1253,14 +1253,14 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) {
   return (
     <>
       {/* Sample selector */}
-      <div className="bg-white rounded-lg border border-slate-200 p-2.5 mb-2">
-        <div className="flex items-center gap-2 mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Sample <span className="text-slate-400 font-normal normal-case">({samples.length})</span>
+      <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2">
+        <div className="flex items-center gap-2 mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          Sample <span className="text-zinc-400 font-normal normal-case">({samples.length})</span>
         </div>
         <div className="flex flex-wrap gap-1">
           {samples.map(ss => (
             <button key={ss} onClick={() => setSample(ss)}
-              className={`px-2.5 py-1 text-xs rounded-md border transition ${ss === sample ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"}`}>
+              className={`px-2.5 py-1 text-xs rounded-md border transition ${ss === sample ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"}`}>
               {ss}
             </button>
           ))}
@@ -1268,59 +1268,59 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) {
       </div>
 
       {/* Controls row 1: channels + view mode */}
-      <div className="bg-white rounded-lg border border-slate-200 p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Channels</span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Channels</span>
           {DYE_ORDER.map(d => (
             <label key={d} className="flex items-center gap-1 cursor-pointer select-none text-xs">
-              <input type="checkbox" checked={channels[d]} onChange={e => setChannels({ ...channels, [d]: e.target.checked })} className="w-3.5 h-3.5 accent-slate-700" />
+              <input type="checkbox" checked={channels[d]} onChange={e => setChannels({ ...channels, [d]: e.target.checked })} className="w-3.5 h-3.5 accent-zinc-700" />
               <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: DYE[d].color }} />
               {DYE[d].label}
             </label>
           ))}
         </div>
-        <div className="h-5 w-px bg-slate-200" />
+        <div className="h-5 w-px bg-zinc-200" />
         <div className="flex items-center gap-1 text-xs">
-          <span className="font-semibold uppercase tracking-wide text-slate-500 mr-1">View</span>
-          <div className="inline-flex rounded-md border border-slate-300 overflow-hidden">
-            <button onClick={() => setMode("trace")} className={`px-2 py-1 ${mode === "trace" ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-100"}`}>Trace</button>
-            <button onClick={() => setMode("stem")}  className={`px-2 py-1 ${mode === "stem"  ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-100"}`}>Stem</button>
+          <span className="font-semibold uppercase tracking-wide text-zinc-500 mr-1">View</span>
+          <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden">
+            <button onClick={() => setMode("trace")} className={`px-2 py-1 ${mode === "trace" ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>Trace</button>
+            <button onClick={() => setMode("stem")}  className={`px-2 py-1 ${mode === "stem"  ? "bg-zinc-900 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>Stem</button>
           </div>
           <label className="flex items-center gap-1 ml-2 cursor-pointer">
-            <input type="checkbox" checked={stackChannels} onChange={e => setStackChannels(e.target.checked)} className="w-3.5 h-3.5 accent-slate-700" />
+            <input type="checkbox" checked={stackChannels} onChange={e => setStackChannels(e.target.checked)} className="w-3.5 h-3.5 accent-zinc-700" />
             Stacked
           </label>
           <label className="flex items-center gap-1 ml-2 cursor-pointer">
-            <input type="checkbox" checked={logY} onChange={e => setLogY(e.target.checked)} className="w-3.5 h-3.5 accent-slate-700" />
+            <input type="checkbox" checked={logY} onChange={e => setLogY(e.target.checked)} className="w-3.5 h-3.5 accent-zinc-700" />
             Log Y
           </label>
           <label className="flex items-center gap-1 ml-2 cursor-pointer">
-            <input type="checkbox" checked={labelPeaks} onChange={e => setLabelPeaks(e.target.checked)} className="w-3.5 h-3.5 accent-slate-700" />
+            <input type="checkbox" checked={labelPeaks} onChange={e => setLabelPeaks(e.target.checked)} className="w-3.5 h-3.5 accent-zinc-700" />
             Peak labels
           </label>
           <label className="flex items-center gap-1 ml-2 cursor-pointer">
-            <input type="checkbox" checked={showExpected} onChange={e => setShowExpected(e.target.checked)} className="w-3.5 h-3.5 accent-slate-700" />
+            <input type="checkbox" checked={showExpected} onChange={e => setShowExpected(e.target.checked)} className="w-3.5 h-3.5 accent-zinc-700" />
             Expected
           </label>
         </div>
       </div>
 
       {/* Controls row 2: zoom presets + smoothing */}
-      <div className="bg-white rounded-lg border border-slate-200 p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2 flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-1 text-xs flex-wrap">
-          <span className="font-semibold uppercase tracking-wide text-slate-500 mr-1">Zoom</span>
+          <span className="font-semibold uppercase tracking-wide text-zinc-500 mr-1">Zoom</span>
           {presets.map(p => (
-            <button key={p.l} onClick={() => setRange(p.r)} className="px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100">{p.l}</button>
+            <button key={p.l} onClick={() => setRange(p.r)} className="px-2 py-1 rounded border border-zinc-300 bg-white hover:bg-zinc-100">{p.l}</button>
           ))}
-          <button onClick={resetZoom} className="px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100">Reset</button>
-          <span className="ml-3 text-slate-500">x: {range[0].toFixed(1)}–{range[1].toFixed(1)} bp</span>
+          <button onClick={resetZoom} className="px-2 py-1 rounded border border-zinc-300 bg-white hover:bg-zinc-100">Reset</button>
+          <span className="ml-3 text-zinc-500">x: {range[0].toFixed(1)}–{range[1].toFixed(1)} bp</span>
         </div>
-        <div className="h-5 w-px bg-slate-200" />
+        <div className="h-5 w-px bg-zinc-200" />
         <label className="flex items-center gap-2 text-xs">
-          <span className="font-semibold uppercase tracking-wide text-slate-500">Smoothing</span>
+          <span className="font-semibold uppercase tracking-wide text-zinc-500">Smoothing</span>
           <input type="range" min="0.5" max="3" step="0.1" value={smoothing}
-                 onChange={e => setSmoothing(parseFloat(e.target.value))} className="accent-slate-700 w-28" />
-          <span className="tabular-nums text-slate-600 w-10">{smoothing.toFixed(1)}x</span>
+                 onChange={e => setSmoothing(parseFloat(e.target.value))} className="accent-zinc-700 w-28" />
+          <span className="tabular-nums text-zinc-600 w-10">{smoothing.toFixed(1)}x</span>
         </label>
         <label className="flex items-center gap-1 text-xs ml-auto cursor-pointer">
           <input type="checkbox" checked={showLadder} onChange={e => setShowLadder(e.target.checked)} className="w-3.5 h-3.5 accent-orange-500" />
@@ -1329,10 +1329,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) {
       </div>
 
       {/* Electropherogram */}
-      <div className="bg-white rounded-lg border border-slate-200 p-2 mb-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-2 mb-2">
         <div className="px-2 pt-1 pb-1 flex items-center justify-between flex-wrap gap-2">
           <div className="text-sm font-medium">{sample}</div>
-          <div className="text-[11px] text-slate-500">
+          <div className="text-[11px] text-zinc-500">
             Drag on plot to zoom · {Object.values(peaksByChannel).reduce((t, a) => t + a.length, 0)} peaks in window
           </div>
         </div>
@@ -1585,20 +1585,20 @@ function SampleSummaryCard({ sample, cfg, setCfg, results }) {
   };
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-3">
+    <div className="bg-white rounded-lg border border-zinc-200 p-3">
       <div className="text-sm font-medium mb-2">Expected peaks · Match quality</div>
       <div className="flex items-center gap-2 mb-2 text-xs">
-        <span className="text-slate-500">Target:</span>
+        <span className="text-zinc-500">Target:</span>
         <input
           type="number" step="0.1" value={s.target}
           onChange={e => updateTarget(e.target.value)}
-          className="w-20 px-1.5 py-0.5 border border-slate-300 rounded text-xs font-mono" />
-        <span className="text-slate-500">bp</span>
-        <span className="text-slate-500 ml-auto">Tol ±{s.tolerance.toFixed(1)} bp</span>
+          className="w-20 px-1.5 py-0.5 border border-zinc-300 rounded text-xs font-mono" />
+        <span className="text-zinc-500">bp</span>
+        <span className="text-zinc-500 ml-auto">Tol ±{s.tolerance.toFixed(1)} bp</span>
       </div>
       <table className="w-full text-xs">
-        <thead className="text-slate-500">
-          <tr className="border-b border-slate-200">
+        <thead className="text-zinc-500">
+          <tr className="border-b border-zinc-200">
             <th className="py-1 text-left font-medium">Dye</th>
             <th className="py-1 text-right font-medium">Expected</th>
             <th className="py-1 text-right font-medium">Observed</th>
@@ -1612,7 +1612,7 @@ function SampleSummaryCard({ sample, cfg, setCfg, results }) {
             const r = results[d];
             const ok = !!r.match;
             return (
-              <tr key={d} className="border-b border-slate-100">
+              <tr key={d} className="border-b border-zinc-100">
                 <td className="py-1">
                   <span className="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-middle" style={{ background: DYE[d].color }} />
                   {DYE[d].label}
@@ -1620,7 +1620,7 @@ function SampleSummaryCard({ sample, cfg, setCfg, results }) {
                 <td className="py-1 text-right">
                   <input type="number" step="0.1" value={s.expected[d]}
                     onChange={e => updateExpected(d, e.target.value)}
-                    className="w-16 px-1.5 py-0.5 border border-slate-200 rounded text-xs font-mono text-right" />
+                    className="w-16 px-1.5 py-0.5 border border-zinc-200 rounded text-xs font-mono text-right" />
                 </td>
                 <td className="py-1 text-right font-mono">{ok ? r.match.size.toFixed(2) : "—"}</td>
                 <td className={`py-1 text-right font-mono ${ok ? (Math.abs(r.match.delta) < 1 ? "text-emerald-600" : "text-amber-600") : "text-rose-500"}`}>
@@ -1647,7 +1647,7 @@ function SampleSummaryCard({ sample, cfg, setCfg, results }) {
             const auto = computeAutoDefaults({ [sample]: DATA.peaks[sample] })[sample];
             setCfg({ ...cfg, [sample]: auto });
           }}
-          className="px-2 py-1 text-[11px] rounded border border-slate-300 bg-white hover:bg-slate-100">
+          className="px-2 py-1 text-[11px] rounded border border-zinc-300 bg-white hover:bg-zinc-100">
           Auto-detect from tallest peaks
         </button>
         {CHEMISTRY_PRESETS.map(p => (
@@ -1658,7 +1658,7 @@ function SampleSummaryCard({ sample, cfg, setCfg, results }) {
               setCfg({ ...cfg, [sample]: { ...s, chemistry: p.id, expected: { B: t + p.B, G: t + p.G, Y: t + p.Y, R: t + p.R } } });
             }}
             title={p.name}
-            className="px-2 py-1 text-[11px] rounded border border-slate-300 bg-white hover:bg-slate-100">
+            className="px-2 py-1 text-[11px] rounded border border-zinc-300 bg-white hover:bg-zinc-100">
             {p.id === "blunt_both" ? "Blunt×2" : p.id === "blunt_ad1" ? "Blunt+OH4" : p.id === "blunt_ad2" ? "OH4+Blunt" : p.id === "oh4_both" ? "OH4×2" : "OH1×2"}
           </button>
         ))}
@@ -1675,10 +1675,10 @@ function OverhangBadge({ label, a, b }) {
     (d <= -2 && d >= -5) ? `inverted ${Math.abs(d).toFixed(1)} bp` :
     "ambiguous";
   return (
-    <div className="rounded bg-slate-50 border border-slate-200 p-2">
-      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="text-lg font-mono mt-0.5">{d === null ? "—" : `${d >= 0 ? "+" : ""}${d.toFixed(2)}`} <span className="text-xs text-slate-500">bp</span></div>
-      <div className="text-[10px] text-slate-500 mt-0.5">{interpretation}</div>
+    <div className="rounded bg-zinc-50 border border-zinc-200 p-2">
+      <div className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</div>
+      <div className="text-lg font-mono mt-0.5">{d === null ? "—" : `${d >= 0 ? "+" : ""}${d.toFixed(2)}`} <span className="text-xs text-zinc-500">bp</span></div>
+      <div className="text-[10px] text-zinc-500 mt-0.5">{interpretation}</div>
     </div>
   );
 }
@@ -1696,12 +1696,12 @@ function VisibleWindowCard({ peaksByChannel, results, cfg }) {
   const top = peaks.slice(0, 15);
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-3">
+    <div className="bg-white rounded-lg border border-zinc-200 p-3">
       <div className="text-sm font-medium mb-2">Top peaks in visible window · Classification</div>
       <div className="overflow-auto max-h-72">
         <table className="w-full text-xs">
           <thead className="sticky top-0 bg-white">
-            <tr className="text-left text-slate-500 border-b border-slate-200">
+            <tr className="text-left text-zinc-500 border-b border-zinc-200">
               <th className="py-1 font-medium">Dye</th>
               <th className="py-1 font-medium text-right">Size</th>
               <th className="py-1 font-medium text-right">Height</th>
@@ -1714,11 +1714,11 @@ function VisibleWindowCard({ peaksByChannel, results, cfg }) {
               const c = classifyPeak(p.size, cfg.target, cfg.expected, cfg.tolerance);
               const cls = c.kind === "target" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
                           c.kind === "daisy"  ? "bg-rose-50 text-rose-700 border-rose-200" :
-                          c.kind === "small"  ? "bg-slate-50 text-slate-600 border-slate-200" :
+                          c.kind === "small"  ? "bg-zinc-50 text-zinc-600 border-zinc-200" :
                                                 "bg-amber-50 text-amber-700 border-amber-200";
               const label = c.kind === "target" ? `target ${c.dye}` : c.kind === "daisy" ? "daisy" : c.kind === "small" ? "dimer" : "other";
               return (
-                <tr key={i} className="border-b border-slate-100">
+                <tr key={i} className="border-b border-zinc-100">
                   <td className="py-1"><span className="inline-block w-2 h-2 rounded-sm mr-1 align-middle" style={{ background: DYE[p.dye].color }} />{DYE[p.dye].label}</td>
                   <td className="py-1 text-right font-mono">{p.size.toFixed(2)}</td>
                   <td className="py-1 text-right font-mono">{Math.round(p.height).toLocaleString()}</td>
@@ -1762,56 +1762,56 @@ function PeakIdTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) 
     <>
       <AssemblyProductsCard componentSizes={componentSizes} onSizeChange={setCSize} onApply={applyProduct} />
 
-      <div className="bg-white rounded-lg border border-slate-200 p-2.5 mb-2">
-        <div className="flex items-center gap-2 mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+      <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2">
+        <div className="flex items-center gap-2 mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Apply product sizes to
         </div>
         <div className="flex flex-wrap gap-1 items-center">
           <button
             onClick={() => setTargetSamples([...samples])}
-            className="px-2 py-0.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100">
+            className="px-2 py-0.5 text-xs rounded border border-zinc-300 bg-white hover:bg-zinc-100">
             All
           </button>
           <button
             onClick={() => setTargetSamples(samples.filter(s => s.startsWith("V059")))}
-            className="px-2 py-0.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100">
+            className="px-2 py-0.5 text-xs rounded border border-zinc-300 bg-white hover:bg-zinc-100">
             V059 only
           </button>
           <button
             onClick={() => setTargetSamples(samples.filter(s => s.startsWith("gRNA3")))}
-            className="px-2 py-0.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100">
+            className="px-2 py-0.5 text-xs rounded border border-zinc-300 bg-white hover:bg-zinc-100">
             gRNA3 only
           </button>
           <button
             onClick={() => setTargetSamples([])}
-            className="px-2 py-0.5 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100">
+            className="px-2 py-0.5 text-xs rounded border border-zinc-300 bg-white hover:bg-zinc-100">
             None
           </button>
-          <div className="h-4 w-px bg-slate-200 mx-1" />
+          <div className="h-4 w-px bg-zinc-200 mx-1" />
           {samples.map(ss => {
             const on = targetSamples.includes(ss);
             return (
               <button key={ss}
                 onClick={() => setTargetSamples(on ? targetSamples.filter(x => x !== ss) : [...targetSamples, ss])}
-                className={`px-2 py-0.5 text-xs rounded-md border transition ${on ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"}`}>
+                className={`px-2 py-0.5 text-xs rounded-md border transition ${on ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"}`}>
                 {ss}
               </button>
             );
           })}
-          <span className="text-xs text-slate-500 ml-auto">{targetSamples.length} selected</span>
+          <span className="text-xs text-zinc-500 ml-auto">{targetSamples.length} selected</span>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-2">
         <div className="flex items-start justify-between gap-2 mb-2">
           <div>
             <div className="text-sm font-medium">Automated peak identification</div>
-            <div className="text-xs text-slate-600 mt-0.5 max-w-3xl">
+            <div className="text-xs text-zinc-600 mt-0.5 max-w-3xl">
               Configure the expected peak position per fluorophore for each sample. The viewer then matches observed peaks to the expected position within ±tolerance and reports match quality. Presets model the cut chemistry: blunt, BsaI (4-nt 5' overhang both ends), or Cas9 with staggered overhang on either or both ends.
             </div>
           </div>
           <div className="flex flex-wrap gap-1.5 shrink-0">
-            <button onClick={bulkAuto} className="px-2 py-1 text-xs rounded border border-slate-300 bg-white hover:bg-slate-100">
+            <button onClick={bulkAuto} className="px-2 py-1 text-xs rounded border border-zinc-300 bg-white hover:bg-zinc-100">
               Auto-detect all samples
             </button>
           </div>
@@ -1836,12 +1836,12 @@ function PeakIdTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) 
       </div>
 
       {/* Cross-sample summary grid */}
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mt-3">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mt-3">
         <div className="text-sm font-medium mb-2">Cross-sample match grid</div>
         <div className="overflow-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-left text-slate-500 border-b border-slate-200">
+              <tr className="text-left text-zinc-500 border-b border-zinc-200">
                 <th className="py-1 pr-3 font-medium">Sample</th>
                 <th className="py-1 pr-2 font-medium text-right">Target</th>
                 {SAMPLE_DYES.map(d => (
@@ -1858,7 +1858,7 @@ function PeakIdTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) 
                 const s = cfg[sample], r = results[sample];
                 const matches = SAMPLE_DYES.filter(d => r[d]?.match).length;
                 return (
-                  <tr key={sample} className="border-b border-slate-100">
+                  <tr key={sample} className="border-b border-zinc-100">
                     <td className="py-1 pr-3 font-mono">{sample}</td>
                     <td className="py-1 pr-2 text-right font-mono">{s.target.toFixed(1)}</td>
                     {SAMPLE_DYES.map(d => {
@@ -1868,7 +1868,7 @@ function PeakIdTab({ samples, cfg, setCfg, results, componentSizes, setCSize }) 
                       const color = Math.abs(delta) < 1 ? "text-emerald-700" : Math.abs(delta) < s.tolerance ? "text-amber-700" : "text-rose-500";
                       return (
                         <td key={d} className={`py-1 px-2 text-right font-mono ${color}`}>
-                          {m.match.size.toFixed(2)} <span className="text-[10px] text-slate-500">({delta >= 0 ? "+" : ""}{delta.toFixed(1)})</span>
+                          {m.match.size.toFixed(2)} <span className="text-[10px] text-zinc-500">({delta >= 0 ? "+" : ""}{delta.toFixed(1)})</span>
                         </td>
                       );
                     })}
@@ -1902,12 +1902,12 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
   };
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200">
-      <button onClick={toggle} className="w-full flex items-center justify-between gap-2 p-2.5 text-left hover:bg-slate-50">
+    <div className="bg-white rounded-lg border border-zinc-200">
+      <button onClick={toggle} className="w-full flex items-center justify-between gap-2 p-2.5 text-left hover:bg-zinc-50">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-slate-400 text-xs">{expanded ? "▾" : "▸"}</span>
+          <span className="text-zinc-400 text-xs">{expanded ? "▾" : "▸"}</span>
           <span className="font-mono text-sm">{sample}</span>
-          <span className="text-xs text-slate-500">Target {s.target.toFixed(1)} bp · Tol ±{s.tolerance.toFixed(1)}</span>
+          <span className="text-xs text-zinc-500">Target {s.target.toFixed(1)} bp · Tol ±{s.tolerance.toFixed(1)}</span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {SAMPLE_DYES.map(d => {
@@ -1920,15 +1920,15 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
               </span>
             );
           })}
-          <span className="ml-2 text-xs text-slate-600 font-mono">{matches}/4</span>
+          <span className="ml-2 text-xs text-zinc-600 font-mono">{matches}/4</span>
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-slate-200 p-3 space-y-3">
+        <div className="border-t border-zinc-200 p-3 space-y-3">
           {/* Target + tolerance */}
           <div className="flex flex-wrap gap-3 items-center text-xs">
             <label className="flex items-center gap-1.5">
-              <span className="text-slate-500">Target</span>
+              <span className="text-zinc-500">Target</span>
               <input type="number" step="0.1" value={s.target}
                 onChange={e => {
                   const nv = parseFloat(e.target.value);
@@ -1938,22 +1938,22 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
                   for (const d of SAMPLE_DYES) ne[d] = +(ne[d] + shift).toFixed(2);
                   update({ target: nv, expected: ne });
                 }}
-                className="w-20 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-right" />
-              <span className="text-slate-500">bp</span>
+                className="w-20 px-1.5 py-0.5 border border-zinc-300 rounded font-mono text-right" />
+              <span className="text-zinc-500">bp</span>
             </label>
             <label className="flex items-center gap-1.5">
-              <span className="text-slate-500">Tolerance ±</span>
+              <span className="text-zinc-500">Tolerance ±</span>
               <input type="number" step="0.1" min="0.1" value={s.tolerance}
                 onChange={e => update({ tolerance: parseFloat(e.target.value) || 1 })}
-                className="w-14 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-right" />
-              <span className="text-slate-500">bp</span>
+                className="w-14 px-1.5 py-0.5 border border-zinc-300 rounded font-mono text-right" />
+              <span className="text-zinc-500">bp</span>
             </label>
             <div className="ml-auto flex flex-wrap gap-1">
-              <span className="text-slate-500 mr-1">Preset:</span>
+              <span className="text-zinc-500 mr-1">Preset:</span>
               {CHEMISTRY_PRESETS.map(p => (
                 <button key={p.id} onClick={() => applyPreset(p.id)}
                   title={p.name}
-                  className={`px-2 py-0.5 rounded border text-[11px] ${s.chemistry === p.id ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"}`}>
+                  className={`px-2 py-0.5 rounded border text-[11px] ${s.chemistry === p.id ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"}`}>
                   {p.id === "blunt_both" ? "Blunt×2" : p.id === "blunt_ad1" ? "Blunt+OH4" : p.id === "blunt_ad2" ? "OH4+Blunt" : p.id === "oh4_both" ? "OH4×2" : "OH1×2"}
                 </button>
               ))}
@@ -1961,7 +1961,7 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
                 const auto = computeAutoDefaults({ [sample]: DATA.peaks[sample] })[sample];
                 setCfg({ ...cfg, [sample]: auto });
               }}
-                className="px-2 py-0.5 rounded border text-[11px] bg-white text-slate-700 border-slate-300 hover:bg-slate-100">
+                className="px-2 py-0.5 rounded border text-[11px] bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100">
                 Auto
               </button>
             </div>
@@ -1969,8 +1969,8 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
 
           {/* Per-dye config + observed */}
           <table className="w-full text-xs">
-            <thead className="text-slate-500">
-              <tr className="border-b border-slate-200">
+            <thead className="text-zinc-500">
+              <tr className="border-b border-zinc-200">
                 <th className="py-1 text-left font-medium">Dye</th>
                 <th className="py-1 text-right font-medium">Expected (bp)</th>
                 <th className="py-1 text-right font-medium">Observed</th>
@@ -1985,7 +1985,7 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
                 const r = result[d];
                 const ok = !!r.match;
                 return (
-                  <tr key={d} className="border-b border-slate-100">
+                  <tr key={d} className="border-b border-zinc-100">
                     <td className="py-1">
                       <span className="inline-block w-2.5 h-2.5 rounded-sm mr-1.5 align-middle" style={{ background: DYE[d].color }} />
                       {DYE[d].label} ({DYE[d].name})
@@ -1993,7 +1993,7 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
                     <td className="py-1 text-right">
                       <input type="number" step="0.1" value={s.expected[d]}
                         onChange={e => updateExpected(d, e.target.value)}
-                        className="w-20 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-right" />
+                        className="w-20 px-1.5 py-0.5 border border-zinc-300 rounded font-mono text-right" />
                     </td>
                     <td className="py-1 text-right font-mono">{ok ? r.match.size.toFixed(2) : "—"}</td>
                     <td className={`py-1 text-right font-mono ${ok ? (Math.abs(r.match.delta) < 1 ? "text-emerald-600" : "text-amber-600") : "text-rose-500"}`}>
@@ -2111,55 +2111,57 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
   return (
     <div>
       {/* Top row: sample selector + summary */}
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-3">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <label className="block text-xs text-slate-500 mb-0.5">Sample</label>
+            <label className="block text-xs text-zinc-500 mb-0.5">Sample</label>
             <select value={currentSample} onChange={e => setCurrentSample(e.target.value)}
-              className="px-2 py-1 text-sm border border-slate-300 rounded">
+              className="px-2 py-1 text-sm border border-zinc-300 rounded">
               {samples.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-xs text-slate-500 mb-0.5">Height threshold</label>
+            <label className="block text-xs text-zinc-500 mb-0.5">Height threshold</label>
             <input type="number" value={heightThreshold} onChange={e => setHeightThreshold(Number(e.target.value) || 0)}
-              className="w-20 px-2 py-1 text-sm border border-slate-300 rounded" />
+              className="w-20 px-2 py-1 text-sm border border-zinc-300 rounded" />
           </div>
           <div>
-            <label className="block text-xs text-slate-500 mb-0.5">Match tolerance (bp)</label>
+            <label className="block text-xs text-zinc-500 mb-0.5">Match tolerance (bp)</label>
             <input type="number" value={matchTol} step="0.5" onChange={e => setMatchTol(Number(e.target.value) || 0)}
-              className="w-20 px-2 py-1 text-sm border border-slate-300 rounded" />
+              className="w-20 px-2 py-1 text-sm border border-zinc-300 rounded" />
           </div>
           <div>
-            <label className="block text-xs text-slate-500 mb-0.5">Cluster tolerance (bp)</label>
+            <label className="block text-xs text-zinc-500 mb-0.5">Cluster tolerance (bp)</label>
             <input type="number" value={clusterTol} step="0.5" onChange={e => setClusterTol(Number(e.target.value) || 0)}
-              className="w-20 px-2 py-1 text-sm border border-slate-300 rounded" />
+              className="w-20 px-2 py-1 text-sm border border-zinc-300 rounded" />
           </div>
           <div>
-            <label className="block text-xs text-slate-500 mb-0.5">Overhang range ±</label>
+            <label className="block text-xs text-zinc-500 mb-0.5">Overhang range ±</label>
             <input type="number" value={overhangRange} onChange={e => setOverhangRange(Math.max(0, Math.min(10, Number(e.target.value) || 0)))}
-              className="w-20 px-2 py-1 text-sm border border-slate-300 rounded" />
+              className="w-20 px-2 py-1 text-sm border border-zinc-300 rounded" />
           </div>
-          <div className="ml-auto text-xs text-slate-600">
+          <div className="ml-auto text-xs text-zinc-600">
             Construct length: <span className="font-mono font-semibold">{constructSize}</span> bp &middot; Target: <span className="font-mono">{targetStart}–{targetEnd}</span>
           </div>
         </div>
       </div>
 
       {/* Dye-mobility offset panel */}
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-3">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-sm font-medium">Dye mobility offset (bp)</div>
-          <div className="flex gap-2 no-print">
-            <button onClick={handleAutoCalibrate}
-              className="px-2 py-1 text-xs font-medium bg-slate-800 text-white rounded hover:bg-slate-700">
-              Auto-calibrate from tallest peak
-            </button>
-            <button onClick={handleResetOffsets}
-              className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300">
-              Reset to zero
-            </button>
-            <button
+      <Panel
+        title="Dye mobility offset"
+        subtitle="Subtracted from observed peak sizes before matching. Calibrate using a blunt-control ligation; typical ABI 3500 / 3730 + POP-7 values are 0.2 to 0.8 bp between channels."
+        className="mb-3"
+        actions={
+          <>
+            <ToolButton variant="primary" onClick={handleAutoCalibrate} title="Set per-dye offsets so the tallest peak in each channel aligns with its closest blunt prediction">
+              Auto-calibrate
+            </ToolButton>
+            <ToolButton variant="secondary" onClick={handleResetOffsets}>
+              Reset
+            </ToolButton>
+            <ToolButton
+              variant="secondary"
+              title="Download per-dye offsets as a JSON sidecar; commit to data/calibrations/ for sharing"
               onClick={() => {
                 const blob = new Blob([JSON.stringify({ dyeOffsets, savedAt: new Date().toISOString(), sample: currentSample, instrument: "unknown" }, null, 2)], { type: "application/json" });
                 const url = URL.createObjectURL(blob);
@@ -2171,12 +2173,11 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
               }}
-              className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300"
-              title="Download per-dye offsets as a JSON sidecar; commit to data/calibrations/ for sharing">
-              Download JSON
-            </button>
-            <label className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300 cursor-pointer">
-              Upload JSON
+            >
+              Download
+            </ToolButton>
+            <label className="inline-flex items-center px-2 py-1 text-xs font-medium gap-1.5 rounded-md bg-zinc-100 text-zinc-800 hover:bg-zinc-200 border border-zinc-200 cursor-pointer transition focus-ring">
+              Upload
               <input type="file" accept=".json" className="hidden"
                 onChange={async (e) => {
                   const f = e.target.files?.[0];
@@ -2196,30 +2197,26 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
                 }}
               />
             </label>
-            <button
-              onClick={() => window.print()}
-              className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300"
-              title="Print or save the current Auto Classify view as PDF (browser print dialog)">
-              Print to PDF
-            </button>
-          </div>
-        </div>
-        <div className="text-xs text-slate-500 mb-2">
-          Subtracted from observed peak sizes before matching. Calibrate using a blunt-control ligation (run a known non-cut product) and record the systematic offset per dye. Typical values for ABI 3500/3730 + POP-7 are 0.2–0.8 bp between channels.
-        </div>
-        <div className="grid grid-cols-4 gap-2">
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
           {["B", "G", "Y", "R"].map(d => (
-            <div key={d} className="flex items-center gap-2">
-              <span className="w-4 h-4 rounded" style={{background: DYE[d].color}} />
-              <span className="text-xs font-medium w-14">{DYE[d].label}</span>
-              <input type="number" step="0.1" value={dyeOffsets[d]}
+            <div key={d} className="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-zinc-200 bg-zinc-50">
+              <DyeChip dye={d} showLabel />
+              <div className="flex-1" />
+              <input
+                type="number"
+                step="0.1"
+                value={dyeOffsets[d]}
                 onChange={e => setDyeOffset(d, e.target.value)}
-                className="w-16 px-2 py-0.5 text-xs border border-slate-300 rounded" />
-              <span className="text-xs text-slate-500">bp</span>
+                className="w-16 px-2 py-1 text-xs font-mono text-right num border border-zinc-300 bg-white rounded-md focus-ring"
+              />
+              <span className="text-[11px] text-zinc-500">bp</span>
             </div>
           ))}
         </div>
-      </div>
+      </Panel>
 
       {/* Per-dye cluster cards */}
       {classification && (
@@ -2236,7 +2233,7 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
       )}
 
       {/* Editable construct sequence */}
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-3">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-medium">Construct sequence (editable for generalization)</div>
           <div className="flex gap-2">
@@ -2245,22 +2242,22 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, s
               Apply sequence
             </button>
             <button onClick={handleResetSequence}
-              className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300">
+              className="px-2 py-1 text-xs font-medium bg-zinc-200 rounded hover:bg-zinc-300">
               Reset to V059
             </button>
           </div>
         </div>
         <textarea value={seqDraft} onChange={e => setSeqDraft(e.target.value)}
-          className="w-full h-24 p-2 text-xs font-mono border border-slate-300 rounded"
+          className="w-full h-24 p-2 text-xs font-mono border border-zinc-300 rounded"
           placeholder="Paste the full ligated construct sequence (5' to 3' on top strand)" />
         <div className="flex items-center gap-2 mt-2">
-          <label className="text-xs text-slate-600">Target start (1-indexed):</label>
+          <label className="text-xs text-zinc-600">Target start (1-indexed):</label>
           <input type="number" value={targetStart} onChange={e => setTargetStart(Number(e.target.value) || 1)}
-            className="w-20 px-2 py-0.5 text-xs border border-slate-300 rounded" />
-          <label className="text-xs text-slate-600 ml-3">Target end:</label>
+            className="w-20 px-2 py-0.5 text-xs border border-zinc-300 rounded" />
+          <label className="text-xs text-zinc-600 ml-3">Target end:</label>
           <input type="number" value={targetEnd} onChange={e => setTargetEnd(Number(e.target.value) || constructSize)}
-            className="w-20 px-2 py-0.5 text-xs border border-slate-300 rounded" />
-          <span className="text-xs text-slate-500 ml-3">
+            className="w-20 px-2 py-0.5 text-xs border border-zinc-300 rounded" />
+          <span className="text-xs text-zinc-500 ml-3">
             Length: <span className="font-mono">{seqDraft.replace(/\s+/g, "").length}</span> bp
           </span>
           {seqError && <span className="text-xs text-red-600 ml-3">{seqError}</span>}
@@ -2275,20 +2272,20 @@ function DyeClusterCard({ dye, data, dyeOffset }) {
   const color = DYE[dye].color;
   const label = DYE[dye].label;
   return (
-    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
-      <div className="px-3 py-2 border-b border-slate-200 flex items-center justify-between"
+    <div className="bg-white rounded-lg border border-zinc-200 overflow-hidden">
+      <div className="px-3 py-2 border-b border-zinc-200 flex items-center justify-between"
         style={{background: color + "10"}}>
         <div className="flex items-center gap-2">
           <span className="w-4 h-4 rounded" style={{background: color}} />
           <span className="text-sm font-semibold" style={{color}}>{dye} &middot; {label}</span>
         </div>
-        <div className="text-xs text-slate-600">
+        <div className="text-xs text-zinc-600">
           {data.clusters.length} {data.clusters.length === 1 ? "cluster" : "clusters"} &middot; {data.nPeaks} peaks &middot; offset {dyeOffset >= 0 ? "+" : ""}{dyeOffset.toFixed(2)} bp
         </div>
       </div>
-      <div className="divide-y divide-slate-100">
+      <div className="divide-y divide-zinc-100">
         {data.clusters.length === 0 && (
-          <div className="px-3 py-4 text-xs text-slate-400 italic">No peaks above threshold in this channel.</div>
+          <div className="px-3 py-4 text-xs text-zinc-400 italic">No peaks above threshold in this channel.</div>
         )}
         {data.clusters.map((c, i) => (
           <ClusterRow key={i} cluster={c} dyeColor={color} />
@@ -2314,21 +2311,21 @@ function ClusterRow({ cluster, dyeColor }) {
             <span className="text-sm font-mono font-bold" style={{color: dyeColor}}>
               {main.size.toFixed(2)} bp
             </span>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-zinc-500">
               (raw {main.rawSize.toFixed(2)}, height {Math.round(main.height)}, area {Math.round(main.area)})
             </span>
-            <span className="ml-auto text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+            <span className="ml-auto text-xs font-semibold px-2 py-0.5 rounded bg-zinc-100 text-zinc-700">
               {(cluster.channelAbundance * 100).toFixed(1)}% of channel
             </span>
           </div>
-          <div className="text-xs text-slate-700 mt-0.5">
+          <div className="text-xs text-zinc-700 mt-0.5">
             <span className="font-medium">Best guess:</span> {identityLabel}
           </div>
         </div>
       </div>
       {cluster.peaks.length > 1 && (
-        <div className="mt-1.5 pl-3 border-l-2 border-slate-200">
-          <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">
+        <div className="mt-1.5 pl-3 border-l-2 border-zinc-200">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-400 mb-0.5">
             {cluster.peaks.length} species in this cluster (relative to main)
           </div>
           <div className="space-y-0.5">
@@ -2338,15 +2335,15 @@ function ClusterRow({ cluster, dyeColor }) {
               const match = p.bestMatch;
               return (
                 <div key={i} className="flex items-center gap-2 text-xs">
-                  <span className="font-mono w-16 text-right text-slate-500">{p.size.toFixed(2)}</span>
-                  <span className="w-28 text-slate-600">{relLbl}</span>
-                  <span className="w-16 text-slate-600">{(p.relAbundance * 100).toFixed(0)}%</span>
-                  <span className="text-slate-700 truncate">
+                  <span className="font-mono w-16 text-right text-zinc-500">{p.size.toFixed(2)}</span>
+                  <span className="w-28 text-zinc-600">{relLbl}</span>
+                  <span className="w-16 text-zinc-600">{(p.relAbundance * 100).toFixed(0)}%</span>
+                  <span className="text-zinc-700 truncate">
                     {match
                       ? (match.pred.kind === "cas9_cut"
                           ? (match.pred.label + " (Δ=" + match.delta.toFixed(2) + ")")
                           : match.pred.label + " (Δ=" + match.delta.toFixed(2) + ")")
-                      : <span className="italic text-slate-400">no match within tolerance</span>}
+                      : <span className="italic text-zinc-400">no match within tolerance</span>}
                   </span>
                 </div>
               );
@@ -2391,14 +2388,14 @@ function CrossDyeSummary({ classification, constructSize }) {
   const p2 = pairClusters("G", "R", "Adapter 2 end (G + R)");
 
   const renderPair = (p) => (
-    <div key={p.pairName} className="bg-white rounded-lg border border-slate-200 p-3">
+    <div key={p.pairName} className="bg-white rounded-lg border border-zinc-200 p-3">
       <div className="text-sm font-medium mb-2">{p.pairName}</div>
-      <div className="text-xs text-slate-500 mb-2">
+      <div className="text-xs text-zinc-500 mb-2">
         The Δ column reports (size on {p.dyeB}) − (size on {p.dyeA}). Δ ≈ 0 means blunt cut at this adapter end. |Δ| = 4 with consistent sign indicates a 4 nt 5' overhang from BsaI-style or staggered Cas9 chemistry. Values between 0 and 4 indicate mixed chemistries or partial products.
       </div>
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-slate-500 border-b border-slate-200">
+          <tr className="text-zinc-500 border-b border-zinc-200">
             <th className="text-right px-2 py-1">{p.dyeA} main</th>
             <th className="text-right px-2 py-1">{p.dyeB} main</th>
             <th className="text-right px-2 py-1">Δ</th>
@@ -2425,7 +2422,7 @@ function CrossDyeSummary({ classification, constructSize }) {
               interp = "Only on " + p.dyeB + " — likely missing-adapter product";
             }
             return (
-              <tr key={i} className="border-b border-slate-100">
+              <tr key={i} className="border-b border-zinc-100">
                 <td className="text-right px-2 py-1 font-mono">{r.a ? r.a.mainSize.toFixed(2) : "—"}</td>
                 <td className="text-right px-2 py-1 font-mono">{r.b ? r.b.mainSize.toFixed(2) : "—"}</td>
                 <td className="text-right px-2 py-1 font-mono">{r.delta === null ? "—" : (r.delta >= 0 ? "+" : "") + r.delta.toFixed(2)}</td>
@@ -2499,14 +2496,14 @@ function CompareTab({ samples, cfg, results }) {
 
   return (
     <>
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-2">
         <div className="text-sm font-medium mb-2">Overlay comparison</div>
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <div className="flex items-center gap-1">
-            <span className="font-semibold uppercase tracking-wide text-slate-500 mr-1">Channel</span>
-            <div className="inline-flex rounded-md border border-slate-300 overflow-hidden">
+            <span className="font-semibold uppercase tracking-wide text-zinc-500 mr-1">Channel</span>
+            <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden">
               {SAMPLE_DYES.map(d => (
-                <button key={d} onClick={() => setDye(d)} className={`px-2 py-1 ${dye === d ? "text-white" : "text-slate-700 hover:bg-slate-100"}`}
+                <button key={d} onClick={() => setDye(d)} className={`px-2 py-1 ${dye === d ? "text-white" : "text-zinc-700 hover:bg-zinc-100"}`}
                   style={dye === d ? { background: DYE[d].color } : {}}>
                   {DYE[d].label}
                 </button>
@@ -2514,18 +2511,18 @@ function CompareTab({ samples, cfg, results }) {
             </div>
           </div>
           <label className="flex items-center gap-1 cursor-pointer">
-            <input type="checkbox" checked={normalize} onChange={e => setNormalize(e.target.checked)} className="w-3.5 h-3.5 accent-slate-700" />
+            <input type="checkbox" checked={normalize} onChange={e => setNormalize(e.target.checked)} className="w-3.5 h-3.5 accent-zinc-700" />
             Normalize per sample
           </label>
           <label className="flex items-center gap-2">
-            <span className="text-slate-500">Smoothing</span>
+            <span className="text-zinc-500">Smoothing</span>
             <input type="range" min="0.5" max="3" step="0.1" value={smoothing}
-                   onChange={e => setSmoothing(parseFloat(e.target.value))} className="accent-slate-700 w-24" />
-            <span className="tabular-nums text-slate-600 w-8">{smoothing.toFixed(1)}x</span>
+                   onChange={e => setSmoothing(parseFloat(e.target.value))} className="accent-zinc-700 w-24" />
+            <span className="tabular-nums text-zinc-600 w-8">{smoothing.toFixed(1)}x</span>
           </label>
           <div className="ml-auto flex gap-1">
             {[{ l: "Full", r: [0, 500] }, { l: "Cut 200", r: [180, 230] }, { l: "Cut 88", r: [75, 110] }].map(p => (
-              <button key={p.l} onClick={() => setRange(p.r)} className="px-2 py-1 rounded border border-slate-300 bg-white hover:bg-slate-100">
+              <button key={p.l} onClick={() => setRange(p.r)} className="px-2 py-1 rounded border border-zinc-300 bg-white hover:bg-zinc-100">
                 {p.l}
               </button>
             ))}
@@ -2534,8 +2531,8 @@ function CompareTab({ samples, cfg, results }) {
       </div>
 
       {/* Sample picker */}
-      <div className="bg-white rounded-lg border border-slate-200 p-2.5 mb-2">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Samples ({picked.length}/8)</div>
+      <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2">
+        <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1.5">Samples ({picked.length}/8)</div>
         <div className="flex flex-wrap gap-1">
           {samples.map((ss, i) => {
             const idx = picked.indexOf(ss);
@@ -2543,7 +2540,7 @@ function CompareTab({ samples, cfg, results }) {
             const color = on ? PALETTE[idx % PALETTE.length] : null;
             return (
               <button key={ss} onClick={() => togglePick(ss)}
-                className={`px-2.5 py-1 text-xs rounded-md border transition inline-flex items-center gap-1.5 ${on ? "text-white" : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"}`}
+                className={`px-2.5 py-1 text-xs rounded-md border transition inline-flex items-center gap-1.5 ${on ? "text-white" : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"}`}
                 style={on ? { background: color, borderColor: color } : {}}>
                 {on && <span className="inline-block w-2 h-2 rounded-full bg-white" />}
                 {ss}
@@ -2554,10 +2551,10 @@ function CompareTab({ samples, cfg, results }) {
       </div>
 
       {/* Overlay plot */}
-      <div className="bg-white rounded-lg border border-slate-200 p-2 mb-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-2 mb-2">
         <div className="px-2 pt-1 pb-1 flex items-center justify-between flex-wrap gap-2">
           <div className="text-sm font-medium">Overlay · {DYE[dye].label} ({DYE[dye].name})</div>
-          <div className="text-[11px] text-slate-500">Drag to zoom · {picked.length} samples</div>
+          <div className="text-[11px] text-zinc-500">Drag to zoom · {picked.length} samples</div>
         </div>
         <svg
           ref={svgRef}
@@ -2631,7 +2628,7 @@ function CompareTab({ samples, cfg, results }) {
               <div key={ss} className="flex items-center gap-1.5 text-[11px]">
                 <span className="inline-block w-4 h-0.5" style={{ background: color }} />
                 <span className="font-mono">{ss}</span>
-                {match && <span className="text-slate-500">· peak {match.size.toFixed(2)} bp</span>}
+                {match && <span className="text-zinc-500">· peak {match.size.toFixed(2)} bp</span>}
               </div>
             );
           })}
@@ -2639,9 +2636,9 @@ function CompareTab({ samples, cfg, results }) {
       </div>
 
       {/* Overhang summary chart */}
-      <div className="bg-white rounded-lg border border-slate-200 p-3">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3">
         <div className="text-sm font-medium mb-1">Paired-channel size offsets (putative overhang)</div>
-        <div className="text-xs text-slate-600 mb-2">
+        <div className="text-xs text-zinc-600 mb-2">
           Y→B offset infers the overhang at the Adapter 1 end (6-FAM paired with TAMRA); R→G offset infers the overhang at the Adapter 2 end (HEX paired with ROX). Values near 0 indicate blunt cuts, values near +4 indicate a 4-nt 5' overhang.
         </div>
         <OverhangChart samples={samples} results={results} />
@@ -2837,14 +2834,14 @@ function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeCha
       {/* Editable component sizes */}
       {onSizeChange && (
         <div className="flex flex-wrap gap-2 pt-1 text-xs">
-          <span className="text-slate-500 font-semibold uppercase tracking-wide">Component sizes (bp):</span>
+          <span className="text-zinc-500 font-semibold uppercase tracking-wide">Component sizes (bp):</span>
           {CONSTRUCT.components.map(c => (
             <label key={c.key} className="flex items-center gap-1">
               <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: c.color }} />
-              <span className="text-slate-600">{c.name.replace("Fluor ", "").replace("Oligo ", "")}</span>
+              <span className="text-zinc-600">{c.name.replace("Fluor ", "").replace("Oligo ", "")}</span>
               <input type="number" min="0" step="1" value={componentSizes[c.key] || 0}
                 onChange={e => onSizeChange(c.key, parseInt(e.target.value || "0", 10))}
-                className="w-14 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-right text-xs" />
+                className="w-14 px-1.5 py-0.5 border border-zinc-300 rounded font-mono text-right text-xs" />
             </label>
           ))}
         </div>
@@ -2856,11 +2853,11 @@ function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeCha
 function AssemblyProductsCard({ componentSizes, onSizeChange, onApply }) {
   const [hl, setHl] = useState(null);
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-3 mb-3">
+    <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
       <div className="text-sm font-medium mb-2">Construct architecture · Expected product sizes</div>
       <ConstructDiagram componentSizes={componentSizes} highlightKey={hl} onHighlight={setHl} onSizeChange={onSizeChange} />
 
-      <div className="mt-3 text-xs text-slate-600">
+      <div className="mt-3 text-xs text-zinc-600">
         Choose an assembly product to set expected peak positions for the currently-selected sample. Each product predicts peaks in specific dye channels only.
       </div>
       <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-1.5">
@@ -2868,14 +2865,14 @@ function AssemblyProductsCard({ componentSizes, onSizeChange, onApply }) {
           const sz = productSize(p, componentSizes);
           return (
             <button key={p.id} onClick={() => onApply(p.id, sz, p.dyes)}
-              className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border border-slate-200 rounded hover:bg-slate-50 text-left">
+              className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs border border-zinc-200 rounded hover:bg-zinc-50 text-left">
               <span className="truncate">
                 <span className="font-medium">{p.name}</span>
-                <span className="text-slate-500 ml-1">
+                <span className="text-zinc-500 ml-1">
                   {p.dyes.length ? "(" + p.dyes.map(d => DYE[d].label).join(", ") + ")" : "(no dye)"}
                 </span>
               </span>
-              <span className="font-mono text-slate-700 shrink-0">{sz} bp</span>
+              <span className="font-mono text-zinc-700 shrink-0">{sz} bp</span>
             </button>
           );
         })}
@@ -2903,10 +2900,10 @@ function TargetSequenceView({ fullConstruct, targetStart, targetEnd, grnas, sele
   const chunks = [];
   for (let i = 0; i < seq.length; i += 60) chunks.push([i, seq.substring(i, i + 60)]);
   return (
-    <div className="bg-slate-50 rounded border border-slate-200 p-2 font-mono text-[11px] leading-relaxed overflow-x-auto">
+    <div className="bg-zinc-50 rounded border border-zinc-200 p-2 font-mono text-[11px] leading-relaxed overflow-x-auto">
       {chunks.map(([start, chunk]) => (
         <div key={start} className="whitespace-pre">
-          <span className="text-slate-400 select-none">{String(start + 1).padStart(4, " ")}  </span>
+          <span className="text-zinc-400 select-none">{String(start + 1).padStart(4, " ")}  </span>
           {chunk.split("").map((c, k) => {
             const a = annot[start + k] || {};
             const cls = [
@@ -2916,10 +2913,10 @@ function TargetSequenceView({ fullConstruct, targetStart, targetEnd, grnas, sele
             ].filter(Boolean).join(" ");
             return <span key={k} className={cls}>{c}</span>;
           })}
-          <span className="text-slate-400 select-none">  {String(Math.min(start + chunk.length, seq.length)).padStart(4, " ")}</span>
+          <span className="text-zinc-400 select-none">  {String(Math.min(start + chunk.length, seq.length)).padStart(4, " ")}</span>
         </div>
       ))}
-      <div className="flex flex-wrap gap-3 pt-2 text-[10px] text-slate-600 border-t border-slate-200 mt-2">
+      <div className="flex flex-wrap gap-3 pt-2 text-[10px] text-zinc-600 border-t border-zinc-200 mt-2">
         <span><span className="inline-block w-3 h-3 bg-green-600 mr-1 align-middle" />Top protospacer</span>
         <span><span className="inline-block w-3 h-3 bg-green-700 mr-1 align-middle" />Top PAM (NGG)</span>
         <span><span className="inline-block w-3 h-3 bg-pink-600 mr-1 align-middle" />Bot protospacer</span>
@@ -3000,15 +2997,15 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
 
   return (
     <>
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-2">
         <div className="flex items-center justify-between mb-1.5">
           <div className="text-sm font-medium">Target sequence &middot; construct pos {CONSTRUCT.targetRange.start} to {CONSTRUCT.targetRange.end} ({CONSTRUCT.targetRange.end - CONSTRUCT.targetRange.start + 1} bp)</div>
-          <div className="text-xs text-slate-500">{grnas.length} gRNA candidates ({grnas.filter(g=>g.strand==="top").length} top, {grnas.filter(g=>g.strand==="bot").length} bot)</div>
+          <div className="text-xs text-zinc-500">{grnas.length} gRNA candidates ({grnas.filter(g=>g.strand==="top").length} top, {grnas.filter(g=>g.strand==="bot").length} bot)</div>
         </div>
         <TargetSequenceView fullConstruct={CONSTRUCT.seq} targetStart={CONSTRUCT.targetRange.start} targetEnd={CONSTRUCT.targetRange.end} grnas={grnas} selectedId={selectedId} />
         {activeGrna && (
-          <div className="mt-3 border-t border-slate-200 pt-2">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Cut site on full 226 bp construct</div>
+          <div className="mt-3 border-t border-zinc-200 pt-2">
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1">Cut site on full 226 bp construct</div>
             <ConstructDiagram
               componentSizes={componentSizesFrom(CONSTRUCT)}
               cutConstructPos={activeGrna.cut_construct}
@@ -3019,41 +3016,41 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
         )}
       </div>
 
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-2">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Custom gRNA (20 nt DNA or RNA)</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1.5">Custom gRNA (20 nt DNA or RNA)</div>
             <div className="flex gap-1.5 items-center">
               <input type="text" value={customGrna} onChange={e => setCustomGrna(e.target.value)}
                 placeholder="e.g. ACGTGCTGAGGTCCATAGCC"
-                className="flex-1 px-2 py-1 text-xs border border-slate-300 rounded font-mono uppercase" />
-              <button onClick={handleFindCustom} className="px-2.5 py-1 text-xs rounded bg-slate-900 text-white hover:bg-slate-700">Find</button>
+                className="flex-1 px-2 py-1 text-xs border border-zinc-300 rounded font-mono uppercase" />
+              <button onClick={handleFindCustom} className="px-2.5 py-1 text-xs rounded bg-zinc-900 text-white hover:bg-zinc-700">Find</button>
             </div>
             {customError && <div className="text-xs text-red-600 mt-1">{customError}</div>}
-            {customGrnaObj && <div className="text-xs text-slate-600 mt-1">Found on <b>{customGrnaObj.strand}</b> strand &middot; target pos {customGrnaObj.target_pos} &middot; PAM {customGrnaObj.pam_seq} &middot; cut at construct pos {customGrnaObj.cut_construct}.</div>}
+            {customGrnaObj && <div className="text-xs text-zinc-600 mt-1">Found on <b>{customGrnaObj.strand}</b> strand &middot; target pos {customGrnaObj.target_pos} &middot; PAM {customGrnaObj.pam_seq} &middot; cut at construct pos {customGrnaObj.cut_construct}.</div>}
           </div>
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Auto-pick from observed peaks</div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-1.5">Auto-pick from observed peaks</div>
             <div className="flex gap-1.5 items-center flex-wrap">
-              <label className="text-xs text-slate-600">Sample:</label>
-              <select value={currentSample} onChange={e => setCurrentSample(e.target.value)} className="px-1.5 py-1 text-xs border border-slate-300 rounded">
+              <label className="text-xs text-zinc-600">Sample:</label>
+              <select value={currentSample} onChange={e => setCurrentSample(e.target.value)} className="px-1.5 py-1 text-xs border border-zinc-300 rounded">
                 {samples.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
               <button onClick={handleAutoPick} className="px-2.5 py-1 text-xs rounded bg-emerald-700 text-white hover:bg-emerald-600">Auto-pick best match</button>
             </div>
-            <div className="text-xs text-slate-600 mt-1 font-mono">
+            <div className="text-xs text-zinc-600 mt-1 font-mono">
               observed: B={observed.B?.toFixed(1) ?? "-"} Y={observed.Y?.toFixed(1) ?? "-"} G={observed.G?.toFixed(1) ?? "-"} R={observed.R?.toFixed(1) ?? "-"}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-slate-200 p-3 mb-2">
+      <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-2">
         <div className="flex items-center justify-between mb-1.5">
           <div className="text-sm font-medium">gRNA candidates &middot; blunt-cut size predictions</div>
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-500">{catalogCount} of {grnas.length} match lab catalog</span>
-            <label className="flex items-center gap-1.5 text-xs text-slate-700">
+            <span className="text-xs text-zinc-500">{catalogCount} of {grnas.length} match lab catalog</span>
+            <label className="flex items-center gap-1.5 text-xs text-zinc-700">
               <input type="checkbox" checked={onlyCatalog} onChange={e => setOnlyCatalog(e.target.checked)} className="rounded" />
               Show only lab catalog
             </label>
@@ -3062,7 +3059,7 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
         <div className="overflow-x-auto">
           <table className="w-full text-xs font-mono">
             <thead>
-              <tr className="text-slate-500 border-b border-slate-200">
+              <tr className="text-zinc-500 border-b border-zinc-200">
                 <th className="text-left px-1 py-1">#</th>
                 <th className="text-left px-1 py-1">strand</th>
                 <th className="text-left px-1 py-1">PAM</th>
@@ -3082,13 +3079,13 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
                 const p = predictBlunt(g);
                 const sel = g.id === selectedId;
                 return (
-                  <tr key={g.id} className={`border-b border-slate-100 ${sel ? "bg-yellow-50" : ""}`}>
-                    <td className="px-1 py-0.5 text-slate-400">{g.id + 1}</td>
+                  <tr key={g.id} className={`border-b border-zinc-100 ${sel ? "bg-yellow-50" : ""}`}>
+                    <td className="px-1 py-0.5 text-zinc-400">{g.id + 1}</td>
                     <td className="px-1 py-0.5">
                       <span className={`px-1 rounded text-white text-[10px] ${g.strand === "top" ? "bg-green-700" : "bg-pink-700"}`}>{g.strand}</span>
                     </td>
                     <td className="px-1 py-0.5 font-bold">{g.pam_seq}</td>
-                    <td className="px-1 py-0.5 text-slate-700">{g.protospacer}</td>
+                    <td className="px-1 py-0.5 text-zinc-700">{g.protospacer}</td>
                     <td className="px-1 py-0.5 text-right">{g.target_pos}</td>
                     <td className="px-1 py-0.5 text-right">{g.cut_construct}</td>
                     <td className="px-1 py-0.5 text-right" style={{color:DYE.Y.color}}>{p.Y.length}</td>
@@ -3101,12 +3098,12 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
                           {catalogMatches[g.id].name}
                         </span>
                       ) : (
-                        <span className="text-slate-300 text-[10px]">—</span>
+                        <span className="text-zinc-300 text-[10px]">—</span>
                       )}
                     </td>
                     <td className="px-1 py-0.5">
                       <button onClick={() => setSelectedId(g.id)}
-                        className={`px-2 py-0.5 text-[10px] rounded border ${sel ? "bg-yellow-400 border-yellow-500 text-slate-900" : "bg-white border-slate-300 text-slate-700 hover:bg-slate-100"}`}>
+                        className={`px-2 py-0.5 text-[10px] rounded border ${sel ? "bg-yellow-400 border-yellow-500 text-zinc-900" : "bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-100"}`}>
                         {sel ? "selected" : "select"}
                       </button>
                     </td>
@@ -3126,13 +3123,13 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
                 Selected gRNA: <span className="font-mono">{activeGrna.protospacer}</span>
                 <span className="ml-2 px-1.5 rounded text-white text-xs" style={{background: activeGrna.strand === "top" ? "#15803d" : "#be185d"}}>{activeGrna.strand} strand</span>
               </div>
-              <div className="text-xs text-slate-600 mt-0.5">
+              <div className="text-xs text-zinc-600 mt-0.5">
                 PAM: <b>{activeGrna.pam_seq}</b> &middot; target pos {activeGrna.target_pos} &middot; cut at construct pos {activeGrna.cut_construct}
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <label className="text-xs text-slate-600">Cut chemistry:</label>
-              <select value={overhang} onChange={e => setOverhang(parseInt(e.target.value, 10))} className="px-1.5 py-1 text-xs border border-slate-300 rounded">
+              <label className="text-xs text-zinc-600">Cut chemistry:</label>
+              <select value={overhang} onChange={e => setOverhang(parseInt(e.target.value, 10))} className="px-1.5 py-1 text-xs border border-zinc-300 rounded">
                 <option value={0}>Blunt (Cas9 classic)</option>
                 <option value={1}>1 nt 5' overhang</option>
                 <option value={2}>2 nt 5' overhang</option>
@@ -3142,14 +3139,14 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
             </div>
           </div>
 
-          <div className="mb-3 border border-slate-200 rounded p-2 bg-slate-50">
+          <div className="mb-3 border border-zinc-200 rounded p-2 bg-zinc-50">
             <ProductFragmentViz products={predictedProducts} constructSize={CONSTRUCT.total} />
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-slate-500 border-b border-slate-200">
+                <tr className="text-zinc-500 border-b border-zinc-200">
                   <th className="text-left px-2 py-1">Dye</th>
                   <th className="text-left px-2 py-1">ssDNA length</th>
                   <th className="text-left px-2 py-1">Fragment</th>
@@ -3165,11 +3162,11 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
                   const obs = observed[d];
                   const delta = obs !== null && obs !== undefined ? (obs - p.length) : null;
                   return (
-                    <tr key={d} className="border-b border-slate-100">
+                    <tr key={d} className="border-b border-zinc-100">
                       <td className="px-2 py-1">
                         <span className="inline-block w-3 h-3 rounded-full mr-1.5 align-middle" style={{background:DYE[d].color}} />
                         <span className="font-medium">{DYE[d].name}</span>
-                        <span className="text-slate-500 ml-1">({DYE[d].label})</span>
+                        <span className="text-zinc-500 ml-1">({DYE[d].label})</span>
                       </td>
                       <td className="px-2 py-1 font-mono font-bold">{p.length} nt</td>
                       <td className="px-2 py-1">{p.fragment}</td>
@@ -3178,14 +3175,14 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${p.template === "non-template" ? "bg-amber-100 text-amber-800" : "bg-sky-100 text-sky-800"}`}>{p.template}</span>
                       </td>
                       <td className="px-2 py-1">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${p.pam_side === "proximal" ? "bg-rose-100 text-rose-800" : "bg-slate-100 text-slate-700"}`}>PAM-{p.pam_side}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${p.pam_side === "proximal" ? "bg-rose-100 text-rose-800" : "bg-zinc-100 text-zinc-700"}`}>PAM-{p.pam_side}</span>
                       </td>
                       <td className="px-2 py-1 font-mono">
                         {obs !== null && obs !== undefined ? (
                           <span className={`${Math.abs(delta) < 2 ? "text-emerald-700" : Math.abs(delta) < 5 ? "text-amber-700" : "text-red-700"}`}>
                             obs {obs.toFixed(2)} &middot; {delta >= 0 ? "+" : ""}{delta.toFixed(2)} bp
                           </span>
-                        ) : <span className="text-slate-400">no observed peak</span>}
+                        ) : <span className="text-zinc-400">no observed peak</span>}
                       </td>
                     </tr>
                   );
@@ -3195,14 +3192,14 @@ function CutPredictionTab({ samples, cfg, setCfg, results }) {
           </div>
 
           <div className="mt-2 flex items-center gap-2">
-            <label className="text-xs text-slate-600">Apply predicted sizes to:</label>
-            <select value={currentSample} onChange={e => setCurrentSample(e.target.value)} className="px-1.5 py-1 text-xs border border-slate-300 rounded">
+            <label className="text-xs text-zinc-600">Apply predicted sizes to:</label>
+            <select value={currentSample} onChange={e => setCurrentSample(e.target.value)} className="px-1.5 py-1 text-xs border border-zinc-300 rounded">
               {samples.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
-            <button onClick={applyToSample} className="px-2.5 py-1 text-xs rounded bg-slate-900 text-white hover:bg-slate-700">Apply to sample</button>
+            <button onClick={applyToSample} className="px-2.5 py-1 text-xs rounded bg-zinc-900 text-white hover:bg-zinc-700">Apply to sample</button>
           </div>
 
-          <div className="mt-2 text-[11px] text-slate-600 leading-snug">
+          <div className="mt-2 text-[11px] text-zinc-600 leading-snug">
             <b>Legend.</b> <b>non-template strand</b> carries 5'-NGG-3' (the strand the Cas9 gRNA displaces via R-loop). <b>template strand</b> is the complement, hybridized by the gRNA. <b>PAM-proximal</b> fragment contains the PAM sequence; <b>PAM-distal</b> fragment does not. For 5' overhangs, the top-strand cut and bot-strand cut are offset by the overhang length.
           </div>
         </div>
