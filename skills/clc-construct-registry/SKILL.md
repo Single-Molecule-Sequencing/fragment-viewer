@@ -16,11 +16,13 @@ metadata:
 
 # CLC Construct Registry
 
-Single source of truth for every CLC fragment-analysis construct the Athey lab uses. Canonical YAML lives at:
+Single source of truth for every CLC fragment-analysis construct the Athey lab uses. Canonical YAML lives in the public repo at:
 
 ```
-/mnt/d/University of Michigan Dropbox/Gregory Farnum/Claude/Projects/fragment-viewer/data/constructs.yaml
+data/constructs.yaml
 ```
+
+(In a local checkout of `Single-Molecule-Sequencing/fragment-viewer`.)
 
 The registry is consumed by:
 

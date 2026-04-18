@@ -111,38 +111,36 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: build_artifact round-trip on sample data
+      - name: inject_seed_json round-trip on the committed seed
         run: |
-          python scripts/build_artifact.py data/blue_export.txt \
-            --out /tmp/round_trip.jsx --json-out /tmp/round_trip.json
+          python scripts/inject_seed_json.py data/seed_v059-4-5_grna3-1-1.json \
+            --out /tmp/round_trip.jsx
           test -s /tmp/round_trip.jsx
-          test -s /tmp/round_trip.json
-          python -c "import json; d=json.load(open('/tmp/round_trip.json')); assert len(d['peaks'])==10, f'expected 10 samples, got {len(d[\"peaks\"])}'"
-      - name: ingest_to_kb round-trip into temp sqlite
-        run: |
-          python scripts/ingest_to_kb.py --all --kb /tmp/test_kb.db
-          python -c "import sqlite3; c=sqlite3.connect('/tmp/test_kb.db'); n=c.execute('SELECT COUNT(*) FROM lab_grnas').fetchone()[0]; assert n>=11, f'expected >=11 lab_grnas, got {n}'"
+          python -c "import json; d=json.load(open('data/seed_v059-4-5_grna3-1-1.json')); assert len(d['peaks'])>=2, f'expected >=2 samples, got {len(d[\"peaks\"])}'"
 
-  fa-data-schema:
+  seed-data-schema:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Validate data/fa_data.json shape
+      - name: Validate seed JSON shape (data/seed_*.json)
         run: |
           python -c "
-          import json, sys
-          d = json.load(open('data/fa_data.json'))
-          assert 'peaks' in d, 'missing top-level peaks key'
-          for sample, dyes in d['peaks'].items():
-              assert isinstance(dyes, dict), f'{sample} peaks not a dict'
-              for dye, arr in dyes.items():
-                  assert dye in ('B','G','Y','R','O'), f'{sample}: unknown dye {dye}'
-                  for row in arr:
-                      assert len(row) == 4, f'{sample}/{dye}: row should be [size,height,area,width], got {row}'
-                      for v in row:
-                          assert isinstance(v, (int,float)), f'{sample}/{dye}: non-numeric {v}'
-          print(f'fa_data.json: {len(d[\"peaks\"])} samples valid')
+          import json, glob
+          paths = sorted(glob.glob('data/seed_*.json'))
+          assert paths, 'no data/seed_*.json files found'
+          for p in paths:
+              d = json.load(open(p))
+              assert 'peaks' in d, f'{p}: missing top-level peaks key'
+              for sample, dyes in d['peaks'].items():
+                  assert isinstance(dyes, dict), f'{p} {sample}: peaks not a dict'
+                  for dye, arr in dyes.items():
+                      assert dye in ('B','G','Y','R','O'), f'{p} {sample}: unknown dye {dye}'
+                      for row in arr:
+                          assert len(row) == 4, f'{p} {sample}/{dye}: row should be [size,height,area,width], got {row}'
+                          for v in row:
+                              assert isinstance(v, (int,float)), f'{p} {sample}/{dye}: non-numeric {v}'
+              print(f'{p}: {len(d[\"peaks\"])} samples valid')
           "

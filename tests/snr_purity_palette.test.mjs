@@ -109,13 +109,14 @@ describe("computePurityScore", () => {
 });
 
 describe("resolveDyeColor + palette integrity", () => {
-  it("default palette matches the DYE constant", () => {
-    // Default palette is the "baseline" colors the lab has been using; the
-    // contract is that the default matches the original DYE[d].color values.
+  it("default palette matches the Tailwind 600 family (Issue #3 unification)", () => {
+    // After Issue #3 fix, DYE_PALETTES.default is the Tailwind 600 palette
+    // — same colors already used by DyeChip, DYE_HEX, and tailwind.config.js.
     expect(resolveDyeColor("B", "default").toLowerCase()).toBe("#1e6fdb");
-    expect(resolveDyeColor("G", "default").toLowerCase()).toBe("#2e9e4a");
-    expect(resolveDyeColor("Y", "default").toLowerCase()).toBe("#b8860b");
-    expect(resolveDyeColor("R", "default").toLowerCase()).toBe("#d32f2f");
+    expect(resolveDyeColor("G", "default").toLowerCase()).toBe("#16a34a");
+    expect(resolveDyeColor("Y", "default").toLowerCase()).toBe("#ca8a04");
+    expect(resolveDyeColor("R", "default").toLowerCase()).toBe("#dc2626");
+    expect(resolveDyeColor("O", "default").toLowerCase()).toBe("#ea580c");
   });
 
   it("Wong palette returns the canonical Nature Methods colors", () => {

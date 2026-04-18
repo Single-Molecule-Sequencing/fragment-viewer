@@ -63,7 +63,9 @@ For the V059_gRNA3 case specifically, the SnapGene file contains the construct b
 For an entry like `CYP2D6_upstream_1` with `target: "chr22:42120246-42120266 (+)"`:
 
 ```bash
-samtools faidx /mnt/d/Reference_Files/grch38.fa "chr22:42120246-42120266" \
+# Set GRCH38_FASTA in your shell to your local GRCh38 primary-only FASTA
+# (e.g. export GRCH38_FASTA=/path/to/GCA_000001405.15_GRCh38_no_alt_analysis_set.fasta).
+samtools faidx "$GRCH38_FASTA" "chr22:42120246-42120266" \
   | grep -v "^>" | tr -d '\n'
 ```
 

@@ -112,4 +112,4 @@ When introducing a new tool that should plug into fragment-viewer:
 
 ## Re-running this map
 
-Stale within ~30 days of any new skill or major refactor. Audit cadence: revisit when consolidating the ecosystem (`/consolidate` or after a major lab-wide refactor). Run `python3 -c "import yaml; print(list(yaml.safe_load(open('/home/farnum248/repos/lab-papers/papers.yaml'))['projects'].keys()))"` to confirm no project re-organization invalidated the names above.
+Stale within ~30 days of any new skill or major refactor. Audit cadence: revisit when consolidating the ecosystem (`/consolidate` or after a major lab-wide refactor). Lab maintainers with a local `lab-papers` clone can run `python3 -c "import yaml; print(list(yaml.safe_load(open(f'{os.environ[\"LAB_PAPERS_REPO\"]}/papers.yaml'))['projects'].keys()))"` (with `LAB_PAPERS_REPO` pointing at their clone) to confirm no project re-organization invalidated the names above.

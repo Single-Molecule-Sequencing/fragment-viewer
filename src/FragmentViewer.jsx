@@ -66,12 +66,17 @@ export function Pill({ children, tone = "neutral", className = "" }) {
 
 // Color-coded dye reference. Use anywhere a dye letter appears so users
 // associate the channel with its color throughout the viewer.
-export function DyeChip({ dye, showLabel = false, className = "" }) {
-  const palette = { B: "#1e6fdb", G: "#16a34a", Y: "#ca8a04", R: "#dc2626", O: "#ea580c" };
-  const label   = { B: "6-FAM",   G: "HEX",     Y: "TAMRA",   R: "ROX",     O: "GS500LIZ" };
+// DyeChip uses the shared DYE_PALETTES.default through resolveDyeColor
+// instead of its own inline map (Issue #3 fix). Accepts an optional
+// `palette` override so future per-tab palette toggles compose cleanly.
+export function DyeChip({ dye, showLabel = false, className = "", palette = "default" }) {
+  const label = { B: "6-FAM", G: "HEX", Y: "TAMRA", R: "ROX", O: "GS500LIZ" };
+  const color = typeof DYE_PALETTES !== "undefined"
+    ? (DYE_PALETTES[palette]?.[dye] || DYE_PALETTES.default?.[dye] || "#94a3b8")
+    : "#94a3b8";
   return (
     <span className={`inline-flex items-center gap-1.5 ${className}`}>
-      <span aria-hidden className="w-2.5 h-2.5 rounded-full ring-1 ring-inset ring-black/10" style={{ background: palette[dye] || "#94a3b8" }} />
+      <span aria-hidden className="w-2.5 h-2.5 rounded-full ring-1 ring-inset ring-black/10" style={{ background: color }} />
       <span className="text-xs font-mono text-zinc-700">{dye}</span>
       {showLabel && <span className="text-[11px] text-zinc-500">{label[dye] || dye}</span>}
     </span>
@@ -1096,12 +1101,16 @@ DATA.traces = DATA.traces || {};
 // ======================================================================
 // CONSTANTS — dyes, size standard, lab defaults
 // ======================================================================
+// Dye metadata. The rendering `color` values are sourced from DYE_PALETTES
+// ("default" palette) below so the electropherogram, DyeChip, tailwind
+// theme tokens, and every legacy DYE_HEX reference all agree on a single
+// palette. Issue #3 fix — previously three locations disagreed.
 const DYE = {
-  B: { name: "6-FAM", color: "#1e6fdb", label: "Blue",   adapter: 1, pair: "Y" },
-  G: { name: "HEX",   color: "#2e9e4a", label: "Green",  adapter: 2, pair: "R" },
-  Y: { name: "TAMRA", color: "#b8860b", label: "Yellow", adapter: 1, pair: "B" },
-  R: { name: "ROX",   color: "#d32f2f", label: "Red",    adapter: 2, pair: "G" },
-  O: { name: "LIZ",   color: "#ef6c00", label: "Orange", adapter: null, pair: null },
+  B: { name: "6-FAM", label: "Blue",   adapter: 1,    pair: "Y" },
+  G: { name: "HEX",   label: "Green",  adapter: 2,    pair: "R" },
+  Y: { name: "TAMRA", label: "Yellow", adapter: 1,    pair: "B" },
+  R: { name: "ROX",   label: "Red",    adapter: 2,    pair: "G" },
+  O: { name: "LIZ",   label: "Orange", adapter: null, pair: null },
 };
 
 // Colorblind-safe palette overrides. Applied via resolveDyeColor() so that
@@ -1111,7 +1120,10 @@ const DYE = {
 // (Nature Methods 2011) is the canonical journal-recommended set; Okabe-Ito
 // is a close alternative with a slightly warmer green.
 export const DYE_PALETTES = {
-  default: { B: "#1e6fdb", G: "#2e9e4a", Y: "#b8860b", R: "#d32f2f", O: "#ef6c00" },
+  // Default palette = Tailwind 600 family — matches the committed
+  // tailwind.config.js dye tokens, DyeChip's inline swatches, and the
+  // legacy DYE_HEX values. Single source of truth. (Issue #3 fix)
+  default: { B: "#1e6fdb", G: "#16a34a", Y: "#ca8a04", R: "#dc2626", O: "#ea580c" },
   // Wong (Nature Methods 2011): distinguishable under deutan/protan/tritan.
   wong:    { B: "#0072B2", G: "#009E73", Y: "#E69F00", R: "#CC79A7", O: "#D55E00" },
   // IBM 5-color CB-safe palette — more saturated, popular for slides.
@@ -1128,6 +1140,11 @@ export function resolveDyeColor(dye, palette = "default") {
   const p = DYE_PALETTES[palette] || DYE_PALETTES.default;
   return p[dye] || DYE[dye]?.color || "#94a3b8";
 }
+
+// Backfill DYE[d].color from the default palette so every pre-existing
+// `DYE[d].color` call site reads the unified color. Any future change to
+// the baseline palette updates everything at once. (Issue #3 fix)
+for (const d of ["B", "G", "Y", "R", "O"]) DYE[d].color = DYE_PALETTES.default[d];
 
 const DYE_ORDER = ["B", "G", "Y", "R", "O"];
 const SAMPLE_DYES = ["B", "G", "Y", "R"];
@@ -1388,7 +1405,7 @@ export function classifyPeaks(sampleData, constructSeq, targetStart, targetEnd, 
   const predictionsByDye = { B: [], G: [], Y: [], R: [] };
 
   for (const g of grnas) {
-    const catMatch = matchLabCatalog(g);
+    const catMatch = matchLabCatalog(g, grnaCatalog || LAB_GRNA_CATALOG);
     const baseName = catMatch ? catMatch.name : ("cand_" + g.id);
     for (const oh of overhangsToConsider) {
       const pr = predictCutProducts(g, constructSize, oh);
@@ -1592,11 +1609,11 @@ export function normalizeSpacer(s) {
 }
 
 // Match a candidate gRNA against the lab catalog; returns catalog entry or null.
-export function matchLabCatalog(grna) {
+export function matchLabCatalog(grna, catalog = LAB_GRNA_CATALOG) {
   const cand = normalizeSpacer(grna.protospacer);
   if (cand.length !== 20) return null;
   const candRC = cand.split("").reverse().map(c => ({A:"T",T:"A",G:"C",C:"G"})[c] || c).join("");
-  for (const entry of LAB_GRNA_CATALOG) {
+  for (const entry of catalog) {
     const ref = normalizeSpacer(entry.spacer);
     if (ref.length !== 20) continue;
     if (ref === cand || ref === candRC) return entry;
@@ -2242,7 +2259,10 @@ const COMPONENT_INFO = (() => {
   return m;
 })();
 
-const DYE_HEX = { B: "#1e6fdb", G: "#16a34a", Y: "#ca8a04", R: "#dc2626", O: "#ea580c" };
+// DYE_HEX kept as a thin alias for the default palette so legacy call
+// sites in the DyePaletteSwatch etc. don't break. For new code, call
+// resolveDyeColor(d, palette) directly. (Issue #3 fix)
+const DYE_HEX = DYE_PALETTES.default;
 
 export function SpeciesSchematic({
   parts, leftDyes = [], rightDyes = [], width = 220, height = 28,
@@ -2947,7 +2967,10 @@ export default function FragmentViewer() {
   const [targetEnd, setTargetEnd] = useState(CONSTRUCT.targetRange.end);
   const constructSize = constructSeq.length;
 
-  const results = useMemo(() => identifyPeaks(DATA.peaks, cfg), [cfg]);
+  // Issue #4 fix: dataKey must be in deps so drag-drop ingest triggers a
+  // re-computation. Previously missing, which let stale results persist
+  // after `handleNewPeaks` mutated DATA.peaks.
+  const results = useMemo(() => identifyPeaks(DATA.peaks, cfg), [cfg, dataKey]);
 
   // Total observed peaks across the loaded dataset; surfaced in the status bar.
   const totalPeaks = useMemo(() => {

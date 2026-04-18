@@ -27,11 +27,15 @@ This skill is the entry point for the `fragment-viewer` project: an interactive 
 
 ## Canonical repo location
 
-`/mnt/d/University of Michigan Dropbox/Gregory Farnum/Claude/Projects/fragment-viewer/`
+Public: `https://github.com/Single-Molecule-Sequencing/fragment-viewer`
+Live tool: `https://single-molecule-sequencing.github.io/fragment-viewer/`
 
-Public mirror: `https://github.com/Single-Molecule-Sequencing/fragment-viewer`
+Lab maintainers may also have a local clone; path varies per machine.
+Set `FRAGMENT_VIEWER_REPO` in your shell profile if you need to refer
+to a local path in scripts; default is `$HOME/repos/fragment-viewer`.
 
-When this skill is invoked, read the in-repo `docs/BIOLOGY.md` and `docs/TUTORIAL.md` from the canonical location above before answering biology questions. Never infer from memory.
+When this skill is invoked, read the in-repo `docs/BIOLOGY.md` and
+`docs/TUTORIAL.md` before answering biology questions. Never infer from memory.
 
 ## When to use this skill
 
