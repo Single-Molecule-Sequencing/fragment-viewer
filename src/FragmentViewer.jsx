@@ -99,6 +99,20 @@ import KeyboardHelpModal from "./components/keyboard_help_modal.jsx";
 
 import { DropOverlay, UploadButton } from "./components/drop_zone.jsx";
 export { DropOverlay, UploadButton };
+import { Toolbar, Sidebar, SidebarLink, StatusBar } from "./components/chrome.jsx";
+export { Toolbar, Sidebar, SidebarLink, StatusBar };
+import {
+  ProductFragmentViz, ConstructDiagram, AssemblyProductsCard, TargetSequenceView,
+} from "./components/diagrams.jsx";
+export { ProductFragmentViz, ConstructDiagram, AssemblyProductsCard, TargetSequenceView };
+import {
+  SampleStyleRow, EndStructureEditor, PostTailingPanel, NudgeRow, PeakShiftPanel, PrepControls,
+} from "./components/editors.jsx";
+export { SampleStyleRow, EndStructureEditor, PostTailingPanel, NudgeRow, PeakShiftPanel, PrepControls };
+import { StackedChromatogram, MiniChromatogram } from "./components/chromatograms.jsx";
+export { StackedChromatogram, MiniChromatogram };
+import { DNADiagramsModal, ReportModal } from "./components/modals.jsx";
+export { DNADiagramsModal, ReportModal };
 
 // Tabs lifted out under issue #13 Phase C. Each tab imports its lib/ deps
 // directly and reads the live `DATA` binding from this module (see export below).
