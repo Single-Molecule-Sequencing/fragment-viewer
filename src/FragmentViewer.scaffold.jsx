@@ -3085,6 +3085,73 @@ function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
 // ======================================================================
 // TAB 1 — Single-sample electropherogram viewer with high-res trace
 // ======================================================================
+// Preprocessing controls block — rendered once for the current sample and,
+// when pairing is active, a second time for the reference sample with its
+// own `prep` state object. Factored into a component so the two instances
+// stay in lockstep visually and only differ in the accent color on the
+// border + title.
+function PrepControls({ title, accent = "zinc", prep, setPrepField }) {
+  const borderCls = accent === "indigo" ? "border-indigo-200 bg-indigo-50/40" : "border-zinc-200";
+  return (
+    <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 border-t ${borderCls}`}>
+      <span className={`font-semibold uppercase tracking-wide ${accent === "indigo" ? "text-indigo-700" : "text-zinc-600"}`}>{title}</span>
+      <label className="flex items-center gap-2">
+        <span className="text-zinc-600">Smooth</span>
+        <select value={prep.smooth} onChange={e => setPrepField("smooth", e.target.value)}
+                className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+          <option value="none">None (raw)</option>
+          <option value="savgol">Savitzky–Golay</option>
+        </select>
+      </label>
+      {prep.smooth === "savgol" && (
+        <>
+          <label className="flex items-center gap-2">
+            <span className="text-zinc-600">Window</span>
+            <select value={prep.savgolWindow} onChange={e => setPrepField("savgolWindow", parseInt(e.target.value, 10))}
+                    className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+              {[5, 7, 9, 11, 13, 15, 17, 19, 21].map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-zinc-600">Order</span>
+            <select value={prep.savgolOrder} onChange={e => setPrepField("savgolOrder", parseInt(e.target.value, 10))}
+                    className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
+              <option value={2}>2 (quadratic)</option>
+              {prep.savgolWindow >= 7 && prep.savgolWindow <= 9 && <option value={4}>4 (quartic)</option>}
+            </select>
+          </label>
+        </>
+      )}
+      <label className="flex items-center gap-1 cursor-pointer">
+        <input type="checkbox" checked={prep.baseline}
+               onChange={e => setPrepField("baseline", e.target.checked)} className="w-3.5 h-3.5 accent-emerald-600" />
+        <span className="text-zinc-700">Baseline subtract</span>
+      </label>
+      {prep.baseline && (
+        <label className="flex items-center gap-2">
+          <span className="text-zinc-600">Window</span>
+          <input type="number" min="11" max="2001" step="2" value={prep.baselineWindow}
+                 onChange={e => setPrepField("baselineWindow", Math.max(11, parseInt(e.target.value, 10) || 201))}
+                 className="w-20 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
+        </label>
+      )}
+      <label className="flex items-center gap-1 cursor-pointer" title="Cap the raw signal at a ceiling (tames saturated peaks without touching the peak table)">
+        <input type="checkbox" checked={prep.clip}
+               onChange={e => setPrepField("clip", e.target.checked)} className="w-3.5 h-3.5 accent-amber-600" />
+        <span className="text-zinc-700">Clip saturated</span>
+      </label>
+      {prep.clip && (
+        <label className="flex items-center gap-2">
+          <span className="text-zinc-600">Ceiling</span>
+          <input type="number" min="1000" step="500" value={prep.clipCeiling}
+                 onChange={e => setPrepField("clipCeiling", Math.max(100, parseInt(e.target.value, 10) || 30000))}
+                 className="w-24 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
+        </label>
+      )}
+    </div>
+  );
+}
+
 function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, constructSeq, targetStart, targetEnd, palette = "default" }) {
   // Local color accessor that honors the active palette. Named to avoid
   // collision with a block-scoped `dyeColor` variable later in the function.
@@ -3163,6 +3230,22 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const [referenceSample, setReferenceSample] = useState(() => seeded("referenceSample", ""));
   const [showUncutCutMarkers, setShowUncutCutMarkers] = useState(() => seeded("showUncutCutMarkers", false));
   const [showPrecursorMarkers, setShowPrecursorMarkers] = useState(() => seeded("showPrecursorMarkers", false));
+  // Paired-sample Y-axis scaling.
+  //   "shared"      — both samples share one lane yMax (current + reference
+  //                   peaks pooled). Preserves absolute signal differences.
+  //   "independent" — each sample scales to its own peak max per channel
+  //                   ("per-sample normalization"). Preserves SHAPE /
+  //                   POSITION information while hiding intensity differences.
+  const [pairScale, setPairScale] = useState(() => seeded("pairScale", "shared"));
+  // Independent preprocessing for the reference (uncut) sample. Mirrors the
+  // `prep` state that applies to the current sample. Empty defaults = no-op
+  // so enabling pairing doesn't accidentally modify the reference display.
+  const [prepRef, setPrepRef] = useState(() => seeded("prepRef", {
+    smooth: "none", savgolWindow: 7, savgolOrder: 2,
+    baseline: false, baselineWindow: 201,
+    clip: false, clipCeiling: 30000,
+  }));
+  const setPrepRefField = (k, v) => setPrepRef(p => ({ ...p, [k]: v }));
 
   // Preprocessing pipeline applied to raw trace before rendering. Purely
   // visual — never mutates the stored traces or the called peak table.
@@ -3233,6 +3316,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
       const state = {
         sample, range, channels, mode, stackChannels, logY, smoothing,
         pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers,
+        pairScale, prepRef,
       };
       const encoded = encodeViewState(state);
       // Only mutate history if it actually changed; replaceState (not push)
@@ -3244,7 +3328,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     }, 250);
     return () => clearTimeout(id);
   }, [sample, range, channels, mode, stackChannels, logY, smoothing,
-      pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers]);
+      pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers,
+      pairScale, prepRef]);
 
   // Resolve the reference sample name. "auto" picks the first matching
   // uncut / NoCas9 / control candidate from the loaded samples. A manual
@@ -3260,6 +3345,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   }, [pairMode, referenceSample, samples, sample]);
 
   const refPeaks = resolvedReference ? (DATA.peaks[resolvedReference] || {}) : {};
+  const refRawBundle = resolvedReference ? ((DATA.traces && DATA.traces[resolvedReference]) || null) : null;
+  const hasRefRaw = !!(refRawBundle && refRawBundle.bpAxis);
 
   const presets = sample.startsWith("gRNA3")
     ? [{ l: "Full", r: [0, 500] }, { l: "Cut site", r: [75, 110] }, { l: "Tight", r: [83, 95] }, { l: "Small", r: [0, 50] }]
@@ -3288,6 +3375,18 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     }
     return out;
   }, [peaks, range]);
+
+  // Reference-sample y-max per channel, computed independently so the
+  // "independent" pair scale can normalize each sample to its own peak max.
+  // Same 1.12× headroom factor as the current-sample calc for consistency.
+  const refYMaxByChannel = useMemo(() => {
+    const out = {};
+    for (const d of DYE_ORDER) {
+      const inRange = (refPeaks[d] || []).filter(p => p[0] >= range[0] && p[0] <= range[1]);
+      out[d] = inRange.length ? Math.max(...inRange.map(p => p[1])) * 1.12 : 100;
+    }
+    return out;
+  }, [refPeaks, range]);
 
   const activeChannels = DYE_ORDER.filter(d => channels[d]);
   const sharedYMax = useMemo(() => {
@@ -3347,6 +3446,36 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     }
     return out;
   }, [showRawTrace, hasRawTrace, rawBundle, range, prep, overlayMode, peaks, smoothing]);
+
+  // Reference-sample raw trace, preprocessed via prepRef. Only computed
+  // when we have a raw bundle for the reference AND the user has chosen
+  // to overlay raw traces. Intentionally NOT gated on overlayMode === "raw"
+  // vs "residual" for the reference (residual logic lives on the current
+  // sample; reference always renders as raw preprocessed data).
+  const refRawByChannel = useMemo(() => {
+    if (!showRawTrace || !hasRefRaw || pairMode === "none") return {};
+    const bpAxis = refRawBundle.bpAxis;
+    const out = {};
+    const findIdx = (bp) => {
+      let lo = 0, hi = bpAxis.length - 1;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (bpAxis[m] < bp) lo = m + 1; else hi = m; }
+      return lo;
+    };
+    const iLo = Math.max(0, findIdx(range[0]) - 2);
+    const iHi = Math.min(bpAxis.length - 1, findIdx(range[1]) + 2);
+    for (const d of DYE_ORDER) {
+      const src = refRawBundle[d];
+      if (!src || src.length === 0) continue;
+      const pre = preprocessTrace(src, prepRef);
+      const nPts = Math.min(iHi - iLo + 1, 1500);
+      const step = Math.max(1, Math.floor((iHi - iLo + 1) / nPts));
+      const xs = [];
+      const ys = [];
+      for (let i = iLo; i <= iHi; i += step) { xs.push(bpAxis[i]); ys.push(pre[i]); }
+      out[d] = { xs, ys };
+    }
+    return out;
+  }, [showRawTrace, hasRefRaw, refRawBundle, range, prepRef, pairMode]);
 
   // Geometry
   const W = 920;
@@ -3597,17 +3726,38 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
           ))}
         </div>
         {pairMode !== "none" && (
-          <label className="flex items-center gap-1.5 text-xs">
-            <span className="text-zinc-600">Reference:</span>
-            <select value={referenceSample} onChange={e => setReferenceSample(e.target.value)}
-                    className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white max-w-[22ch] focus-ring">
-              <option value="auto">Auto-detect (NoCas9 / uncut / control)</option>
-              {samples.filter(n => n !== sample).map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-            <span className="text-[11px] text-zinc-500">
-              {resolvedReference ? <>using <span className="font-mono text-zinc-700">{resolvedReference}</span></> : <span className="text-amber-700">no match</span>}
-            </span>
-          </label>
+          <>
+            <label className="flex items-center gap-1.5 text-xs">
+              <span className="text-zinc-600">Reference:</span>
+              <select value={referenceSample} onChange={e => setReferenceSample(e.target.value)}
+                      className="px-2 py-0.5 text-xs border border-zinc-300 rounded bg-white max-w-[22ch] focus-ring">
+                <option value="auto">Auto-detect (NoCas9 / uncut / control)</option>
+                {samples.filter(n => n !== sample).map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="text-[11px] text-zinc-500">
+                {resolvedReference ? <>using <span className="font-mono text-zinc-700">{resolvedReference}</span></> : <span className="text-amber-700">no match</span>}
+              </span>
+            </label>
+            <label className="flex items-center gap-1.5 text-xs"
+                   title={
+                     pairScale === "independent"
+                       ? "Each sample scales to its own per-channel peak max (per-sample normalization). Compares SHAPE / POSITION regardless of intensity differences."
+                       : "Both samples share one lane yMax (peaks pooled). Preserves absolute signal differences."
+                   }>
+              <span className="text-zinc-600">Scale:</span>
+              <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden">
+                {[
+                  { k: "shared",      l: "Shared" },
+                  { k: "independent", l: "Per-sample" },
+                ].map(o => (
+                  <button key={o.k} onClick={() => setPairScale(o.k)}
+                    className={`px-2 py-1 ${pairScale === o.k ? "bg-indigo-600 text-white" : "bg-white text-zinc-700 hover:bg-zinc-100"}`}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </label>
+          </>
         )}
         <div className="h-5 w-px bg-zinc-200" />
         <label className="flex items-center gap-1 text-xs cursor-pointer"
@@ -3855,64 +4005,26 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
             )}
           </div>
 
-          {/* Preprocessing pipeline (only applies to raw trace) */}
+          {/* Preprocessing pipelines (only apply to raw traces). When pairing
+              is active and the reference sample has a raw trace, a SECOND
+              subsection appears for reference-specific preprocessing — so
+              the dotted uncut overlay can have e.g. baseline subtraction on
+              while the solid cut trace keeps Savitzky–Golay smoothing. */}
           {hasRawTrace && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-2 border-t border-zinc-200">
-              <span className="font-semibold uppercase tracking-wide text-zinc-600">Preprocess</span>
-              <label className="flex items-center gap-2">
-                <span className="text-zinc-600">Smooth</span>
-                <select value={prep.smooth} onChange={e => setPrepField("smooth", e.target.value)}
-                        className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
-                  <option value="none">None (raw)</option>
-                  <option value="savgol">Savitzky–Golay</option>
-                </select>
-              </label>
-              {prep.smooth === "savgol" && (
-                <>
-                  <label className="flex items-center gap-2">
-                    <span className="text-zinc-600">Window</span>
-                    <select value={prep.savgolWindow} onChange={e => setPrepField("savgolWindow", parseInt(e.target.value, 10))}
-                            className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
-                      {[5, 7, 9, 11, 13, 15, 17, 19, 21].map(w => <option key={w} value={w}>{w}</option>)}
-                    </select>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <span className="text-zinc-600">Order</span>
-                    <select value={prep.savgolOrder} onChange={e => setPrepField("savgolOrder", parseInt(e.target.value, 10))}
-                            className="px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring">
-                      <option value={2}>2 (quadratic)</option>
-                      {prep.savgolWindow >= 7 && prep.savgolWindow <= 9 && <option value={4}>4 (quartic)</option>}
-                    </select>
-                  </label>
-                </>
-              )}
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={prep.baseline}
-                       onChange={e => setPrepField("baseline", e.target.checked)} className="w-3.5 h-3.5 accent-emerald-600" />
-                <span className="text-zinc-700">Baseline subtract</span>
-              </label>
-              {prep.baseline && (
-                <label className="flex items-center gap-2">
-                  <span className="text-zinc-600">Window</span>
-                  <input type="number" min="11" max="2001" step="2" value={prep.baselineWindow}
-                         onChange={e => setPrepField("baselineWindow", Math.max(11, parseInt(e.target.value, 10) || 201))}
-                         className="w-20 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
-                </label>
-              )}
-              <label className="flex items-center gap-1 cursor-pointer" title="Cap the raw signal at a ceiling (tames saturated peaks without touching the peak table)">
-                <input type="checkbox" checked={prep.clip}
-                       onChange={e => setPrepField("clip", e.target.checked)} className="w-3.5 h-3.5 accent-amber-600" />
-                <span className="text-zinc-700">Clip saturated</span>
-              </label>
-              {prep.clip && (
-                <label className="flex items-center gap-2">
-                  <span className="text-zinc-600">Ceiling</span>
-                  <input type="number" min="1000" step="500" value={prep.clipCeiling}
-                         onChange={e => setPrepField("clipCeiling", Math.max(100, parseInt(e.target.value, 10) || 30000))}
-                         className="w-24 px-1.5 py-0.5 text-xs border border-zinc-300 rounded bg-white focus-ring tabular-nums" />
-                </label>
-              )}
-            </div>
+            <PrepControls
+              title={pairMode !== "none" && hasRefRaw ? "Preprocess · current (cut, solid)" : "Preprocess"}
+              accent="zinc"
+              prep={prep}
+              setPrepField={setPrepField}
+            />
+          )}
+          {hasRawTrace && pairMode !== "none" && hasRefRaw && (
+            <PrepControls
+              title="Preprocess · reference (uncut, dotted)"
+              accent="indigo"
+              prep={prepRef}
+              setPrepField={setPrepRefField}
+            />
           )}
         </div>
       )}
@@ -4133,17 +4245,25 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   if (!lrp.length) return null;
                   // Reference (uncut) uses the DYE color with a dotted pattern
                   // and the current sample (cut) uses the same dye color with
-                  // a solid line. That way the per-channel shift in peak
-                  // positions is visually direct — the dotted blue moves to
-                  // solid blue in the same lane. `strokeLinecap="round"` +
-                  // `strokeDasharray="1 3"` yields true dots in SVG.
+                  // a solid line. `strokeLinecap="round"` + `strokeDasharray=
+                  // "1 3"` yields true dots in SVG.
+                  //
+                  // Y-axis scaling: when pairScale === "independent" the
+                  // reference path normalizes to its OWN per-channel max
+                  // (refYMaxByChannel[dye]). When "shared" it uses the lane
+                  // yMax (which is derived from the CURRENT sample). This is
+                  // per-sample normalization — shape/position comparison
+                  // decoupled from absolute signal intensity.
                   const refColor = colorFor(dye);
                   const refFill  = colorFor(dye);
+                  const refYMax = pairScale === "independent"
+                    ? Math.max(10, refYMaxByChannel[dye])
+                    : lane.yMax;
                   if (pairMode === "mirror") {
                     const halfGeom = { laneTop: lane.top + lane.h / 2, laneH: lane.h / 2, mLeft: m.l, plotW };
                     const path = buildGaussianPath(
                       lrp.map(p => [p[0], p[1], p[2], p[3]]),
-                      range, lane.yMax, halfGeom, smoothing, false
+                      range, refYMax, halfGeom, smoothing, false
                     );
                     return (
                       <g key={`refmir-${li}-${dye}`}
@@ -4155,12 +4275,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                       </g>
                     );
                   }
-                  // Overlay mode: uncut reference at full lane height,
-                  // dye-colored, dotted (vs solid cut sample below).
                   const laneGeom = { laneTop: lane.top, laneH: lane.h, mLeft: m.l, plotW };
                   const path = buildGaussianPath(
                     lrp.map(p => [p[0], p[1], p[2], p[3]]),
-                    range, lane.yMax, laneGeom, smoothing, logY
+                    range, refYMax, laneGeom, smoothing, logY
                   );
                   return (
                     <g key={`refovl-${li}-${dye}`}>
@@ -4169,6 +4287,43 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                             opacity="0.95" strokeDasharray="1 3" strokeLinecap="round"
                             vectorEffect="non-scaling-stroke" />
                     </g>
+                  );
+                })}
+
+                {/* Reference raw trace (preprocessed by prepRef). Drawn only
+                    when the user has the "show raw trace" overlay on AND the
+                    reference sample has an .fsa-derived trace. Uses the
+                    reference's independent yMax when pairScale === "independent"
+                    so each sample's raw trace scales to its own peak max. */}
+                {showRawTrace && pairMode !== "none" && hasRefRaw && lane.dyes.map(dye => {
+                  const r = refRawByChannel[dye];
+                  if (!r || !r.xs.length) return null;
+                  const refYMax = pairScale === "independent"
+                    ? Math.max(10, refYMaxByChannel[dye])
+                    : lane.yMax;
+                  // Same yScale transform as the lane, but rebuilt against
+                  // refYMax to normalize the reference sample independently.
+                  const yOfRef = (v) => {
+                    const norm = logY
+                      ? Math.log10(Math.max(1, v + 1)) / Math.log10(Math.max(2, refYMax + 1))
+                      : Math.max(0, v) / refYMax;
+                    return lane.top + lane.h - Math.min(1, norm) * lane.h;
+                  };
+                  const { xs, ys } = r;
+                  let d2 = "";
+                  for (let i = 0; i < xs.length; i++) {
+                    const px = xScale(xs[i]);
+                    const py = yOfRef(ys[i]);
+                    d2 += (i === 0 ? "M" : "L") + px.toFixed(1) + "," + py.toFixed(1);
+                  }
+                  return (
+                    <path key={`rawref-${li}-${dye}`} d={d2} fill="none"
+                          stroke={colorFor(dye)} strokeWidth={rawStroke}
+                          opacity={rawOpacity * 0.85}
+                          strokeDasharray="1 3" strokeLinecap="round"
+                          vectorEffect="non-scaling-stroke">
+                      <title>{`${dye} reference raw (${resolvedReference}, ${prepRef.smooth === "savgol" ? `SG ${prepRef.savgolWindow}/${prepRef.savgolOrder}` : "unsmoothed"}${prepRef.baseline ? ", baseline-subtracted" : ""}${prepRef.clip ? `, clipped@${prepRef.clipCeiling}` : ""}${pairScale === "independent" ? ", per-sample normalized" : ""})`}</title>
+                    </path>
                   );
                 })}
 
