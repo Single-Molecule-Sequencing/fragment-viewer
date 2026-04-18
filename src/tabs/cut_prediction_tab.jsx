@@ -11,6 +11,7 @@ import { ExportMenu } from "../components/export_menu.jsx";
 import { LabInventoryBadge, LabInventoryPanel } from "../components/lab_inventory.jsx";
 import { Panel, Pill, ToolButton, DyeChip, Field } from "../components/primitives.jsx";
 import { DYE, SAMPLE_DYES, CONSTRUCT, resolveDyeColor } from "../lib/constants.js";
+import { matchLabCatalog } from "../lib/grna_catalog.js";
 import {
   findGrnas, predictCutProducts, reverseComplement, productSize,
 } from "../lib/biology.js";

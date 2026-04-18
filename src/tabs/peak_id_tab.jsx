@@ -14,7 +14,7 @@ import { ChevronRight } from "lucide-react";
 import { ExportMenu } from "../components/export_menu.jsx";
 import { Panel, Pill, Stat, Field, DyeChip, ToolButton } from "../components/primitives.jsx";
 import { LabInventoryBadge } from "../components/lab_inventory.jsx";
-import { DYE, DYE_ORDER, CONSTRUCT, ASSEMBLY_PRODUCTS, resolveDyeColor } from "../lib/constants.js";
+import { DYE, DYE_ORDER, CONSTRUCT, ASSEMBLY_PRODUCTS, SAMPLE_DYES, CHEMISTRY_PRESETS, resolveDyeColor } from "../lib/constants.js";
 import { LAB_GRNA_CATALOG, matchLabCatalog, normalizeSpacer } from "../lib/grna_catalog.js";
 import { productSize, findGrnas, predictCutProducts } from "../lib/biology.js";
 import { AssemblyProductsCard } from "../components/diagrams.jsx";

@@ -9,10 +9,10 @@
 //   - AssemblyProductsCard    — editable per-component size + apply button.
 //   - TargetSequenceView      — sequence viewer with NGG/CCN highlighting.
 
-import { useMemo, useRef } from "react";
+import { useState, useMemo, useRef } from "react";
 import { Panel, ToolButton, DyeChip, Pill } from "./primitives.jsx";
 import { ExportMenu } from "./export_menu.jsx";
-import { DYE, CONSTRUCT, resolveDyeColor } from "../lib/constants.js";
+import { DYE, CONSTRUCT, ASSEMBLY_PRODUCTS, resolveDyeColor } from "../lib/constants.js";
 import { productSize } from "../lib/biology.js";
 import { mergeRefs } from "../lib/export.js";
 

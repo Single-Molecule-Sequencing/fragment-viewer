@@ -11,10 +11,13 @@ import { CheckCircle2, AlertTriangle } from "lucide-react";
 import { ExportMenu } from "../components/export_menu.jsx";
 import { Panel, DyeChip, ToolButton, Field, Pill } from "../components/primitives.jsx";
 import {
-  ASSEMBLY_PRODUCTS, CONSTRUCT, resolveDyeColor,
+  DYE, ASSEMBLY_PRODUCTS, CONSTRUCT, resolveDyeColor,
 } from "../lib/constants.js";
-import { LAB_GRNA_CATALOG } from "../lib/grna_catalog.js";
-import { productSize } from "../lib/biology.js";
+import { LAB_GRNA_CATALOG, normalizeSpacer } from "../lib/grna_catalog.js";
+import {
+  productSize, findGrnas, predictCutProducts, classifyPeaks,
+} from "../lib/biology.js";
+import { autoCalibrateDyeOffsets } from "../lib/analysis.js";
 // Helpers still in monolith (pending extraction). Circular import works
 // because these are only touched inside function bodies at render time.
 import { ConstructDiagram } from "../components/diagrams.jsx";

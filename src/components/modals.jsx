@@ -25,8 +25,10 @@ import {
   findGrnas, predictCutProducts, reverseComplement, productSize,
 } from "../lib/biology.js";
 import {
-  downloadBlob, exportSvgAsPng, buildCombinedSvg, mergeRefs,
+  downloadBlob, exportSvgNative, exportSvgAsPng, exportSvgAsJpg, exportSvgAsWebp,
+  buildCombinedSvg, mergeRefs,
 } from "../lib/export.js";
+import { buildPeakTableCSV } from "../lib/viewstate.js";
 // Still in monolith (pending future extraction).
 import {
   buildReportMarkdown, SpeciesLegend,
