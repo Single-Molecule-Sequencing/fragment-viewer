@@ -364,7 +364,7 @@ export function ReportModal({
   // flows naturally across multiple PDF pages instead of clipping to one
   // viewport.
   return createPortal(
-    <div className="fv-report-root fixed inset-0 z-50 flex items-start justify-center pt-6 pb-6 px-4 overflow-auto">
+    <div className="fv-report-root fv-keep-light fixed inset-0 z-50 flex items-start justify-center pt-6 pb-6 px-4 overflow-auto">
       <div className="fv-report-backdrop fixed inset-0 bg-black/40 no-print" onClick={onClose} />
       <div className="relative w-full max-w-5xl bg-white rounded-xl border border-zinc-200 shadow-2xl">
         <header className="flex items-start justify-between gap-3 px-5 py-4 border-b border-zinc-200">

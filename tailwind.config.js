@@ -1,6 +1,10 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,jsx,ts,tsx}"],
+  // "class" strategy lets the toolbar toggle control dark mode explicitly
+  // by adding/removing a `.dark` class on <html>, instead of the OS fighting
+  // us via prefers-color-scheme.
+  darkMode: "class",
   theme: {
     extend: {
       fontFamily: {

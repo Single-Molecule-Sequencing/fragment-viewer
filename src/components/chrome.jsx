@@ -10,13 +10,13 @@
 
 import {
   Microscope, Database, RotateCcw, FileDown, ExternalLink,
-  CheckCircle2, AlertTriangle,
+  CheckCircle2, AlertTriangle, Sun, Moon,
   Activity, Crosshair, Scissors, Layers, GitCompare,
 } from "lucide-react";
 import { Pill, ToolButton } from "./primitives.jsx";
 import { UploadButton } from "./drop_zone.jsx";
 
-export function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp, onOpenDnaDiagrams }) {
+export function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp, onOpenDnaDiagrams, darkMode, setDarkMode }) {
   return (
     <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
       <div className="flex items-center gap-2.5">
@@ -68,6 +68,14 @@ export function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenRepor
         </ToolButton>
         <ToolButton icon={ExternalLink} variant="dark" title="Copy a shareable URL that restores the current view (sample, zoom, channels, palette, pairing) on another machine" onClick={onCopyLink}>
           Link
+        </ToolButton>
+        <ToolButton
+          icon={darkMode ? Sun : Moon}
+          variant="dark"
+          title={darkMode ? "Switch to light mode (viewing only; exported figures always stay on white)" : "Switch to dark mode (viewing only; exported figures always stay on white)"}
+          onClick={() => setDarkMode(!darkMode)}
+        >
+          {darkMode ? "Light" : "Dark"}
         </ToolButton>
         <ToolButton variant="dark" title="Keyboard shortcuts (press ? anywhere)" onClick={onOpenHelp}>
           ?

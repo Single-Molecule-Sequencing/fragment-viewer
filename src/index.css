@@ -11,6 +11,10 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
+  html.dark body {
+    background: theme('colors.zinc.950');
+    color: theme('colors.zinc.100');
+  }
   /* Numeric tabular cells lock width per glyph for tidy alignment in tables */
   .num { font-variant-numeric: tabular-nums; }
 }
@@ -19,4 +23,51 @@
   .focus-ring {
     @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-1;
   }
+}
+
+/*
+ * Dark-mode viewing overrides (gh#15).
+ *
+ * The viewer paints hundreds of Tailwind zinc-light utilities (bg-white,
+ * text-zinc-900, border-zinc-200, etc.). Rather than tag every one with
+ * a `dark:` variant — which would churn dozens of files — we translate
+ * the light surface tokens wholesale here when `html` has the `.dark`
+ * class set by the toolbar toggle. Inline styles on SVG elements
+ * (<rect fill="white">, style={{ background: "white" }}) are untouched,
+ * so exported figures stay on white backgrounds regardless of mode.
+ *
+ * Scope exclusion: `.fv-keep-light` opts a subtree out of this inversion.
+ * ReportModal's printable body uses it so the "what the PDF will look
+ * like" preview remains true-to-print in dark mode.
+ */
+html.dark :not(.fv-keep-light, .fv-keep-light *) {
+  /* Surface backgrounds */
+  &.bg-white { background-color: theme('colors.zinc.900'); }
+  &.bg-zinc-50 { background-color: theme('colors.zinc.950'); }
+  &.bg-zinc-100 { background-color: theme('colors.zinc.800'); }
+  &.bg-zinc-200 { background-color: theme('colors.zinc.700'); }
+
+  /* Text colors */
+  &.text-zinc-900 { color: theme('colors.zinc.100'); }
+  &.text-zinc-800 { color: theme('colors.zinc.200'); }
+  &.text-zinc-700 { color: theme('colors.zinc.200'); }
+  &.text-zinc-600 { color: theme('colors.zinc.300'); }
+  &.text-zinc-500 { color: theme('colors.zinc.400'); }
+  &.text-zinc-400 { color: theme('colors.zinc.500'); }
+
+  /* Borders & dividers */
+  &.border-zinc-100 { border-color: theme('colors.zinc.800'); }
+  &.border-zinc-200 { border-color: theme('colors.zinc.700'); }
+  &.border-zinc-300 { border-color: theme('colors.zinc.600'); }
+  &.divide-zinc-100 > * + * { border-top-color: theme('colors.zinc.800'); }
+}
+
+/* Input fields keep a usable contrast in dark mode. */
+html.dark :not(.fv-keep-light, .fv-keep-light *) input[type="text"],
+html.dark :not(.fv-keep-light, .fv-keep-light *) input[type="number"],
+html.dark :not(.fv-keep-light, .fv-keep-light *) select,
+html.dark :not(.fv-keep-light, .fv-keep-light *) textarea {
+  background-color: theme('colors.zinc.900');
+  color: theme('colors.zinc.100');
+  border-color: theme('colors.zinc.700');
 }

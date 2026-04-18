@@ -354,6 +354,27 @@ export default function FragmentViewer() {
     } catch { /* non-fatal */ }
   }, [palette]);
 
+  // Dark-mode viewing toggle (gh#15). Class-strategy: toggle .dark on <html>
+  // and our index.css overrides map bg-white / text-zinc-900 / borders /
+  // inputs to zinc-950 family. Exported SVG/PNG/JPG/WebP figures are
+  // unaffected because their backgrounds are set via inline attributes.
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return false;
+      return window.localStorage.getItem("fragment-viewer:dark-mode") === "1";
+    } catch { return false; }
+  });
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", darkMode);
+    }
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem("fragment-viewer:dark-mode", darkMode ? "1" : "0");
+      }
+    } catch { /* non-fatal */ }
+  }, [darkMode]);
+
   // Global keyboard navigation. ←/→ step through samples, [/] adjust
   // smoothing, 1-4 toggle dye channels, Esc closes modals. Tabs listen via
   // a window-level custom event so state lives where it belongs (per-tab)
@@ -394,6 +415,8 @@ export default function FragmentViewer() {
         onDownloadCsv={handleDownloadCsv}
         onCopyLink={handleCopyLink}
         onOpenHelp={() => setHelpOpen(true)}
+        darkMode={darkMode}
+        setDarkMode={setDarkMode}
       />
       <DNADiagramsModal
         open={dnaOpen}
