@@ -1621,6 +1621,62 @@ export function ExportMenu({
   );
 }
 
+// Peak-table CSV export. Produces a tidy long-format CSV that pairs well
+// with pandas/R pipelines — one row per (sample, dye, peak) with size,
+// height, area, and FWHM width. Returns a string; caller handles the
+// download via downloadBlob.
+export function buildPeakTableCSV(peaksBySample, opts = {}) {
+  const includeO = opts.includeO === true;
+  const dyes = includeO ? ["B", "G", "Y", "R", "O"] : ["B", "G", "Y", "R"];
+  const rows = ["sample,dye,size_bp,height,area,width_fwhm_bp"];
+  for (const sample of Object.keys(peaksBySample || {}).sort()) {
+    const byDye = peaksBySample[sample] || {};
+    for (const dye of dyes) {
+      const peaks = byDye[dye] || [];
+      for (const p of peaks) {
+        // CSV-safe: sample names could in principle contain commas, so we
+        // wrap any that do. Most lab filenames are safe (underscores only).
+        const s = /[,"\n]/.test(sample) ? `"${sample.replace(/"/g, '""')}"` : sample;
+        rows.push(`${s},${dye},${p[0]},${p[1]},${p[2]},${p[3]}`);
+      }
+    }
+  }
+  return rows.join("\n") + "\n";
+}
+
+// ----------------------------------------------------------------------
+// Shareable view-state URL encoding (for "Copy link" in the Toolbar).
+// State is JSON-stringified, then base64'd into the URL hash. Keeping it
+// in the hash (not query string) means the server never sees it and no
+// navigation round-trip is needed.
+// ----------------------------------------------------------------------
+export function encodeViewState(state) {
+  try {
+    const json = JSON.stringify(state);
+    // btoa doesn't handle UTF-8 directly; encode as URI-safe UTF-8 first.
+    const b64 = (typeof btoa !== "undefined")
+      ? btoa(unescape(encodeURIComponent(json)))
+      : Buffer.from(json, "utf-8").toString("base64");
+    // URL-safe base64: replace + / = per RFC 4648.
+    return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  } catch { return ""; }
+}
+export function decodeViewState(hash) {
+  if (!hash) return null;
+  try {
+    // Accept with or without leading "#" + optional "view=" prefix.
+    const raw = hash.replace(/^#/, "").replace(/^view=/, "");
+    if (!raw) return null;
+    // Undo URL-safe base64.
+    let b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const json = (typeof atob !== "undefined")
+      ? decodeURIComponent(escape(atob(b64)))
+      : Buffer.from(b64, "base64").toString("utf-8");
+    return JSON.parse(json);
+  } catch { return null; }
+}
+
 // Cas9 nomenclature for a single ssDNA cut product.
 // Two forms are produced so the renderer can keep inline labels readable
 // while the full annotation is available on hover (JSX <title>) or in a
@@ -2432,6 +2488,42 @@ export default function FragmentViewer() {
   const calibrated = ["B", "G", "Y", "R"].some(k => Math.abs(dyeOffsets[k] || 0) > 1e-6);
 
   const [reportOpen, setReportOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Brief toast surfaced by Toolbar actions (link copied, CSV downloaded).
+  const [toast, setToast] = useState(null);
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  const handleDownloadCsv = () => {
+    const csv = buildPeakTableCSV(DATA.peaks);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    downloadBlob(blob, `peak_table_${new Date().toISOString().slice(0, 10)}.csv`);
+    setToast({ kind: "ok", text: `Downloaded peak_table_${new Date().toISOString().slice(0, 10)}.csv` });
+  };
+  const handleCopyLink = async () => {
+    try {
+      // Read the current hash that TraceTab maintains and build a full URL.
+      const hash = window.location.hash || "";
+      const url = window.location.origin + window.location.pathname + hash;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // Fallback for older browsers / non-secure contexts.
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setToast({ kind: "ok", text: hash ? "View URL copied to clipboard" : "URL copied (no view state yet — interact with the trace first)" });
+    } catch (err) {
+      setToast({ kind: "err", text: `Copy failed: ${err.message}` });
+    }
+  };
 
   // Active color palette; persisted across sessions so users with color
   // vision differences don't have to re-select every time they open the tab.
@@ -2460,13 +2552,19 @@ export default function FragmentViewer() {
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
       if (e.key === "Escape") {
         if (reportOpen) { setReportOpen(false); e.preventDefault(); return; }
+        if (helpOpen)   { setHelpOpen(false);   e.preventDefault(); return; }
+      }
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        setHelpOpen(v => !v);
+        e.preventDefault();
+        return;
       }
       // Defer to per-tab listeners by dispatching a custom event.
       window.dispatchEvent(new CustomEvent("fv:key", { detail: { key: e.key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey } }));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [reportOpen]);
+  }, [reportOpen, helpOpen]);
 
   return (
     <div key={dataKey} className="h-screen flex flex-col bg-zinc-50 text-zinc-900 font-sans antialiased">
@@ -2479,7 +2577,17 @@ export default function FragmentViewer() {
         onOpenReport={() => setReportOpen(true)}
         palette={palette}
         setPalette={setPalette}
+        onDownloadCsv={handleDownloadCsv}
+        onCopyLink={handleCopyLink}
+        onOpenHelp={() => setHelpOpen(true)}
       />
+      {toast && (
+        <div className={`fixed bottom-10 right-4 z-50 flex items-center gap-2 px-3 py-2 rounded-lg text-xs shadow-xl no-print ${toast.kind === "ok" ? "bg-emerald-600 text-white" : "bg-rose-600 text-white"}`}>
+          {toast.kind === "ok" ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+          <span>{toast.text}</span>
+        </div>
+      )}
+      <KeyboardHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
       <ReportModal
         open={reportOpen}
         onClose={() => setReportOpen(false)}
@@ -2610,6 +2718,81 @@ export function buildReportMarkdown({ samples, peaksBySample, dyeOffsets, compon
   return lines.join("\n");
 }
 
+// Keyboard shortcut cheat sheet. Opens via `?` key or the `?` toolbar
+// button. Escape closes. Entries are grouped so users can scan by intent
+// instead of memorizing a flat list.
+function KeyboardHelpModal({ open, onClose }) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  const groups = [
+    {
+      title: "Navigation",
+      rows: [
+        ["← / →", "Previous / next sample"],
+        ["f",     "Reset zoom to full range"],
+        ["Esc",   "Close modal / clear pin"],
+      ],
+    },
+    {
+      title: "Channels",
+      rows: [
+        ["1 / 2 / 3 / 4", "Toggle B / G / Y / R channel"],
+      ],
+    },
+    {
+      title: "Signal processing",
+      rows: [
+        ["[ / ]", "Decrease / increase smoothing σ multiplier"],
+        ["n",     "Toggle 3σ noise-floor reference line"],
+        ["r",     "Toggle raw unsmoothed trace overlay"],
+      ],
+    },
+    {
+      title: "Help",
+      rows: [
+        ["?", "Open this cheat sheet"],
+      ],
+    },
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 pb-10 px-4 overflow-auto no-print">
+      <div className="fixed inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-full max-w-md bg-white rounded-xl border border-zinc-200 shadow-2xl">
+        <header className="flex items-center justify-between px-5 py-4 border-b border-zinc-200">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Keyboard shortcuts</h2>
+            <p className="text-xs text-zinc-500 mt-0.5">Press <kbd className="px-1 py-0.5 text-[10px] rounded border border-zinc-300 bg-zinc-50 font-mono">Esc</kbd> to close</p>
+          </div>
+          <ToolButton variant="ghost" onClick={onClose}>Close</ToolButton>
+        </header>
+        <div className="px-5 py-4 space-y-4">
+          {groups.map(g => (
+            <section key={g.title}>
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-2">{g.title}</h3>
+              <ul className="space-y-1.5">
+                {g.rows.map(([k, desc]) => (
+                  <li key={k} className="flex items-center gap-3 text-xs">
+                    <kbd className="inline-block min-w-[4.5ch] text-center px-1.5 py-0.5 rounded border border-zinc-300 bg-zinc-50 font-mono text-zinc-800">{k}</kbd>
+                    <span className="text-zinc-700">{desc}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+          <p className="text-[11px] text-zinc-500 pt-2 border-t border-zinc-100">
+            Shortcuts are ignored when typing in an input, select, or textarea.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, componentSizes, constructSize, targetStart, targetEnd }) {
   if (!open) return null;
   const generatedAt = useMemo(() => new Date(), [open]);
@@ -2731,7 +2914,7 @@ function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, compon
 
 // Top toolbar. Brand + construct chip + global actions. 48px tall.
 // Dark bar gives the eye a stable anchor; main pane reads as the work surface.
-function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette }) {
+function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp }) {
   return (
     <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
       <div className="flex items-center gap-2.5">
@@ -2774,6 +2957,15 @@ function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, pale
         </select>
         <ToolButton icon={FileDown} variant="dark" title="Build a one-page report: sample summary, offsets, top peaks — saveable as PDF or markdown" onClick={onOpenReport}>
           Report
+        </ToolButton>
+        <ToolButton icon={FileDown} variant="dark" title="Download the full peak table as a tidy long-format CSV (sample, dye, size, height, area, width). Ready for pandas / R / Excel." onClick={onDownloadCsv}>
+          CSV
+        </ToolButton>
+        <ToolButton icon={ExternalLink} variant="dark" title="Copy a shareable URL that restores the current view (sample, zoom, channels, palette, pairing) on another machine" onClick={onCopyLink}>
+          Link
+        </ToolButton>
+        <ToolButton variant="dark" title="Keyboard shortcuts (press ? anywhere)" onClick={onOpenHelp}>
+          ?
         </ToolButton>
       </div>
     </header>
@@ -2897,6 +3089,19 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   // Local color accessor that honors the active palette. Named to avoid
   // collision with a block-scoped `dyeColor` variable later in the function.
   const colorFor = (d) => resolveDyeColor(d, palette);
+
+  // Seed for useState initializers: decode the URL hash exactly once so the
+  // initial render uses the shared view state when present. Subsequent state
+  // updates write to the hash (debounced below). Keeping this outside state
+  // prevents re-seeding on re-renders.
+  const initialViewState = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return decodeViewState(window.location.hash);
+  }, []);
+  const seeded = (key, fallback) => {
+    if (initialViewState && initialViewState[key] !== undefined) return initialViewState[key];
+    return fallback;
+  };
   // Candidate gRNAs in the construct's target window; recomputed only when
   // the construct or target window change (cheap cache-busting).
   const candidateGrnas = useMemo(() => {
@@ -2906,13 +3111,19 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     }));
   }, [constructSeq, targetStart, targetEnd]);
   const constructSize = (constructSeq || "").length || 226;
-  const [sample, setSample] = useState(samples[0]);
-  const [channels, setChannels] = useState({ B: true, G: true, Y: true, R: true, O: false });
-  const [range, setRange] = useState([0, 260]);
-  const [mode, setMode] = useState("trace");          // "trace" | "stem"
-  const [stackChannels, setStackChannels] = useState(true);
-  const [logY, setLogY] = useState(false);
-  const [smoothing, setSmoothing] = useState(1);       // sigma multiplier 0.5 - 3
+  const [sample, setSample] = useState(() => {
+    const s = seeded("sample", samples[0]);
+    return samples.includes(s) ? s : samples[0];
+  });
+  const [channels, setChannels] = useState(() => seeded("channels", { B: true, G: true, Y: true, R: true, O: false }));
+  const [range, setRange] = useState(() => {
+    const r = seeded("range", [0, 260]);
+    return Array.isArray(r) && r.length === 2 ? r : [0, 260];
+  });
+  const [mode, setMode] = useState(() => seeded("mode", "trace"));
+  const [stackChannels, setStackChannels] = useState(() => seeded("stackChannels", true));
+  const [logY, setLogY] = useState(() => seeded("logY", false));
+  const [smoothing, setSmoothing] = useState(() => seeded("smoothing", 1));
   const [labelPeaks, setLabelPeaks] = useState(true);
   const [showExpected, setShowExpected] = useState(true);
   const [showSpecies, setShowSpecies] = useState(false);
@@ -2948,10 +3159,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   //             "mirror" = butterfly / top-above-bottom layout
   // referenceSample: filename stem or "" for none; "auto" picks the first
   //                  sample whose name matches a NoCas9 / uncut / control regex.
-  const [pairMode, setPairMode] = useState("none");
-  const [referenceSample, setReferenceSample] = useState("");
-  const [showUncutCutMarkers, setShowUncutCutMarkers] = useState(false);
-  const [showPrecursorMarkers, setShowPrecursorMarkers] = useState(false);
+  const [pairMode, setPairMode] = useState(() => seeded("pairMode", "none"));
+  const [referenceSample, setReferenceSample] = useState(() => seeded("referenceSample", ""));
+  const [showUncutCutMarkers, setShowUncutCutMarkers] = useState(() => seeded("showUncutCutMarkers", false));
+  const [showPrecursorMarkers, setShowPrecursorMarkers] = useState(() => seeded("showPrecursorMarkers", false));
 
   // Preprocessing pipeline applied to raw trace before rendering. Purely
   // visual — never mutates the stored traces or the called peak table.
@@ -3012,6 +3223,28 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     window.addEventListener("fv:key", onKey);
     return () => window.removeEventListener("fv:key", onKey);
   }, [samples, sample]);
+
+  // Serialize the most shareable view state into the URL hash, debounced so
+  // drag-zoom doesn't rewrite history on every mousemove. Restoring is done
+  // once at mount via `seeded()` — there's no recovery loop here.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = setTimeout(() => {
+      const state = {
+        sample, range, channels, mode, stackChannels, logY, smoothing,
+        pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers,
+      };
+      const encoded = encodeViewState(state);
+      // Only mutate history if it actually changed; replaceState (not push)
+      // so the browser back button doesn't fill with every zoom tweak.
+      const next = `#view=${encoded}`;
+      if (window.location.hash !== next) {
+        try { window.history.replaceState(null, "", next); } catch { /* non-fatal */ }
+      }
+    }, 250);
+    return () => clearTimeout(id);
+  }, [sample, range, channels, mode, stackChannels, logY, smoothing,
+      pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers]);
 
   // Resolve the reference sample name. "auto" picks the first matching
   // uncut / NoCas9 / control candidate from the loaded samples. A manual
