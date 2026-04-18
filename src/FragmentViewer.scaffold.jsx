@@ -770,8 +770,8 @@ export function predictPostTailing({ side, topEnd, botEnd, topSeq }) {
   const adapterReason = dATailed
     ? "Single 3′-A overhang is the canonical substrate for T/A ligation adapters (Illumina TruSeq, ONT LSK/SQK ligation kits). Expected high-efficiency ligation."
     : (evalIn.overhangType === "3_prime"
-        ? `3′ overhang retained (T7 exo does not process 3′ ssDNA). T/A ligation will NOT work — consider blunting enzymes (Klenow exo⁻ fill-in) OR use a compatible sticky-end adapter if the overhang sequence is defined.`
-        : `Left untreated. Blunt-end ligation adapters can be used but at lower efficiency than T/A; alternatively run dA tailing to recover T/A compatibility.`);
+        ? `3′ overhang retained (Taq's 5′→3′ exo does not process 3′ ssDNA). T/A ligation will NOT work — consider T4 DNA polymerase fill-in + Klenow exo⁻ chewback to create a blunt end, OR use a compatible sticky-end adapter if the overhang sequence is defined.`
+        : `Left untreated. Blunt-end ligation adapters can be used but at lower efficiency than T/A; alternatively run Taq-mediated dA tailing to recover T/A compatibility.`);
 
   // Sequencing direction: after T/A adapter ligation at this cut-side end,
   // the adapter's Y-stem presents both strands to the sequencer.
@@ -3122,16 +3122,55 @@ function PrintStyles() {
         button, input[type="number"], input[type="file"], select, textarea { display: none !important; }
         .print-show { display: block !important; }
       }
-      /* When the report modal is printing, hide everything outside the report
-         container so the browser "Save as PDF" produces a clean document with
-         no navigation chrome, modal backdrop, or tab content bleeding in.    */
-      body.fv-report-printing > *:not(.fv-report-root) { display: none !important; }
-      body.fv-report-printing .fv-report-root { position: static !important; background: white !important; box-shadow: none !important; max-width: none !important; }
-      body.fv-report-printing .fv-report-root .fv-report-actions { display: none !important; }
-      body.fv-report-printing .fv-report-root .fv-report-backdrop { display: none !important; }
+
+      /* Report-modal print isolation. The modal is rendered nested inside
+         the FragmentViewer root div, so a simple "> *:not(.fv-report-root)"
+         selector can't reach across nesting levels. Instead, we use the
+         visibility-based scope pattern: hide everything, then un-hide only
+         the .fv-report-root subtree. visibility (vs display:none) preserves
+         layout and child styles inherit correctly.                         */
+      body.fv-report-printing * { visibility: hidden !important; }
+      body.fv-report-printing .fv-report-root,
+      body.fv-report-printing .fv-report-root * { visibility: visible !important; }
+      body.fv-report-printing .fv-report-root {
+        position: fixed !important;
+        top: 0 !important; left: 0 !important;
+        width: 100% !important;
+        max-width: none !important;
+        margin: 0 !important; padding: 0 !important;
+        background: white !important;
+        box-shadow: none !important;
+        border: none !important;
+        z-index: 99999 !important;
+        max-height: none !important;
+        overflow: visible !important;
+      }
+      /* The modal's scrollable content region needs explicit overflow:visible
+         so all content flows across pages instead of being clipped to the
+         viewport-height box. Same for max-height that otherwise hides content. */
+      body.fv-report-printing .fv-report-root > div,
+      body.fv-report-printing .fv-report-root > * > div {
+        max-height: none !important;
+        overflow: visible !important;
+        height: auto !important;
+      }
+      body.fv-report-printing .fv-report-actions,
+      body.fv-report-printing .fv-report-backdrop { display: none !important; }
+      /* Page break hints for printing: each top-level <section> inside the
+         report starts on a new logical page where possible. The browser
+         respects these when generating multi-page PDFs. */
+      body.fv-report-printing .fv-report-root section {
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      body.fv-report-printing .fv-report-page-break {
+        page-break-before: always;
+        break-before: page;
+      }
       @media print {
-        body.fv-report-printing { background: white !important; }
+        body.fv-report-printing { background: white !important; margin: 0 !important; }
         body.fv-report-printing .fv-report-root { padding: 0 !important; }
+        @page { size: letter portrait; margin: 0.5in; }
       }
     `}</style>
   );
@@ -3638,8 +3677,11 @@ function ReportModal({
             <ToolButton variant="ghost" onClick={onClose}>Close</ToolButton>
           </div>
         </header>
-        <div className="px-5 py-4 space-y-5 max-h-[80vh] overflow-y-auto">
-          {/* Dataset stats */}
+        <div className="px-5 py-4 space-y-5 max-h-[80vh] overflow-y-auto fv-report-content">
+          {/* ─── Section A · Summary & dataset metadata ─────────────────── */}
+          <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-200 pb-1">
+            A. Dataset summary
+          </div>
           <section>
             <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dataset</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
@@ -3650,7 +3692,6 @@ function ReportModal({
             </div>
           </section>
 
-          {/* Dye offsets snapshot */}
           <section>
             <h3 className="text-sm font-semibold text-zinc-800 mb-2">Dye mobility offsets (bp)</h3>
             <div className="grid grid-cols-4 gap-2 text-xs">
@@ -3663,7 +3704,10 @@ function ReportModal({
             </div>
           </section>
 
-          {/* Figure 1: construct architecture */}
+          {/* ─── Section B · Construct architecture & expected species ── */}
+          <div className="fv-report-page-break text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-200 pb-1 mt-4">
+            B. Construct, cut site, and expected species
+          </div>
           <section>
             <h3 className="text-sm font-semibold text-zinc-800 mb-2">
               Figure 1. Construct architecture{pickedGrna && <> · PAM + Cas9 cut at {pickedGrna.name}</>}
@@ -3756,6 +3800,10 @@ function ReportModal({
               Drawn for each loaded sample, with the first OTHER sample
               auto-picked as the reference (matches TraceTab's auto-pair
               default). */}
+          {/* ─── Section C · Chromatograms (paired overlay + annotated) ── */}
+          <div className="fv-report-page-break text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-200 pb-1 mt-4">
+            C. Capillary electrophoresis — paired overlay and annotated views
+          </div>
           {samples.length >= 2 && (
             <section>
               <h3 className="text-sm font-semibold text-zinc-800 mb-2">
@@ -3839,13 +3887,19 @@ function ReportModal({
             </div>
           </section>
 
+          {/* ─── Section D · Molecular products after end prep ──────────── */}
+          {pickedGrna && (
+            <div className="fv-report-page-break text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-200 pb-1 mt-4">
+              D. Molecular products after Taq end-prep + adapter ligation
+            </div>
+          )}
           {/* Figure 5: Post-dA-tailing products panel — reuses the same
               component the front page shows, evaluated at the canonical
               cut positions (offsets all zero = canonical cut). */}
           {pickedGrna && (
             <section>
               <h3 className="text-sm font-semibold text-zinc-800 mb-2">
-                Figure 5. Post-dA-tailing molecular products
+                Figure 5. Post-dA-tailing molecular products + T/A adapter ligation
               </h3>
               <div className="border border-zinc-200 rounded-lg bg-white p-2">
                 <PostTailingPanel
@@ -3866,9 +3920,12 @@ function ReportModal({
             </section>
           )}
 
-          {/* Per-sample summary (kept from prior version) */}
+          {/* ─── Section E · Data tables (per-sample peak + height summary) ── */}
+          <div className="fv-report-page-break text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-200 pb-1 mt-4">
+            E. Data tables
+          </div>
           <section>
-            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Per-sample summary</h3>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Per-sample peak summary</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-xs border-collapse">
                 <thead>
@@ -4593,162 +4650,206 @@ function PostTailingPanel({ cutPos, canonicalOverhang, constructSize, offsets, t
   const leftP  = predictPostTailing({ side: "left",  topEnd: leftTop,  botEnd: leftBot,  topSeq });
   const rightP = predictPostTailing({ side: "right", topEnd: rightTop, botEnd: rightBot, topSeq });
 
-  // Mini diagram showing before/after side-by-side for each end.
-  const W = 1100, H = 280;
-  const m = { l: 20, r: 20, t: 34, b: 30 };
+  // 4-step reaction diagram per end.
+  //   Step 1: ORIGINAL end geometry (from the Cas9 cut + user offsets)
+  //   Step 2: Taq 5'→3' EXO — chews back 5' overhangs to blunt
+  //   Step 3: Taq 5'→3' POL + dATP — adds single dA to every 3' terminus
+  //   Step 4: T/A ADAPTER ligation — shown attached when compatible
+  //
+  // Taq polymerase uniquely combines 5'→3' exo AND 5'→3' pol activities
+  // in one enzyme; a single Taq step does both chewback and dA addition.
+  // Taq does NOT have 3'→5' proofreading, so 3' overhangs survive both
+  // activities intact and block T/A ligation.
+  const W = 1200, H = 460;
+  const m = { l: 24, r: 24, t: 40, b: 34 };
   const pw = W - m.l - m.r;
-  const colW = pw / 2 - 20;
-  const LEFT_X = m.l;
-  const RIGHT_X = m.l + pw - colW;
+  const stepW = pw / 4 - 8;
+  const rowGap = 24;
+  const rowH = (H - m.t - m.b - rowGap) / 2;
 
-  // Render one end-state column. `x0` = left origin; `variant` ∈ "before" | "after".
-  const RenderEnd = ({ x0, side, p, variant }) => {
-    const topYGap = 18;
-    const yTop = m.t + 14;
-    const yBot = m.t + 14 + topYGap;
-    const showAs = variant === "before" ? p.original : { overhangType: p.dATailed ? "3_A" : p.postExo.overhangType, overhangLen: p.dATailed ? 1 : p.postExo.overhangLen };
-    // Simple schematic: two horizontal bars for the two strands of the
-    // cut-side end, with the post-dA A overhang shown in green when tailed.
-    const barCap = 100;
-    const bar1Start = x0 + 40;
-    const bar2Start = x0 + 40;
-    let topEnd = x0 + 40 + barCap;
-    let botEnd = x0 + 40 + barCap;
-    // Variations: for pre-existing 5' overhang pre-exo, bot extends past top
-    // on LEFT, or top extends past bot on RIGHT. For post-exo / dA states,
-    // the geometry is chewed back + tailed.
-    if (variant === "before") {
+  const STEPS = [
+    { key: "original", label: "1 · Original end",         subtitle: "Cas9 double-strand break"     },
+    { key: "exo",      label: "2 · Taq 5′→3′ exo",        subtitle: "Chews 5′ overhangs → blunt"   },
+    { key: "pol",      label: "3 · Taq 5′→3′ pol + dATP", subtitle: "Adds 3′-dA to every 3′ end"   },
+    { key: "adapter",  label: "4 · T/A adapter ligation", subtitle: "3′-A pairs with adapter 3′-T" },
+  ];
+  const stepScale = 5;
+
+  const drawEnd = (side, p, step) => {
+    const barX = 24;
+    const barW = 90;
+    const yTop = 18;
+    const yBot = 36;
+    let topEnd = barX + barW;
+    let botEnd = barX + barW;
+    let adapterAttached = false;
+    if (step === "original") {
       if (p.original.overhangType === "5_prime") {
-        if (side === "left") botEnd = topEnd + p.original.overhangLen * 2.2;
-        else                 botEnd = topEnd - p.original.overhangLen * 2.2; // bot shorter = top extends further (5' ohv on top)
+        if (side === "left") botEnd = barX + barW + p.original.overhangLen * stepScale;
+        else                 topEnd = barX + barW + p.original.overhangLen * stepScale;
       } else if (p.original.overhangType === "3_prime") {
-        if (side === "left") topEnd = botEnd + p.original.overhangLen * 2.2;
-        else                 topEnd = botEnd - p.original.overhangLen * 2.2;
+        if (side === "left") topEnd = barX + barW + p.original.overhangLen * stepScale;
+        else                 botEnd = barX + barW + p.original.overhangLen * stepScale;
       }
-    } else {
-      // After state: blunt (post-exo) then +1 bp A on 3' end (if tailed)
+    } else if (step === "exo") {
+      if (p.original.overhangType === "3_prime") {
+        if (side === "left") topEnd = barX + barW + p.original.overhangLen * stepScale;
+        else                 botEnd = barX + barW + p.original.overhangLen * stepScale;
+      }
+    } else if (step === "pol") {
       if (p.dATailed) {
-        // 3' A overhang: on LEFT, top 3' extends 1 bp past bot 5'. On RIGHT, bot 3' extends.
-        if (side === "left") topEnd = botEnd + 4;  // +4 px shows the dA tick
-        else                 botEnd = topEnd + 4;
+        if (side === "left") topEnd = barX + barW + stepScale;
+        else                 botEnd = barX + barW + stepScale;
       } else if (p.original.overhangType === "3_prime") {
-        // 3' overhang retained (no dA)
-        if (side === "left") topEnd = botEnd + p.original.overhangLen * 2.2;
-        else                 topEnd = botEnd - p.original.overhangLen * 2.2;
+        if (side === "left") topEnd = barX + barW + p.original.overhangLen * stepScale;
+        else                 botEnd = barX + barW + p.original.overhangLen * stepScale;
+      }
+    } else if (step === "adapter") {
+      if (p.dATailed) {
+        adapterAttached = true;
+        if (side === "left") topEnd = barX + barW + stepScale;
+        else                 botEnd = barX + barW + stepScale;
+      } else if (p.original.overhangType === "3_prime") {
+        if (side === "left") topEnd = barX + barW + p.original.overhangLen * stepScale;
+        else                 botEnd = barX + barW + p.original.overhangLen * stepScale;
       }
     }
-    const leftBarEnd = Math.min(bar1Start, bar2Start);
-    const rightBarEnd = Math.max(topEnd, botEnd);
-    return (
-      <g>
-        <text x={x0} y={m.t - 8} fontSize="10" fill="#475569" fontWeight="700">
-          {variant === "before" ? "Original end" : (p.dATailed ? "After exo + dA" : p.original.overhangType === "3_prime" ? "After exo (no dA)" : "After exo")}
-        </text>
-        {/* Top strand */}
-        <rect x={bar1Start} y={yTop - 3} width={Math.max(2, topEnd - bar1Start)} height="6"
-              fill="#0ea5e9" opacity="0.9" rx="1" />
-        {/* Bot strand */}
-        <rect x={bar2Start} y={yBot - 3} width={Math.max(2, botEnd - bar2Start)} height="6"
-              fill="#0369a1" opacity="0.9" rx="1" />
-        {/* Strand labels */}
-        <text x={bar1Start - 6} y={yTop + 3} fontSize="9" fill="#94a3b8" textAnchor="end" fontWeight="600">TOP</text>
-        <text x={bar2Start - 6} y={yBot + 3} fontSize="9" fill="#94a3b8" textAnchor="end" fontWeight="600">BOT</text>
-        {/* 5'/3' labels */}
-        <text x={bar1Start - 16} y={yTop + 3} fontSize="9" fill="#475569" fontWeight="700"
-              style={{ fontFamily: "JetBrains Mono, monospace" }}>5′</text>
-        <text x={bar2Start - 16} y={yBot + 3} fontSize="9" fill="#475569" fontWeight="700"
-              style={{ fontFamily: "JetBrains Mono, monospace" }}>3′</text>
-        {/* Cut-side termini labels */}
-        <text x={Math.max(topEnd, botEnd) + 6} y={yTop + 3} fontSize="9" fill="#475569" fontWeight="700"
-              style={{ fontFamily: "JetBrains Mono, monospace" }}>3′</text>
-        <text x={Math.max(topEnd, botEnd) + 6} y={yBot + 3} fontSize="9" fill="#475569" fontWeight="700"
-              style={{ fontFamily: "JetBrains Mono, monospace" }}>5′</text>
-
-        {/* Terminal sequence text for the "after" state */}
-        {variant === "after" && (
-          <g>
-            {/* Top 3' terminus sequence pill */}
-            <g transform={`translate(${Math.max(topEnd, botEnd) + 30}, ${yTop})`}>
-              <rect x="0" y="-8" width="36" height="12" rx="2"
-                    fill={p.dATailed && side === "left" ? "#10b981" : "#64748b"} />
-              <text x="18" y="1" fontSize="9" fill="white" textAnchor="middle" fontWeight="700"
-                    style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                3′ {side === "left" ? p.top3After : p.top3Before}
-              </text>
-            </g>
-            {/* Bot 3' terminus sequence pill */}
-            <g transform={`translate(${Math.max(topEnd, botEnd) + 30}, ${yBot})`}>
-              <rect x="0" y="-8" width="36" height="12" rx="2"
-                    fill={p.dATailed && side === "right" ? "#10b981" : "#64748b"} />
-              <text x="18" y="1" fontSize="9" fill="white" textAnchor="middle" fontWeight="700"
-                    style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                3′ {side === "right" ? p.bot3After : p.bot3Before}
-              </text>
-            </g>
+    const INSERT_BLUE = "#0ea5e9";
+    const INSERT_NAVY = "#0369a1";
+    const ADAPTER_PURPLE = "#8b5cf6";
+    const ADAPTER_PURPLE_DARK = "#6d28d9";
+    const els = [];
+    els.push(<rect key="top" x={barX} y={yTop - 3} width={Math.max(2, topEnd - barX)} height="6" fill={INSERT_BLUE} opacity="0.92" rx="1.5" />);
+    els.push(<rect key="bot" x={barX} y={yBot - 3} width={Math.max(2, botEnd - barX)} height="6" fill={INSERT_NAVY} opacity="0.92" rx="1.5" />);
+    els.push(<text key="t5" x={barX - 6} y={yTop + 3} fontSize="8" fill="#475569" textAnchor="end" fontWeight="700" style={{ fontFamily: "JetBrains Mono, monospace" }}>5′</text>);
+    els.push(<text key="b3" x={barX - 6} y={yBot + 3} fontSize="8" fill="#475569" textAnchor="end" fontWeight="700" style={{ fontFamily: "JetBrains Mono, monospace" }}>3′</text>);
+    // For pol + adapter steps, show terminal base pill
+    if (step === "pol" || step === "adapter") {
+      const topTerm = side === "left" ? p.top3After : p.top3Before;
+      const botTerm = side === "right" ? p.bot3After : p.bot3Before;
+      if (topTerm && topTerm !== "?") {
+        const tag = topTerm.slice(-2);
+        els.push(
+          <g key="tseq" transform={`translate(${topEnd + 3}, ${yTop})`}>
+            <rect x="0" y="-6" width={tag.length * 6 + 4} height="9" rx="1.5" fill={p.dATailed && side === "left" ? "#10b981" : "#94a3b8"} />
+            <text x={(tag.length * 6 + 4) / 2} y="1.5" fontSize="7.5" fill="white" textAnchor="middle" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>{tag}</text>
           </g>
-        )}
-
-        {/* Arrow from before → after */}
-        {variant === "before" && (
-          <g transform={`translate(${x0 + colW - 20}, ${(yTop + yBot) / 2})`}>
-            <line x1="0" y1="0" x2="28" y2="0" stroke="#6366f1" strokeWidth="1.5" />
-            <polygon points="28,-4 36,0 28,4" fill="#6366f1" />
+        );
+      }
+      if (botTerm && botTerm !== "?") {
+        const tag = botTerm.slice(-2);
+        els.push(
+          <g key="bseq" transform={`translate(${botEnd + 3}, ${yBot})`}>
+            <rect x="0" y="-6" width={tag.length * 6 + 4} height="9" rx="1.5" fill={p.dATailed && side === "right" ? "#10b981" : "#94a3b8"} />
+            <text x={(tag.length * 6 + 4) / 2} y="1.5" fontSize="7.5" fill="white" textAnchor="middle" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>{tag}</text>
           </g>
-        )}
-      </g>
-    );
+        );
+      }
+    }
+    if (adapterAttached) {
+      const adapterLen = 60;
+      const adapterStart = Math.min(topEnd, botEnd) + 10;
+      const adapterEnd = adapterStart + adapterLen;
+      els.push(
+        <g key="adapter">
+          <rect x={adapterStart} y={yTop - 3} width={adapterLen} height="6" fill={ADAPTER_PURPLE} opacity="0.9" rx="1.5" />
+          <rect x={adapterStart} y={yBot - 3} width={adapterLen} height="6" fill={ADAPTER_PURPLE_DARK} opacity="0.9" rx="1.5" />
+          <g transform={`translate(${adapterStart - 8}, ${side === "left" ? yTop : yBot})`}>
+            <rect x="-7" y="-6" width="14" height="9" rx="1.5" fill="#f59e0b" />
+            <text x="0" y="1.5" fontSize="7.5" fill="white" textAnchor="middle" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>T</text>
+          </g>
+          <line x1={adapterStart - 1} x2={side === "left" ? topEnd + 1 : botEnd + 1}
+                y1={side === "left" ? yTop : yBot}
+                y2={side === "left" ? yTop : yBot}
+                stroke="#f59e0b" strokeWidth="1.4" strokeDasharray="1 1" />
+          <text x={adapterStart + adapterLen / 2} y={yBot + 14} fontSize="8" fill={ADAPTER_PURPLE_DARK} textAnchor="middle" fontWeight="700" style={{ letterSpacing: "0.05em" }}>T/A ADAPTER</text>
+          <text x={adapterEnd + 2} y={yTop + 2.5} fontSize="8" fill={ADAPTER_PURPLE_DARK} fontWeight="700">R1 →</text>
+        </g>
+      );
+    }
+    if (step === "adapter" && !p.dATailed) {
+      els.push(
+        <g key="notcomp" transform={`translate(${barX + barW + 30}, ${(yTop + yBot) / 2})`}>
+          <circle cx="0" cy="0" r="12" fill="#fee2e2" stroke="#e11d48" strokeWidth="1.4" />
+          <text x="0" y="3.5" fontSize="13" fill="#e11d48" textAnchor="middle" fontWeight="800">✗</text>
+          <text x="18" y="0" fontSize="8.5" fill="#e11d48" fontWeight="700">T/A fails</text>
+          <text x="18" y="10" fontSize="7.5" fill="#be123c">
+            {p.original.overhangType === "3_prime" ? "3′ overhang blocks dA" : "No dA"}
+          </text>
+        </g>
+      );
+    }
+    return <g>{els}</g>;
   };
+
+  const renderRow = (y0, side, p, rowTitle) => (
+    <g>
+      <text x={m.l} y={y0 - 6} fontSize="12" fill="#1f2937" fontWeight="700">{rowTitle}</text>
+      <text x={m.l + 170} y={y0 - 6} fontSize="10" fill="#64748b">
+        Final: <tspan fontWeight="700" fill={p.dATailed ? "#10b981" : "#e11d48"} style={{ fontFamily: "JetBrains Mono, monospace" }}>{p.endCode}</tspan>
+        {" · Adapter: "}
+        <tspan fontWeight="700" fill={p.adapterCompatible ? "#10b981" : "#e11d48"}>
+          {p.adapterCompatible ? "T/A ✓" : "T/A ✗"}
+        </tspan>
+      </text>
+      {STEPS.map((step, i) => {
+        const x0 = m.l + i * (stepW + 8);
+        return (
+          <g key={step.key} transform={`translate(${x0}, ${y0})`}>
+            <rect x="0" y="0" width={stepW} height="26" rx="3" fill="#f1f5f9" />
+            <text x={stepW / 2} y="11" fontSize="9.5" fill="#0f172a" textAnchor="middle" fontWeight="700">{step.label}</text>
+            <text x={stepW / 2} y="22" fontSize="8" fill="#64748b" textAnchor="middle">{step.subtitle}</text>
+            <rect x="0" y="30" width={stepW} height={rowH - 34} rx="3" fill="white" stroke="#e2e8f0" strokeWidth="0.8" />
+            <g transform={`translate(0, 34)`}>{drawEnd(side, p, step.key)}</g>
+            {i < STEPS.length - 1 && (
+              <g transform={`translate(${stepW + 1}, ${rowH / 2})`}>
+                <line x1="0" y1="0" x2="6" y2="0" stroke="#6366f1" strokeWidth="1.5" />
+                <polygon points="4,-3 8,0 4,3" fill="#6366f1" />
+              </g>
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
 
   return (
     <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
       <div className="flex items-start justify-between gap-3 mb-2">
         <div>
-          <div className="text-sm font-semibold text-zinc-800">Post-dA-tailing molecular products</div>
+          <div className="text-sm font-semibold text-zinc-800">Post-dA-tailing molecular products + adapter ligation</div>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Applies the lab protocol (5′→3′ exonuclease chewback → Klenow exo⁻ 3′ dA addition) to each end and predicts the final terminus, adapter compatibility, and sequencing direction. 3′ overhangs are retained (neither exo nor dA act on them).
+            Four-step reaction per end. Taq DNA polymerase has BOTH 5′→3′ polymerase AND 5′→3′ exonuclease activity — one enzyme handles both chewback and dA addition in the same tube. Taq lacks 3′→5′ proofreading, so 3′ overhangs survive both activities intact and block T/A ligation.
           </p>
         </div>
-        <ExportMenu svgRef={svgRef} basename="post_tailing" label="Export" />
+        <ExportMenu svgRef={svgRef} basename="post_tailing_reactions" label="Export" />
       </div>
 
-      {/* Visual before → after */}
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
         <rect x="0" y="0" width={W} height={H} fill="white" />
-        {/* LEFT fragment end panel */}
-        <g>
-          <text x={LEFT_X} y={18} fontSize="12" fill="#1f2937" fontWeight="700">LEFT fragment end</text>
-          <rect x={LEFT_X - 4} y={m.t - 18} width={colW + 80} height={H - m.t - m.b + 20}
-                fill="none" stroke="#e2e8f0" strokeWidth="0.8" rx="4" />
-          <g transform={`translate(0, ${10})`}>
-            <RenderEnd x0={LEFT_X}               side="left" p={leftP}  variant="before" />
-            <RenderEnd x0={LEFT_X + colW / 2}    side="left" p={leftP}  variant="after"  />
-          </g>
-        </g>
-        {/* RIGHT fragment end panel */}
-        <g>
-          <text x={RIGHT_X} y={18} fontSize="12" fill="#1f2937" fontWeight="700">RIGHT fragment end</text>
-          <rect x={RIGHT_X - 4} y={m.t - 18} width={colW + 80} height={H - m.t - m.b + 20}
-                fill="none" stroke="#e2e8f0" strokeWidth="0.8" rx="4" />
-          <g transform={`translate(0, ${10})`}>
-            <RenderEnd x0={RIGHT_X}              side="right" p={rightP} variant="before" />
-            <RenderEnd x0={RIGHT_X + colW / 2}   side="right" p={rightP} variant="after"  />
-          </g>
-        </g>
-        {/* Figure legend embedded in the SVG so it travels with exports */}
-        <text x={W / 2} y={H - 8} fontSize="9" fill="#64748b" textAnchor="middle">
-          Figure: Before (left column) vs after (right column) the exo + dA protocol. Blue = top strand, navy = bot strand. Green pill = dA-tailed 3′ terminus ready for T/A-ligation adapters; gray pill = untreated 3′ terminus (retains original base). The single-nt dA overhang is exaggerated ×4 for visibility.
+        <text x={W / 2} y="20" fontSize="13" fill="#0f172a" textAnchor="middle" fontWeight="700">
+          Enzymatic end preparation + T/A adapter ligation
+        </text>
+        {renderRow(m.t + 14,                         "left",  leftP,  "LEFT fragment end")}
+        {renderRow(m.t + rowH + rowGap + 14,         "right", rightP, "RIGHT fragment end")}
+        <text x={W / 2} y={H - 14} fontSize="9" fill="#475569" textAnchor="middle">
+          Blue = insert top strand · Navy = insert bot strand · Purple = T/A adapter · Yellow T = adapter's 3′-T overhang pairing with insert's dA · Green tag = dA-tailed 3′ terminus · Gray tag = unchanged 3′ terminus · Overhang lengths drawn ×{stepScale} for visibility
         </text>
       </svg>
 
-      {/* Two cards with end codes, adapter compatibility, sequencing direction */}
       <div className="grid md:grid-cols-2 gap-3 mt-2 text-xs">
         {[["LEFT end", leftP, "left"], ["RIGHT end", rightP, "right"]].map(([title, p, side]) => (
           <div key={title} className="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50">
-            <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
               <span className="font-semibold text-zinc-800">{title}</span>
               <Pill tone={p.dATailed ? "emerald" : p.original.overhangType === "3_prime" ? "rose" : "amber"}>
                 {p.endCode}
               </Pill>
+              {p.adapterCompatible ? (
+                <Pill tone="emerald">T/A ligation ✓</Pill>
+              ) : (
+                <Pill tone="rose">T/A ligation ✗</Pill>
+              )}
             </div>
             <div className="mb-1.5">
               <span className="text-zinc-600 mr-2">Terminal:</span>
@@ -4756,17 +4857,9 @@ function PostTailingPanel({ cutPos, canonicalOverhang, constructSize, offsets, t
               <span className="text-zinc-400 mx-1">·</span>
               <span className="font-mono text-zinc-800">bot 3′ {side === "right" ? p.bot3After : p.bot3Before}</span>
             </div>
-            <div className="mb-1.5">
-              <span className="text-zinc-600 mr-2">Adapter:</span>
-              {p.adapterCompatible ? (
-                <Pill tone="emerald">T/A ligation ✓</Pill>
-              ) : (
-                <Pill tone="rose">T/A ligation ✗</Pill>
-              )}
-            </div>
-            <div className="text-[11px] text-zinc-600">{p.adapterReason}</div>
-            <div className="mt-1.5 text-[11px] text-zinc-600 border-t border-zinc-200 pt-1.5">
-              <span className="font-semibold text-zinc-700">Reading direction:</span> {p.readingDirection}
+            <div className="text-[11px] text-zinc-600 mb-1.5">{p.adapterReason}</div>
+            <div className="text-[11px] text-zinc-600 border-t border-zinc-200 pt-1.5">
+              <span className="font-semibold text-zinc-700">Reads from this end:</span> {p.readingDirection}
             </div>
           </div>
         ))}
