@@ -74,6 +74,7 @@ Read the rest of this document for what each connection actually does in code.
 | **CLC wet-lab protocol** (Isaac / Nina / Rachel) | runs on the bench | Produces the GeneMapper TSV exports the viewer ingests. Documented in `docs/BIOLOGY.md` §1. |
 | **genemapper-parser** skill | function call | Parses the TSV into the locked JSON peaks schema. Both `scripts/build_artifact.py` and the in-browser `parseGenemapperTSV` use this skill's logic; the skill IS the spec. |
 | **clc-construct-registry** skill | YAML lookup | Provides the construct sequence, target window, and per-dye strand assignments. Today only V059_gRNA3 is registered; future variants land here first, then in `CONSTRUCT` in the JSX. |
+| **clc-visualizations** skill | matplotlib library + CLI | Headless equivalents of every fragment-viewer figure. Use for manuscript figures, batch QC, or downstream pipelines that cannot run the React app. Mirrors `DYE_COLORS` from the Tailwind theme. |
 
 ## Downstream connections (the viewer's outputs flow somewhere)
 

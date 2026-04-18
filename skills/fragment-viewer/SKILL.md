@@ -101,6 +101,7 @@ Answer: those are partial ligation products. "Missing Ad2" = 201 bp, "Missing Ad
 - `cas9-cut-predictor` — Python port of the cut/PAM/product math used in the Cas9 Cut Prediction tab. Use from any lab tool that needs predictions without spinning up the React viewer.
 - `genemapper-parser` — Python port of the in-browser GeneMapper TSV parser. The single source of truth for the JSON peaks shape that fragment-viewer consumes.
 - `clc-construct-registry` — YAML registry of CLC constructs (`data/constructs.yaml`). The authoritative store of construct sequences, target windows, and dye-strand conventions.
+- `clc-visualizations` — matplotlib equivalents of the JSX visualizations (electropherogram, construct, Cas9 cut diagram, 4-ssDNA products). Use for manuscript figures and headless batch QC.
 
 ### Upstream and downstream lab skills
 
