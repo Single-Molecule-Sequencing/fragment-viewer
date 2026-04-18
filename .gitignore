@@ -26,5 +26,7 @@ data/*.dat
 data/*.fsa
 data/*.ab1
 
-# Knowledge base (lives in home dir)
-lab_knowledge.db
+# Lab-internal scratch space (never commit).
+.issues-snapshot/
+.project/
+skills/

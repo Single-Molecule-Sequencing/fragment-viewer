@@ -49,13 +49,6 @@ The format is loosely [Keep a Changelog](https://keepachangelog.com/). This proj
 - Drag-and-drop GeneMapper TSV ingestion in the viewer header (`<DropZone>`, `parseGenemapperTSV`); on drop the parsed peaks replace `DATA.peaks` and a `dataKey`-keyed remount re-initializes every tab.
 - PDF report export on the Auto Classify tab via `window.print()` and a `<PrintStyles>` `@media print` block.
 - Dye mobility offsets persist to `localStorage`; Download JSON / Upload JSON buttons in the offsets panel for sharing calibration sidecars.
-- `scripts/cross_link_smaseq.py`: substring-matches `fragment_analysis_experiments` rows against the SMA-seq registry to surface CE-to-SMAseq provenance.
-- Skill installation: symlink chain `~/.claude/skills/fragment-viewer` → `~/repos/ont-ecosystem/skills/fragment-viewer/SKILL.md` → repo `skills/fragment-viewer/SKILL.md`. Adds canonical-repo-location header to the SKILL.
-- Project registration in `lab-papers/papers.yaml::projects`. `/menu`'s `gather_context.py` now lists `fragment-viewer` as an active project.
-- 5 fragment-viewer paths added to `lab-query-router/lab_query/settings.py::sources`; reindex grew the corpus by 73 chunks.
-- Post-edit hook `~/.claude/hooks/post-edit-fragment-viewer.sh` registered in `~/.claude/settings.json::PostToolUse`; resyncs the KB when the JSX catalog block or `data/fa_data.json` change.
-- systemd user timer `fragment-viewer-ingest.timer` (03:30 nightly) wired to `~/.local/bin/fragment-viewer-ingest` wrapper. Wrapper sidesteps systemd argv whitespace parsing.
-- Decision record `lab-wiki/decisions/2026-04-18-ont-registry-ce-fragment-platform.md` (status proposed) for the `platform: CE-fragment` ONT-registry extension; lab-wiki autonomous tooling auto-anchored it to SMS Textbook Part 12 §12.F.
 
 ### Changed
 - 12 helpers and constants in `src/FragmentViewer.jsx` are now `export`ed so the test harness can import them. Module remains a valid React default-export artifact.

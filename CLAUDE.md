@@ -30,25 +30,8 @@ Canonical construct: 226 bp V059_gRNA3 ligated product with a 118 bp target wind
 - **Change the construct.** Update `CONSTRUCT.seq`, `CONSTRUCT.targetRange`, `CONSTRUCT.components` in parallel with `docs/BIOLOGY.md` §2 and §3.
 - **Regression-test after any biology change.** Run the local JSX parse check (`node -e "require('esbuild').transform(...)"` — see CONTRIBUTING.md).
 
-## Related lab infrastructure
-
-This project depends on and is invoked via:
-- **Skill** `skills/fragment-viewer/SKILL.md` — Claude loads this on any mention of fragment analysis, CE, CLC, TAMRA/HEX/ROX/6-FAM, V059, gRNA3.
-- **Knowledge base** `~/lab_knowledge.db` — tables `lab_grnas` and `fragment_analysis_experiments`. Sync with `scripts/ingest_to_kb.py`.
-- **Related skills** `cas9-guide-mapper`, `grna-variant-checker`, `golden-gate-assembly`, `demux-analysis`, `lab-research-oracle`.
-
-## Current open questions (see `.project/HANDOFF.md` for full list)
-
-1. Actual 20-nt spacer of V059_gRNA3 is not in any source I could find on Drive — need Isaac or the IDT order record.
-2. The gRNA3_X-Y samples (~88 bp peaks) probably use a different construct than the 226 bp V059 in the SnapGene file. Need clarification.
-3. Dye-mobility offset not yet quantified for our CE instrument — needs a blunt positive-control ligation.
-
 ## Do NOT
 
 - Do not add a fifth tab to the viewer without updating `docs/ARCHITECTURE.md` §1.
 - Do not hard-code experimental data into `src/` constants. Data goes in `data/`.
 - Do not try to infer the V059_gRNA3 spacer from the observed CE peaks. Auto-pick gives an approximation; the real spacer comes from the user.
-
-## Where Greg is at
-
-See `.project/HANDOFF.md` for the working state. Last updated 2026-04-18.

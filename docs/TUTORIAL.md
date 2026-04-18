@@ -213,39 +213,14 @@ This writes the new data into the `DATA` object at the top of the JSX.
 { name: "V073_gRNA1", spacer: "ACGTACGTACGTACGTACGT", source: "IDT order 2026-05-02", target: "V073 synthetic target (104 bp)", notes: "Aim 2 pilot" },
 ```
 
-**Step 5.** Sync:
+**Step 5.** Commit:
 ```bash
-python scripts/ingest_to_kb.py --all
 git add -A && git commit -m "Add V073 experiment and gRNA to catalog" && git push
 ```
 
 ---
 
-## 6. Integration with lab infrastructure
-
-### 6.1 Skill
-
-`skills/fragment-viewer/SKILL.md` triggers on any of these terms: fragment analysis, capillary electrophoresis, GeneMapper, PeakScanner, fluorescent adapter, TAMRA, 6-FAM, HEX, ROX, CLC, Cleavage-Ligation-Cycling, V059, V059_gRNA3, gRNA3, cutting efficiency assay, fragment-viewer.
-
-Whenever you or another lab member prompts Claude with any of those terms, the skill is loaded automatically. Claude reads `docs/BIOLOGY.md` for canonical biology and follows the hard rules documented there (pairing is B+Y / G+R; cut is 3 bp 5' of PAM; etc.).
-
-### 6.2 Knowledge base
-
-Run `python scripts/ingest_to_kb.py --all` to sync the current `LAB_GRNA_CATALOG` and all sample metadata into `~/lab_knowledge.db`. Tables:
-
-- `lab_grnas` — one row per catalog entry. Indexed on spacer and target. Queryable by `/lab-research-oracle` when anyone asks "which gRNAs cut CYP2D6 upstream?" or similar.
-- `fragment_analysis_experiments` — one row per sample in the current dataset. Tracks construct (V059) and inferred gRNA (gRNA1 through gRNA3) from sample names.
-
-Last tested ingest run: 11 gRNAs + 10 experiments inserted into `/tmp/test_kb.db` without errors.
-
-### 6.3 Cross-skill handoffs
-
-- Want to check a gRNA's off-target profile? Use `cas9-guide-mapper` against GRCh38.
-- Want to check if patient variants disrupt a gRNA's target site? Use `grna-variant-checker`.
-- Want to design the Level-0 plasmid for a new target? Use `golden-gate-assembly`.
-- Want to find what was discussed about CLC in past meetings? Use `/lab-research-oracle` (it queries `lab_knowledge.db` + Fireflies + Tactiq).
-
-### 6.4 CI
+## 6. CI
 
 `.github/workflows/validate.yml` runs on every push:
 - `esbuild` JSX parse — catches syntax errors before they reach main.

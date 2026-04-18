@@ -20,9 +20,7 @@ Fields:
 
 | Reader | Purpose |
 |---|---|
-| `matchLabCatalog(grna)` in `FragmentViewer.jsx` | Returns the catalog entry whose spacer matches the candidate gRNA's protospacer (or its reverse complement). Drives the green badge in the Cas9 Cut Prediction tab. |
-| `scripts/ingest_to_kb.py --grnas` | Regex-extracts the catalog and upserts into `lab_grnas` in `~/lab_knowledge.db`. |
-| `/lab-research-oracle`, `cas9-guide-mapper`, `grna-variant-checker` | Read `lab_grnas` from the KB. |
+| `matchLabCatalog(grna)` in `src/lib/grna_catalog.js` | Returns the catalog entry whose spacer matches the candidate gRNA's protospacer (or its reverse complement). Drives the green badge in the Cas9 Cut Prediction tab. |
 
 If the spacer is empty or not exactly 20 nt, `matchLabCatalog` returns null. So a green badge will never light up for an entry that has not been populated.
 

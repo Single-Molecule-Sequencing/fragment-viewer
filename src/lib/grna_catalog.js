@@ -11,7 +11,8 @@ export const LAB_GRNA_CATALOG = [
 
   // --- CYP2D6 pilot panel (chr22, GRCh38) ---
   // Sequences from pilot_grna_positions.bed; 20-bp protospacer, NGG PAM on + strand.
-  // Backfilled 2026-04-18 from /mnt/d/Reference_Files/GCA_000001405.15_GRCh38_no_alt_analysis_set.fasta.
+  // Backfilled 2026-04-18 from the GRCh38 no-alt analysis set FASTA
+  // (GenBank GCA_000001405.15).
   { name: "CYP2D6_upstream_1",      spacer: "GGTTTGGTGGCAGCAAGTTG", source: "pilot_grna_positions.bed; GRCh38 chr22:42120246-42120266 (+), PAM=AGG",  target: "chr22:42120246-42120266 (+)", notes: "CYP2D6 upstream pilot panel, member 1" },
   { name: "CYP2D6_upstream_2",      spacer: "TGCTGAAAGTGAGGAAGACG", source: "pilot_grna_positions.bed; GRCh38 chr22:42120299-42120319 (+), PAM=GGG",  target: "chr22:42120299-42120319 (+)", notes: "CYP2D6 upstream pilot panel, member 2; GGG PAM → expect elevated ±1 wobble per 15485-JL panel-eval v1.6" },
   { name: "CYP2D6_upstream_3",      spacer: "CCCAGCTACTCAGGAAGCTG", source: "pilot_grna_positions.bed; GRCh38 chr22:42120483-42120503 (+), PAM=AGG",  target: "chr22:42120483-42120503 (+)", notes: "CYP2D6 upstream pilot panel, member 3" },

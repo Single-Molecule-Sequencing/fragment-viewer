@@ -153,11 +153,9 @@ Edit `src/FragmentViewer.jsx`, find `LAB_GRNA_CATALOG`, append your entry. See `
 
 ---
 
-## Integration with lab infrastructure
+## Assay details
 
-- **Skill** `skills/fragment-viewer/SKILL.md` triggers on fragment analysis, capillary electrophoresis, GeneMapper, TAMRA/HEX/ROX/6-FAM, CLC, V059, gRNA3.
-- **Knowledge base** `scripts/ingest_to_kb.py` writes catalog + experiment metadata to `~/lab_knowledge.db`.
-- **Canonical construct**: `V059_gRNA3_Ligated_to_Bridge_Oligos_and_Fluorescent_Adapters.dna` (SnapGene, Athey lab, 2026-02-17). 226 bp linear ligated product.
+- **Canonical construct**: 226 bp linear ligated product. `CONSTRUCT.seq` and `CONSTRUCT.components` in `src/lib/constants.js`.
 - **Canonical gRNA**: `V059_gRNA3` — bot-strand spacer `AGTCCTGTGGTGAGGTGACG`, AGG PAM, cuts at construct position 132.
 
 ---

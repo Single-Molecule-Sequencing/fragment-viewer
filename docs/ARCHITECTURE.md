@@ -28,11 +28,10 @@ fragment-viewer/
 │   ├── build_artifact.py              GeneMapper TSV → DATA literal in JSX (legacy)
 │   ├── fsa_to_json.py                 ABIF .fsa batch → seed JSON (canonical ingest path)
 │   ├── inject_seed_json.py            seed JSON → DATA literal substitution in the scaffold
-│   └── ingest_to_kb.py                LAB_GRNA_CATALOG → ~/lab_knowledge.db (lab-internal)
+│   ├── audit_imports.py               cross-file + bundle audit for unresolved imports
+│   └── regen_scaffold.py              FragmentViewer.jsx → scaffold with DATA replaced
 ├── public/
 │   └── demo/                          V059_4-5.fsa + gRNA3_1-1.fsa (seeded demo, browser-fetched on mount)
-├── skills/
-│   └── fragment-viewer/SKILL.md       Claude skill that triggers on fragment-analysis terms
 ├── tests/                             13 vitest files, 147 tests as of v0.23.0
 │   ├── classifier.test.mjs            core classifyPeaks + matchLabCatalog
 │   ├── fsa_parser.test.mjs            ABIF parser + LIZ calibration on real fixtures
@@ -88,7 +87,6 @@ Everything biology-related is concentrated in a small block of constants near th
 1. **At runtime (primary path).** User opens the public Pages site. `FragmentViewer` mount-effect fetches `public/demo/V059_4-5.fsa` + `public/demo/gRNA3_1-1.fsa` via `fetch()`, parses each through `parseFsaArrayBuffer` (same code path as drag-drop), and populates `DATA.peaks` + `DATA.traces`. User drag-drops their own `.fsa` / `.ab1` / GeneMapper TSV to replace the seed.
 2. **At build time (seeded demo).** `scripts/fsa_to_json.py` batch-parses `.fsa` files → `data/seed_*.json`. `scripts/inject_seed_json.py` substitutes the JSON into `src/FragmentViewer.scaffold.jsx` at the `__DATA__` placeholder → `src/FragmentViewer.jsx`.
 3. **Client-only.** All analysis happens in the browser. No server. No uploads.
-4. **Lab-side knowledge base (optional).** `scripts/ingest_to_kb.py` reads the JSX (regex-extracts `LAB_GRNA_CATALOG`), writes to `~/lab_knowledge.db` for downstream skills. This path is lab-internal; public users never touch it.
 
 ## 5. The `classifyPeaks` function
 
@@ -113,8 +111,3 @@ If you need to add a sixth tab, also update:
 3. `docs/TUTORIAL.md` §2 (one new sub-section).
 4. This document's table in §2.
 
-## 7. What lives outside the repo
-
-- `~/lab_knowledge.db` (SQLite). Tables `lab_grnas` and `fragment_analysis_experiments` are owned by `scripts/ingest_to_kb.py`. Other tables in this DB are owned by other lab tools.
-- `~/.claude/skills/fragment-viewer/` (symlink). Points back into `~/repos/ont-ecosystem/skills/fragment-viewer/SKILL.md`, which mirrors `skills/fragment-viewer/SKILL.md` in this repo.
-- `~/repos/lab-papers/papers.yaml::projects[fragment-viewer]`. Project registration so `/menu`, the lab query router, and overnight automations see this repo.

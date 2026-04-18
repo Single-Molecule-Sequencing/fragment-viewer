@@ -112,10 +112,8 @@ If you need to change the JSX in a way that also affects the scaffold (anything 
 | Script type | Location | Naming |
 |---|---|---|
 | One-off analysis or debugging | not in repo; keep on your filesystem | any |
-| Lab-wide reusable Python | `scripts/` | `<verb>_<noun>.py` |
+| Reusable Python | `scripts/` | `<verb>_<noun>.py` |
 | JS or shell utility | `scripts/` | same |
-| Lab-system runtime hook | `~/.claude/hooks/` | `post-edit-fragment-viewer.sh` etc |
-| Skill-internal helper | `skills/fragment-viewer/scripts/` | any |
 
 ## 9. When a change touches biology
 
