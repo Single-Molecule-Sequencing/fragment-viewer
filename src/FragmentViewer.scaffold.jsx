@@ -3341,7 +3341,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   }, [constructSeq, targetStart, targetEnd]);
   const constructSize = (constructSeq || "").length || 226;
   const [sample, setSample] = useState(() => {
-    const s = seeded("sample", samples[0]);
+    // Default to gRNA3_1-1 (the cut sample in the seeded demo pair); falls
+    // back to the first loaded sample when the demo isn't present.
+    const preferred = samples.includes("gRNA3_1-1") ? "gRNA3_1-1" : samples[0];
+    const s = seeded("sample", preferred);
     return samples.includes(s) ? s : samples[0];
   });
   const [channels, setChannels] = useState(() => seeded("channels", { B: true, G: true, Y: true, R: true, O: false }));
@@ -3388,8 +3391,15 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   //             "mirror" = butterfly / top-above-bottom layout
   // referenceSample: filename stem or "" for none; "auto" picks the first
   //                  sample whose name matches a NoCas9 / uncut / control regex.
-  const [pairMode, setPairMode] = useState(() => seeded("pairMode", "none"));
-  const [referenceSample, setReferenceSample] = useState(() => seeded("referenceSample", ""));
+  // Default pairMode to "overlay" when exactly 2 samples are loaded so the
+  // seeded demo (V059_4-5 + gRNA3_1-1) lands directly in the paired view.
+  // Larger datasets start in "none" so users don't get surprised by a
+  // random overlay pair on a 96-sample plate.
+  const [pairMode, setPairMode] = useState(() => seeded("pairMode", samples.length === 2 ? "overlay" : "none"));
+  const [referenceSample, setReferenceSample] = useState(() => seeded(
+    "referenceSample",
+    samples.includes("V059_4-5") ? "V059_4-5" : ""
+  ));
   const [showUncutCutMarkers, setShowUncutCutMarkers] = useState(() => seeded("showUncutCutMarkers", false));
   const [showPrecursorMarkers, setShowPrecursorMarkers] = useState(() => seeded("showPrecursorMarkers", false));
   // Paired-sample Y-axis scaling.
@@ -3501,7 +3511,12 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     if (referenceSample === "auto" || referenceSample === "") {
       const pat = /(no[-_ ]?cas|uncut|nocleav|control|input|t0)/i;
       const match = samples.find(n => n !== sample && pat.test(n));
-      return match || "";
+      if (match) return match;
+      // Fallback: when no name matches the uncut regex, use the FIRST other
+      // loaded sample so the overlay always renders on a 2-sample dataset.
+      // This is the common case for the seeded V059_4-5 + gRNA3_1-1 demo.
+      const anyOther = samples.find(n => n !== sample);
+      return anyOther || "";
     }
     return referenceSample === sample ? "" : referenceSample;
   }, [pairMode, referenceSample, samples, sample]);
