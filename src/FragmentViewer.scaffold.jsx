@@ -1178,7 +1178,7 @@ export function speciesSchematicProps(entry) {
 // listed (they depend on the selected gRNA + chemistry); they are
 // surfaced via the species overlay and the hover popover instead.
 // ----------------------------------------------------------------------
-export function SpeciesLegend({ componentSizes, defaultOpen = false }) {
+export function SpeciesLegend({ componentSizes, defaultOpen = false, gRNAs = [], overhangs = [0, 4], constructSize = 226 }) {
   const [open, setOpen] = useState(defaultOpen);
   // Adapter monomers as pseudo-species
   const monomers = [
@@ -1191,6 +1191,43 @@ export function SpeciesLegend({ componentSizes, defaultOpen = false }) {
     const m = {}; for (const c of CONSTRUCT.components) m[c.key] = c.size; return m;
   })();
   const productSizeOf = entry => entry.size || (entry.parts || []).reduce((t, k) => t + (sizes[k] || 0), 0);
+  // Build cut entries when a gRNA is supplied. Dedup so each unique
+  // (reactant, fragment, overhang) appears once with all dyes that carry it.
+  const cutRows = useMemo(() => {
+    if (!gRNAs.length) return [];
+    const out = [];
+    const seen = new Map();
+    let counter = 0;
+    for (const g of gRNAs) {
+      for (const oh of overhangs) {
+        for (const reactant of TARGET_REACTANTS) {
+          const products = predictCutFromReactant(g, reactant, oh);
+          if (!products) continue;
+          for (const dye of Object.keys(products)) {
+            const p = products[dye];
+            const key = `${reactant.id}:${p.fragment}:${oh}`;
+            if (seen.has(key)) {
+              seen.get(key).dyes.push(dye);
+              seen.get(key).products.push({ dye, ...p });
+              continue;
+            }
+            counter++;
+            const row = {
+              displayId: `C${counter}`,
+              reactant, fragment: p.fragment, overhang_nt: oh,
+              dyes: [dye], products: [{ dye, ...p }],
+              cut_bp: g.cut_construct,
+              gname: g.name || `cand-${g.id}`,
+              key,
+            };
+            seen.set(key, row);
+            out.push(row);
+          }
+        }
+      }
+    }
+    return out;
+  }, [gRNAs, overhangs]);
   return (
     <Panel
       title="Molecular species legend"
@@ -1250,9 +1287,53 @@ export function SpeciesLegend({ componentSizes, defaultOpen = false }) {
               })}
             </div>
           </div>
-          <div className="text-[11px] text-zinc-500 leading-snug border-t border-zinc-100 pt-2">
-            Cas9 <strong>cut products</strong> are dynamic (they depend on the chosen gRNA and chemistry) and appear inline as labeled vertical lines on each electropherogram lane plus in the hover popover. See the species overlay toggle in the controls above.
-          </div>
+          {cutRows.length > 0 ? (
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1.5">
+                Cas9 cut products ({cutRows.length})
+                <span className="ml-2 normal-case font-normal text-zinc-400">— dynamic, depend on selected gRNA + chemistry</span>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+                {cutRows.map(row => {
+                  const sprops = speciesSchematicProps(row.reactant);
+                  // Filter the dye dots to only the ones this fragment side carries
+                  const onLeft = row.fragment === "LEFT";
+                  const filteredLeft  = onLeft  ? sprops.leftDyes.filter(d => row.dyes.includes(d))  : [];
+                  const filteredRight = !onLeft ? sprops.rightDyes.filter(d => row.dyes.includes(d)) : [];
+                  return (
+                    <div key={row.key} className="flex items-center gap-2 px-2 py-1.5 rounded border border-sky-100 bg-sky-50/40">
+                      <span className="inline-flex items-center justify-center min-w-[26px] px-1 py-0.5 rounded bg-sky-600 text-white font-mono font-bold text-[10px]">
+                        {row.displayId}
+                      </span>
+                      <SpeciesSchematic
+                        parts={sprops.parts}
+                        leftDyes={filteredLeft}
+                        rightDyes={filteredRight}
+                        showCut={{ bp: row.cut_bp }}
+                        cutFragment={row.fragment}
+                        width={180} height={26}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-medium text-zinc-800 truncate">
+                          {row.gname} {row.fragment} cut from {row.reactant.name.split(" (")[0]}
+                        </div>
+                        <div className="text-[10px] text-zinc-500 font-mono">
+                          {row.products[0].length}
+                          {row.products.length > 1 && row.products.some(p => p.length !== row.products[0].length)
+                            ? ` / ${row.products.filter(p => p.length !== row.products[0].length).map(p => `${p.length}(${p.dye})`).join(",")}`
+                            : ""} nt · dyes {row.dyes.join(" ")} · {row.overhang_nt === 0 ? "blunt" : (row.overhang_nt > 0 ? `+${row.overhang_nt}nt 5'OH` : `${row.overhang_nt}nt 3'OH`)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="text-[11px] text-zinc-500 leading-snug border-t border-zinc-100 pt-2">
+              Cas9 <strong>cut products</strong> are dynamic (they depend on the chosen gRNA and chemistry). Toggle <strong>Expected species</strong> in the plot controls and pick a gRNA to see them here.
+            </div>
+          )}
         </div>
       )}
     </Panel>
@@ -2511,7 +2592,13 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
       </div>
 
       {/* Static species reference card (always available) */}
-      <SpeciesLegend componentSizes={componentSizes} defaultOpen={false} />
+      <SpeciesLegend
+        componentSizes={componentSizes}
+        defaultOpen={false}
+        gRNAs={pickedGrnaForHover ? [pickedGrnaForHover] : []}
+        overhangs={speciesOverhangs}
+        constructSize={constructSize}
+      />
         </div>
 
         {/* Right-rail sidebar with per-species visibility toggles */}
@@ -3979,7 +4066,13 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
       </div>
 
       {/* Static species reference card (always available) */}
-      <SpeciesLegend componentSizes={componentSizes} defaultOpen={false} />
+      <SpeciesLegend
+        componentSizes={componentSizes}
+        defaultOpen={false}
+        gRNAs={pickedGrna ? [pickedGrna] : []}
+        overhangs={speciesOverhangs}
+        constructSize={constructSize}
+      />
         </div>
 
         {/* Right-rail sidebar with per-species toggles (CompareTab single dye) */}
