@@ -26,11 +26,13 @@ def main() -> int:
     lines = src.splitlines(keepends=True)
     data_idx = next(
         (i for i, line in enumerate(lines)
-         if line.startswith("const DATA = ") or line.startswith("let DATA = ")),
+         if line.startswith("const DATA = ")
+         or line.startswith("export const DATA = ")
+         or line.startswith("let DATA = ")),
         None,
     )
     if data_idx is None:
-        print("[regen] No `const DATA = ` or `let DATA = ` line found", file=sys.stderr)
+        print("[regen] No `const DATA = ` / `export const DATA = ` / `let DATA = ` line found", file=sys.stderr)
         return 2
     prefix = lines[data_idx].split("=", 1)[0].rstrip() + " = "
     lines[data_idx] = f"{prefix}__DATA__;\n"

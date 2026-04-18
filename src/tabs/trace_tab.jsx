@@ -47,7 +47,24 @@ import {
 import {
   formatTick, computeLinearTicks, buildGaussianPath,
 } from "../lib/chromatogram.js";
-// Components / helpers still in the monolith. Live bindings through ESM.
+// Components already split out to their own modules — import from the
+// authoritative source, not via the FragmentViewer.jsx re-exports.
+import {
+  ConstructDiagram, ProductFragmentViz, AssemblyProductsCard,
+  TargetSequenceView,
+} from "../components/diagrams.jsx";
+import {
+  StackedChromatogram, MiniChromatogram,
+} from "../components/chromatograms.jsx";
+import {
+  EndStructureEditor, PostTailingPanel, PeakShiftPanel,
+  SampleStyleRow, PrepControls,
+} from "../components/editors.jsx";
+import { ReportModal, DNADiagramsModal } from "../components/modals.jsx";
+import { PeakSpeciesPopover, SampleSummaryCard } from "./peak_id_tab.jsx";
+import { inventoryStatus } from "../lib/grna_catalog.js";
+// Items still resident in FragmentViewer.jsx (SpeciesSchematic/Legend/Sidebar,
+// biology helpers, analysis helpers). Live bindings via ESM.
 import {
   DATA,
   SpeciesSchematic, SpeciesLegend, SpeciesSidebar,
@@ -55,15 +72,7 @@ import {
   enumerateAllSpeciesWithIds,
   expectedSpeciesForDye, SPECIES_DASH, COMPONENT_INFO,
   cas9NomenclatureLabel, predictCutFromReactant, TARGET_REACTANTS,
-  ConstructDiagram, ProductFragmentViz, AssemblyProductsCard,
-  TargetSequenceView,
-  StackedChromatogram, MiniChromatogram,
-  PeakSpeciesPopover, SampleSummaryCard,
-  EndStructureEditor, PostTailingPanel, PeakShiftPanel,
-  SampleStyleRow, PrepControls,
-  ReportModal, DNADiagramsModal,
   identifyPeaks, computeAutoDefaults,
-  inventoryStatus,
 } from "../FragmentViewer.jsx";
 
 export function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, constructSeq, targetStart, targetEnd, palette = "default" }) {

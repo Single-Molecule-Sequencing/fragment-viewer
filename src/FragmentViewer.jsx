@@ -481,7 +481,7 @@ export const SPECIES_DASH = {
 // fills the same overall width so different-sized species line up
 // visually.
 // ----------------------------------------------------------------------
-const COMPONENT_INFO = (() => {
+export const COMPONENT_INFO = (() => {
   const m = {};
   for (const c of CONSTRUCT.components) m[c.key] = c;
   return m;
@@ -976,11 +976,11 @@ export function componentSizesFrom(construct) {
 // HELPERS
 // ======================================================================
 
-const fmtBp  = v => (v === null || v === undefined || isNaN(v)) ? "—" : v.toFixed(2);
-const fmtInt = v => (v === null || v === undefined || isNaN(v)) ? "—" : Math.round(v).toLocaleString();
+export const fmtBp  = v => (v === null || v === undefined || isNaN(v)) ? "—" : v.toFixed(2);
+export const fmtInt = v => (v === null || v === undefined || isNaN(v)) ? "—" : Math.round(v).toLocaleString();
 
 // Find the tallest peak for a sample/dye within a size window.
-function dominantPeak(peaks, sample, dye, lo = 50, hi = 500) {
+export function dominantPeak(peaks, sample, dye, lo = 50, hi = 500) {
   const arr = peaks[sample]?.[dye] || [];
   let best = null;
   for (const p of arr) {
@@ -991,7 +991,7 @@ function dominantPeak(peaks, sample, dye, lo = 50, hi = 500) {
 }
 
 // Classify a peak relative to target and expected positions.
-function classifyPeak(size, target, expectedMap, tol) {
+export function classifyPeak(size, target, expectedMap, tol) {
   for (const dye of SAMPLE_DYES) {
     if (Math.abs(size - expectedMap[dye]) <= tol) return { kind: "target", dye };
   }
@@ -1002,7 +1002,7 @@ function classifyPeak(size, target, expectedMap, tol) {
 
 // Compute per-sample auto defaults: target = median of dominant B/G/Y/R peaks;
 // expected_dye = dominant peak position within window of target.
-function computeAutoDefaults(peaks) {
+export function computeAutoDefaults(peaks) {
   const cfg = {};
   for (const sample of Object.keys(peaks)) {
     const doms = {};
@@ -1031,7 +1031,7 @@ function computeAutoDefaults(peaks) {
 }
 
 // Peak ID: for each sample/dye, find nearest observed peak to expected within tol.
-function identifyPeaks(peaks, cfg) {
+export function identifyPeaks(peaks, cfg) {
   const results = {};
   for (const sample of Object.keys(cfg)) {
     const sres = {};

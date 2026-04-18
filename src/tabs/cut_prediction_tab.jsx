@@ -15,12 +15,10 @@ import {
   findGrnas, predictCutProducts, reverseComplement, productSize,
 } from "../lib/biology.js";
 import {
-  ConstructDiagram,
-  ProductFragmentViz,
-  TargetSequenceView,
-  buildGaussianPath,
-  DATA,
-} from "../FragmentViewer.jsx";
+  ConstructDiagram, ProductFragmentViz, TargetSequenceView,
+} from "../components/diagrams.jsx";
+import { buildGaussianPath } from "../lib/chromatogram.js";
+import { DATA } from "../FragmentViewer.jsx";
 
 export function CutPredictionTab({ samples, cfg, setCfg, results }) {
   const grnas = useMemo(() => findGrnas(CONSTRUCT.seq, CONSTRUCT.targetRange.start, CONSTRUCT.targetRange.end), []);

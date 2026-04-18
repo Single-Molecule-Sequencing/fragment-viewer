@@ -17,6 +17,7 @@ import { LAB_GRNA_CATALOG } from "../lib/grna_catalog.js";
 import { productSize } from "../lib/biology.js";
 // Helpers still in monolith (pending extraction). Circular import works
 // because these are only touched inside function bodies at render time.
+import { ConstructDiagram } from "../components/diagrams.jsx";
 import {
   DATA,
   classifyPeak,
@@ -25,7 +26,6 @@ import {
   computeAutoDefaults,
   expectedSpeciesForDye,
   SPECIES_DASH,
-  ConstructDiagram,
 } from "../FragmentViewer.jsx";
 
 // ======================================================================

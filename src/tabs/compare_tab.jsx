@@ -15,18 +15,18 @@ import { LAB_GRNA_CATALOG, normalizeSpacer } from "../lib/grna_catalog.js";
 import { findGrnas } from "../lib/biology.js";
 // Helpers still living in the monolith (pending future extraction).
 // ESM live-binds these so circular import resolves at render-time.
+import { buildGaussianPath } from "../lib/chromatogram.js";
+import { ProductFragmentViz } from "../components/diagrams.jsx";
+import { PeakSpeciesPopover } from "./peak_id_tab.jsx";
+import { OverhangChart } from "./cut_prediction_tab.jsx";
 import {
   DATA,
   SPECIES_DASH,
   enumerateAllSpeciesWithIds,
   expectedSpeciesForDye,
   speciesId,
-  buildGaussianPath,
   SpeciesLegend,
   SpeciesSidebar,
-  PeakSpeciesPopover,
-  OverhangChart,
-  ProductFragmentViz,
 } from "../FragmentViewer.jsx";
 
 export function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targetStart, targetEnd }) {
