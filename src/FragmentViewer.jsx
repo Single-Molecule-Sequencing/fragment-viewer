@@ -1563,6 +1563,23 @@ export const LAB_GRNA_CATALOG = [
   { name: "chr1p_2",                spacer: "ATATCATGGATGAGCCTGTG", source: "pilot_grna_positions.bed; GRCh38 chr1:46020-46040 (+), PAM=AGG",          target: "chr1:46020-46040 (+)",      notes: "Subtelomeric pilot, 1p arm" },
   { name: "chr1p_3",                spacer: "AGAACAAAGCTTCCACAGTG", source: "pilot_grna_positions.bed; GRCh38 chr1:46448-46468 (+), PAM=TGG",          target: "chr1:46448-46468 (+)",      notes: "Subtelomeric pilot, 1p arm" },
   { name: "chr17p_1",               spacer: "GGCATAAGCTGGATGTAGAG", source: "pilot_grna_positions.bed; GRCh38 chr17:65117-65137 (+), PAM=AGG",         target: "chr17:65117-65137 (+)",     notes: "Subtelomeric pilot, 17p arm" },
+  { name: "chr17p_2",               spacer: "AAGGTTGGGAGCTTGGCTTG", source: "pilot_grna_positions.bed; GRCh38 chr17:65311-65331 (+), PAM=GGG",         target: "chr17:65311-65331 (+)",     notes: "Subtelomeric pilot, 17p arm; GGG PAM → elevated ±1 wobble per 15485-JL panel-eval v1.6; adjacent-frame to chr17p_3 (Δ=1bp on +)" },
+  { name: "chr17p_3",               spacer: "AGGTTGGGAGCTTGGCTTGG", source: "pilot_grna_positions.bed; GRCh38 chr17:65312-65332 (+), PAM=GGG",         target: "chr17:65312-65332 (+)",     notes: "Subtelomeric pilot, 17p arm; GGG PAM → elevated ±1 wobble per 15485-JL panel-eval v1.6; adjacent-frame to chr17p_2 (Δ=1bp on +)" },
+
+  // --- Subtelomeric / telomeric q-arm pilots (multi-chromosome) ---
+  // From pilot_grna_positions.bed; backfilled 2026-04-18 from GRCh38 no-alt.
+  { name: "chr1q_1",                spacer: "CCATTTGCTTCCTCTGCCTG", source: "pilot_grna_positions.bed; GRCh38 chr1:248886652-248886672 (+), PAM=GGG",  target: "chr1:248886652-248886672 (+)",  notes: "Subtelomeric pilot, 1q arm; GGG PAM → elevated ±1 wobble per 15485-JL panel-eval v1.6" },
+  { name: "chr1q_2",                spacer: "GAATGCATGCTCCAGCTGTG", source: "pilot_grna_positions.bed; GRCh38 chr1:248886689-248886709 (+), PAM=TGG",  target: "chr1:248886689-248886709 (+)",  notes: "Subtelomeric pilot, 1q arm" },
+  { name: "chr1q_3",                spacer: "AGGAATGTTGGCAGGAGTTG", source: "pilot_grna_positions.bed; GRCh38 chr1:248886736-248886756 (+), PAM=AGG",  target: "chr1:248886736-248886756 (+)",  notes: "Subtelomeric pilot, 1q arm" },
+  { name: "chr22q_1",               spacer: "TGCCTCTGCCTTCACTGCTG", source: "pilot_grna_positions.bed; GRCh38 chr22:50728497-50728517 (+), PAM=TGG",  target: "chr22:50728497-50728517 (+)",   notes: "Subtelomeric pilot, 22q arm" },
+  { name: "chr22q_2",               spacer: "CCACTGAAAGCTAAGCCTTG", source: "pilot_grna_positions.bed; GRCh38 chr22:50728584-50728604 (+), PAM=GGG",  target: "chr22:50728584-50728604 (+)",   notes: "Subtelomeric pilot, 22q arm; GGG PAM → elevated ±1 wobble per 15485-JL panel-eval v1.6" },
+  { name: "chr22q_3",               spacer: "ACTTTGGCCCACTGTGCAGG", source: "pilot_grna_positions.bed; GRCh38 chr22:50728885-50728905 (+), PAM=TGG",  target: "chr22:50728885-50728905 (+)",   notes: "Subtelomeric pilot, 22q arm" },
+  { name: "chr7q_1",                spacer: "TCAAAGAACAAGGCCTAGTG", source: "pilot_grna_positions.bed; GRCh38 chr7:159236054-159236074 (+), PAM=AGG", target: "chr7:159236054-159236074 (+)",  notes: "Subtelomeric pilot, 7q arm" },
+  { name: "chr7q_2",                spacer: "AGCAGTGAAAGGACATGCAG", source: "pilot_grna_positions.bed; GRCh38 chr7:159236118-159236138 (+), PAM=AGG", target: "chr7:159236118-159236138 (+)",  notes: "Subtelomeric pilot, 7q arm" },
+  { name: "chr7q_3",                spacer: "AAGTATCAAGATGACTGGAG", source: "pilot_grna_positions.bed; GRCh38 chr7:159236143-159236163 (+), PAM=AGG", target: "chr7:159236143-159236163 (+)",  notes: "Subtelomeric pilot, 7q arm" },
+  { name: "chrXq_1",                spacer: "TCCTGGATGGCTTCAGGATG", source: "pilot_grna_positions.bed; GRCh38 chrX:155963057-155963077 (+), PAM=GGG", target: "chrX:155963057-155963077 (+)",  notes: "Subtelomeric pilot, Xq arm; GGG PAM → elevated ±1 wobble per 15485-JL panel-eval v1.6" },
+  { name: "chrXq_2",                spacer: "GCTTCATATCCTATCCTCTG", source: "pilot_grna_positions.bed; GRCh38 chrX:155963128-155963148 (+), PAM=AGG", target: "chrX:155963128-155963148 (+)",  notes: "Subtelomeric pilot, Xq arm; adjacent-frame to chrXq_3 (Δ=2bp on +)" },
+  { name: "chrXq_3",                spacer: "TTCATATCCTATCCTCTGAG", source: "pilot_grna_positions.bed; GRCh38 chrX:155963130-155963150 (+), PAM=GGG", target: "chrX:155963130-155963150 (+)",  notes: "Subtelomeric pilot, Xq arm; GGG PAM → elevated ±1 wobble per 15485-JL panel-eval v1.6; adjacent-frame to chrXq_2 (Δ=2bp on +)" },
 
   // ---- ADD NEW LAB gRNAs BELOW ----
   // { name: "Your_gRNA_Name", spacer: "NNNNNNNNNNNNNNNNNNNN", source: "...", target: "...", notes: "..." },
