@@ -1,0 +1,45 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  jsx-parse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install esbuild
+        run: npm install -g esbuild
+      - name: Parse FragmentViewer.jsx
+        run: esbuild --loader=jsx --bundle=false --log-level=warning src/FragmentViewer.jsx > /dev/null
+
+  biology-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify BIOLOGY.md and DYE_STRAND in sync
+        run: |
+          # Both files should reference the (B,Y) + (G,R) pairing convention
+          grep -q "Adapter 1 is labeled by the (B, Y) pair" docs/BIOLOGY.md || { echo "::error::BIOLOGY.md missing (B,Y) + (G,R) pairing statement"; exit 1; }
+          grep -qE "DYE_STRAND\s*=" src/FragmentViewer.jsx || { echo "::error::DYE_STRAND map not found in FragmentViewer.jsx"; exit 1; }
+          grep -qE "B[:\s]*\{.*strand:\s*['\"]bot['\"]" src/FragmentViewer.jsx || { echo "::warning::Could not verify B strand assignment"; }
+          echo "BIOLOGY.md ↔ FragmentViewer.jsx consistency check passed"
+
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python scripts
+        run: |
+          python -m py_compile scripts/build_artifact.py
+          python -m py_compile scripts/ingest_to_kb.py
+          echo "Python scripts parse clean"

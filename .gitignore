@@ -1,0 +1,27 @@
+# Build + node
+node_modules/
+dist/
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local data that should not be committed
+data/*.dat
+data/*.fsa
+data/*.ab1
+
+# Knowledge base (lives in home dir)
+lab_knowledge.db
