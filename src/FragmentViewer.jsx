@@ -383,6 +383,73 @@ export function preprocessTrace(trace, opts = {}) {
   return t;
 }
 
+// Per-peak signal-to-noise ratio. Noise is estimated from the robust MAD
+// (median absolute deviation) of the raw trace in a window around the peak,
+// with the peak itself excluded from the window. This is robust to nearby
+// peaks contaminating the noise estimate — only the tails matter.
+//
+// Returns { snr, noiseFloor } in raw-trace units, or { snr: null } when the
+// caller supplies no raw trace (peak-table-only datasets). MAD is scaled by
+// 1.4826 to approximate the gaussian σ.
+export function computePeakSNR(peakSizeBp, peakHeight, traceArr, bpAxis, windowBp = 5, excludeBp = 1.5) {
+  if (!traceArr || !bpAxis || !traceArr.length || !bpAxis.length) {
+    return { snr: null, noiseFloor: null };
+  }
+  // Binary-search the bpAxis for the window bounds.
+  const find = (bp) => {
+    let lo = 0, hi = bpAxis.length - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (bpAxis[m] < bp) lo = m + 1; else hi = m; }
+    return lo;
+  };
+  const iLo = find(peakSizeBp - windowBp);
+  const iHi = find(peakSizeBp + windowBp);
+  if (iHi - iLo < 10) return { snr: null, noiseFloor: null };
+  // Collect samples outside the peak-exclusion band.
+  const samples = [];
+  for (let i = iLo; i <= iHi; i++) {
+    if (Math.abs(bpAxis[i] - peakSizeBp) > excludeBp) samples.push(traceArr[i]);
+  }
+  if (samples.length < 10) return { snr: null, noiseFloor: null };
+  // Median + MAD.
+  const sorted = samples.slice().sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const absdev = samples.map(v => Math.abs(v - median));
+  absdev.sort((a, b) => a - b);
+  const mad = absdev[Math.floor(absdev.length / 2)];
+  const sigma = Math.max(1, mad * 1.4826);
+  const noiseFloor = median + 3 * sigma;  // 3σ above baseline — typical calling threshold
+  const snr = peakHeight / sigma;
+  return { snr, noiseFloor, sigma, localMedian: median };
+}
+
+// Cut-product purity score: fraction of total peak signal (across B/G/Y/R)
+// that falls within `tol` bp of any expected cut-product size. A proxy for
+// "did the chemistry work" that condenses the whole lane into one number.
+// Returns { purity, matchedHeight, totalHeight, matches, n }.
+//
+// Expected sizes are provided per-dye so the scorer only counts B-channel
+// signal against B-channel expectations, etc. (prevents accidental credit
+// for, say, a spurious Y peak at a B-only cut size).
+export function computePurityScore(peaksByDye, expectedByDye, tol = 1.5) {
+  let matchedHeight = 0;
+  let totalHeight = 0;
+  let matches = 0;
+  let n = 0;
+  for (const dye of ["B", "G", "Y", "R"]) {
+    const peaks = peaksByDye?.[dye] || [];
+    const exp = expectedByDye?.[dye] || [];
+    for (const p of peaks) {
+      totalHeight += p[1];
+      n += 1;
+      for (const e of exp) {
+        if (Math.abs(p[0] - e) <= tol) { matchedHeight += p[1]; matches += 1; break; }
+      }
+    }
+  }
+  const purity = totalHeight > 0 ? matchedHeight / totalHeight : 0;
+  return { purity, matchedHeight, totalHeight, matches, n };
+}
+
 // Evaluate the modeled sum-of-gaussians at a single bp position. Mirrors the
 // peak-rendering path in buildGaussianPath but returns a scalar so we can
 // sample it at arbitrary x. Used by computeResidual for the residual view
@@ -685,6 +752,32 @@ const DYE = {
   R: { name: "ROX",   color: "#d32f2f", label: "Red",    adapter: 2, pair: "G" },
   O: { name: "LIZ",   color: "#ef6c00", label: "Orange", adapter: null, pair: null },
 };
+
+// Colorblind-safe palette overrides. Applied via resolveDyeColor() so that
+// dye semantics stay fixed (B = blue channel, R = red channel, etc.) but
+// the rendered colors shift to options that remain distinguishable under
+// deutan (red-green) and protan (red-green) color vision. The Wong palette
+// (Nature Methods 2011) is the canonical journal-recommended set; Okabe-Ito
+// is a close alternative with a slightly warmer green.
+export const DYE_PALETTES = {
+  default: { B: "#1e6fdb", G: "#2e9e4a", Y: "#b8860b", R: "#d32f2f", O: "#ef6c00" },
+  // Wong (Nature Methods 2011): distinguishable under deutan/protan/tritan.
+  wong:    { B: "#0072B2", G: "#009E73", Y: "#E69F00", R: "#CC79A7", O: "#D55E00" },
+  // IBM 5-color CB-safe palette — more saturated, popular for slides.
+  ibm:     { B: "#648FFF", G: "#785EF0", Y: "#FFB000", R: "#DC267F", O: "#FE6100" },
+  // Grayscale — for publications that require grayscale figures. Dye
+  // identity is then carried by stroke-dash patterns (set elsewhere).
+  grayscale: { B: "#1f2937", G: "#4b5563", Y: "#9ca3af", R: "#111827", O: "#6b7280" },
+};
+
+// Helper used everywhere dye colors are read. Pass the palette name; if
+// unknown, falls back to default. Components that haven't been wired for
+// the palette prop continue to pass "default" and see no change.
+export function resolveDyeColor(dye, palette = "default") {
+  const p = DYE_PALETTES[palette] || DYE_PALETTES.default;
+  return p[dye] || DYE[dye]?.color || "#94a3b8";
+}
+
 const DYE_ORDER = ["B", "G", "Y", "R", "O"];
 const SAMPLE_DYES = ["B", "G", "Y", "R"];
 const LIZ_LADDER = [35, 50, 75, 100, 139, 150, 160, 200, 250, 300, 340, 350, 400, 450, 490, 500];
@@ -2288,6 +2381,41 @@ export default function FragmentViewer() {
 
   const [reportOpen, setReportOpen] = useState(false);
 
+  // Active color palette; persisted across sessions so users with color
+  // vision differences don't have to re-select every time they open the tab.
+  const [palette, setPalette] = useState(() => {
+    try {
+      if (typeof window === "undefined" || !window.localStorage) return "default";
+      return window.localStorage.getItem("fragment-viewer:palette") || "default";
+    } catch { return "default"; }
+  });
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem("fragment-viewer:palette", palette);
+      }
+    } catch { /* non-fatal */ }
+  }, [palette]);
+
+  // Global keyboard navigation. ←/→ step through samples, [/] adjust
+  // smoothing, 1-4 toggle dye channels, Esc closes modals. Tabs listen via
+  // a window-level custom event so state lives where it belongs (per-tab)
+  // without us having to lift it all the way to FragmentViewer.
+  useEffect(() => {
+    const onKey = (e) => {
+      // Ignore when typing in text input / select / textarea.
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.key === "Escape") {
+        if (reportOpen) { setReportOpen(false); e.preventDefault(); return; }
+      }
+      // Defer to per-tab listeners by dispatching a custom event.
+      window.dispatchEvent(new CustomEvent("fv:key", { detail: { key: e.key, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey } }));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [reportOpen]);
+
   return (
     <div key={dataKey} className="h-screen flex flex-col bg-zinc-50 text-zinc-900 font-sans antialiased">
       <PrintStyles />
@@ -2297,6 +2425,8 @@ export default function FragmentViewer() {
         onUpload={handleNewPeaks}
         onResetCalibration={() => setDyeOffsets({ B: 0, G: 0, Y: 0, R: 0 })}
         onOpenReport={() => setReportOpen(true)}
+        palette={palette}
+        setPalette={setPalette}
       />
       <ReportModal
         open={reportOpen}
@@ -2313,7 +2443,7 @@ export default function FragmentViewer() {
         <Sidebar tab={tab} setTab={setTab} />
         <main className="flex-1 overflow-auto bg-zinc-50">
           <div className="px-6 py-5 max-w-[1400px] mx-auto">
-            {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} />}
+            {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} palette={palette} />}
             {tab === "peakid"  && <PeakIdTab  samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
             {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
             {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
@@ -2549,7 +2679,7 @@ function ReportModal({ open, onClose, samples, peaksBySample, dyeOffsets, compon
 
 // Top toolbar. Brand + construct chip + global actions. 48px tall.
 // Dark bar gives the eye a stable anchor; main pane reads as the work surface.
-function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport }) {
+function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette }) {
   return (
     <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
       <div className="flex items-center gap-2.5">
@@ -2579,6 +2709,17 @@ function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport }) {
         <ToolButton icon={RotateCcw} variant="dark" title="Reset all per-dye mobility offsets to zero" onClick={onResetCalibration}>
           Reset calib.
         </ToolButton>
+        <select
+          value={palette}
+          onChange={e => setPalette(e.target.value)}
+          title="Dye color palette — switch to a colorblind-safe palette if needed"
+          className="px-2 py-1 text-xs bg-zinc-900 text-zinc-200 border border-zinc-700 rounded-md hover:bg-zinc-800 focus-ring"
+        >
+          <option value="default">Default palette</option>
+          <option value="wong">Wong (CB-safe, Nature Methods)</option>
+          <option value="ibm">IBM (CB-safe, slides)</option>
+          <option value="grayscale">Grayscale (print)</option>
+        </select>
         <ToolButton icon={FileDown} variant="dark" title="Build a one-page report: sample summary, offsets, top peaks — saveable as PDF or markdown" onClick={onOpenReport}>
           Report
         </ToolButton>
@@ -2700,7 +2841,10 @@ function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
 // ======================================================================
 // TAB 1 — Single-sample electropherogram viewer with high-res trace
 // ======================================================================
-function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, constructSeq, targetStart, targetEnd }) {
+function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, constructSeq, targetStart, targetEnd, palette = "default" }) {
+  // Local color accessor that honors the active palette. Named to avoid
+  // collision with a block-scoped `dyeColor` variable later in the function.
+  const colorFor = (d) => resolveDyeColor(d, palette);
   // Candidate gRNAs in the construct's target window; recomputed only when
   // the construct or target window change (cheap cache-busting).
   const candidateGrnas = useMemo(() => {
@@ -2791,6 +2935,31 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   const rawBundle = (DATA.traces && DATA.traces[sample]) || null;
   const hasRawTrace = !!(rawBundle && rawBundle.bpAxis);
   const s = cfg[sample];
+
+  const [showNoiseFloor, setShowNoiseFloor] = useState(false);
+
+  // Keyboard navigation (listens for the global fv:key event dispatched by
+  // FragmentViewer's window keydown handler — keeps state local to the tab).
+  useEffect(() => {
+    const onKey = (e) => {
+      const k = e.detail?.key;
+      if (!k) return;
+      const idx = samples.indexOf(sample);
+      if (k === "ArrowRight" && idx < samples.length - 1) setSample(samples[idx + 1]);
+      else if (k === "ArrowLeft" && idx > 0) setSample(samples[idx - 1]);
+      else if (k === "[") setSmoothing(v => Math.max(0.5, +(v - 0.1).toFixed(1)));
+      else if (k === "]") setSmoothing(v => Math.min(3.0, +(v + 0.1).toFixed(1)));
+      else if (k === "f") resetZoom();
+      else if (k === "1") setChannels(c => ({ ...c, B: !c.B }));
+      else if (k === "2") setChannels(c => ({ ...c, G: !c.G }));
+      else if (k === "3") setChannels(c => ({ ...c, Y: !c.Y }));
+      else if (k === "4") setChannels(c => ({ ...c, R: !c.R }));
+      else if (k === "n") setShowNoiseFloor(v => !v);
+      else if (k === "r") setShowRawTrace(v => !v);
+    };
+    window.addEventListener("fv:key", onKey);
+    return () => window.removeEventListener("fv:key", onKey);
+  }, [samples, sample]);
 
   // Resolve the reference sample name. "auto" picks the first matching
   // uncut / NoCas9 / control candidate from the loaded samples. A manual
@@ -2962,6 +3131,60 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     return candidateGrnas[speciesGrnaIdx - 1000] || null;
   }, [speciesGrnaIdx, candidateGrnas]);
 
+  // Per-sample purity score keyed on picked gRNA + overhangs + construct.
+  // Falls back to using assembly-product sizes when no gRNA is picked so the
+  // score is still meaningful on uncut controls (they should read ~100%
+  // purity against the assembly-product set, ~0% against cut products).
+  const purityBySample = useMemo(() => {
+    const out = {};
+    const expectedByDye = { B: [], G: [], Y: [], R: [] };
+    if (showUncutCutMarkers && pickedGrnaForHover) {
+      for (const oh of speciesOverhangs) {
+        const pr = predictCutProducts(pickedGrnaForHover, constructSize, oh);
+        for (const dye of ["B", "G", "Y", "R"]) {
+          if (pr[dye] && pr[dye].length > 0) expectedByDye[dye].push(pr[dye].length);
+        }
+      }
+    } else {
+      for (const prod of ASSEMBLY_PRODUCTS) {
+        if (!prod.dyes) continue;
+        for (const dye of prod.dyes) {
+          if (expectedByDye[dye]) expectedByDye[dye].push(productSize(prod, componentSizes));
+        }
+      }
+    }
+    for (const sn of samples) {
+      out[sn] = computePurityScore(DATA.peaks[sn] || {}, expectedByDye, 1.8);
+    }
+    return out;
+  }, [samples, pickedGrnaForHover, speciesOverhangs, componentSizes, constructSize, showUncutCutMarkers]);
+
+  // Per-peak SNR for the CURRENT sample (expensive to compute across all
+  // samples on every render — keyed only on the active sample + raw bundle).
+  // Also returns the lane-wide noise floor (median of per-peak noiseFloor)
+  // which drives the dashed reference line in the electropherogram.
+  const snrInfo = useMemo(() => {
+    if (!hasRawTrace) return { byDye: {}, noiseFloorByDye: {} };
+    const byDye = {};
+    const noiseFloorByDye = {};
+    for (const d of ["B", "G", "Y", "R"]) {
+      const src = rawBundle[d];
+      if (!src) continue;
+      const lp = peaks[d] || [];
+      const floors = [];
+      byDye[d] = lp.map(p => {
+        const r = computePeakSNR(p[0], p[1], src, rawBundle.bpAxis, 4, 1.2);
+        if (r.noiseFloor != null) floors.push(r.noiseFloor);
+        return r;
+      });
+      if (floors.length) {
+        floors.sort((a, b) => a - b);
+        noiseFloorByDye[d] = floors[Math.floor(floors.length / 2)];
+      }
+    }
+    return { byDye, noiseFloorByDye };
+  }, [hasRawTrace, rawBundle, peaks]);
+
   // Compute the full species list once per render, with stable A1/M2/C3
   // displayIds shared across dyes. Both the per-lane plot overlay and the
   // SpeciesSidebar reference this list so the IDs match.
@@ -2980,18 +3203,37 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
     <>
       <div className={showSpecies ? "lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-3" : ""}>
         <div className="min-w-0">
-      {/* Sample selector */}
+      {/* Sample selector — each button shows the sample name plus a compact
+          purity pill colored by fraction of signal matching expected species
+          (cut products when a gRNA is picked, assembly products otherwise).
+          Keyboard: ← / → step through samples. */}
       <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2">
         <div className="flex items-center gap-2 mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Sample <span className="text-zinc-400 font-normal normal-case">({samples.length})</span>
+          <span className="ml-auto text-[10px] font-normal normal-case text-zinc-400">← → to switch · purity = {showUncutCutMarkers && pickedGrnaForHover ? "cut-product match" : "assembly-product match"}</span>
         </div>
         <div className="flex flex-wrap gap-1">
-          {samples.map(ss => (
-            <button key={ss} onClick={() => setSample(ss)}
-              className={`px-2.5 py-1 text-xs rounded-md border transition ${ss === sample ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"}`}>
-              {ss}
-            </button>
-          ))}
+          {samples.map(ss => {
+            const pu = purityBySample[ss];
+            const pct = pu ? Math.round(pu.purity * 100) : null;
+            const pill = pct == null ? null : (
+              pct >= 70 ? "bg-emerald-500 text-white" :
+              pct >= 40 ? "bg-amber-400 text-zinc-900" :
+                          "bg-rose-400 text-white"
+            );
+            return (
+              <button key={ss} onClick={() => setSample(ss)}
+                className={`px-2.5 py-1 text-xs rounded-md border transition inline-flex items-center gap-1.5 ${ss === sample ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-100"}`}>
+                <span>{ss}</span>
+                {pct != null && pu.n > 0 && (
+                  <span className={`px-1 py-0 text-[10px] font-semibold rounded ${pill}`}
+                        title={`Purity: ${pu.matches}/${pu.n} peaks matched expected species · height-weighted ${(pu.purity * 100).toFixed(1)}%`}>
+                    {pct}%
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -3002,7 +3244,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
           {DYE_ORDER.map(d => (
             <label key={d} className="flex items-center gap-1 cursor-pointer select-none text-xs">
               <input type="checkbox" checked={channels[d]} onChange={e => setChannels({ ...channels, [d]: e.target.checked })} className="w-3.5 h-3.5 accent-zinc-700" />
-              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: DYE[d].color }} />
+              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: colorFor(d) }} />
               {DYE[d].label}
             </label>
           ))}
@@ -3264,6 +3506,27 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
             </label>
           </div>
 
+          {/* Noise floor group — independent of raw trace toggle because the
+              noise-floor line is useful even when the raw overlay is off */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span className="font-semibold uppercase tracking-wide text-zinc-600">Noise floor</span>
+            <label className={`flex items-center gap-1 ${hasRawTrace ? "cursor-pointer" : "opacity-50"}`}
+                   title={hasRawTrace ? "Draw a dashed reference line per lane at median (peak noise floor) + 3σ, computed from robust MAD of the raw trace. Peaks below the line are likely noise." : "Needs a raw trace (load .fsa/.ab1)"}>
+              <input type="checkbox" checked={showNoiseFloor} disabled={!hasRawTrace}
+                     onChange={e => setShowNoiseFloor(e.target.checked)} className="w-3.5 h-3.5 accent-slate-600" />
+              <span className="font-medium text-zinc-700">Show noise floor (3σ)</span>
+            </label>
+            {hasRawTrace && showNoiseFloor && (
+              <span className="text-[11px] text-zinc-500">
+                {["B","G","Y","R"].filter(d => snrInfo.noiseFloorByDye[d] != null).map(d => (
+                  <span key={d} className="inline-block mr-2">
+                    <DyeChip dye={d} /> <span className="font-mono text-zinc-700">{snrInfo.noiseFloorByDye[d].toFixed(0)}</span>
+                  </span>
+                ))}
+              </span>
+            )}
+          </div>
+
           {/* Raw trace group */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <span className="font-semibold uppercase tracking-wide text-zinc-600">Raw trace</span>
@@ -3428,7 +3691,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                 {stackChannels && (
                   <g>
                     <rect x={m.l + 6} y={lane.top + 4} width={82} height={16} rx="3" fill="white" stroke="#e2e8f0" />
-                    <circle cx={m.l + 14} cy={lane.top + 12} r="3.5" fill={DYE[lane.dyes[0]].color} />
+                    <circle cx={m.l + 14} cy={lane.top + 12} r="3.5" fill={colorFor(lane.dyes[0])} />
                     <text x={m.l + 22} y={lane.top + 15} fontSize="10" fill="#334155" fontWeight="500">
                       {DYE[lane.dyes[0]].label} · {DYE[lane.dyes[0]].name}
                     </text>
@@ -3441,7 +3704,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   const exp = s.expected[dye];
                   if (exp < range[0] || exp > range[1]) return null;
                   const x = xScale(exp);
-                  const color = DYE[dye].color;
+                  const color = colorFor(dye);
                   return (
                     <g key={`exp-${li}-${dye}`} pointerEvents="none">
                       <line x1={x} x2={x} y1={lane.top} y2={lane.top + lane.h} stroke={color} strokeWidth="1" strokeDasharray="3 3" opacity="0.55" />
@@ -3477,7 +3740,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   };
                   // Color from dye palette so the overlay reads as belonging to that channel.
                   // Kind is conveyed by stroke-dash pattern (assembly=short dash, monomer=dotted, cut=long dash).
-                  const dyeColor = DYE[dye].color;
+                  const dyeColor = colorFor(dye);
                   return (
                     <g key={`spec-${li}-${dye}`} pointerEvents="none">
                       {species.map((sp, idx) => {
@@ -3517,6 +3780,27 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                           </g>
                         );
                       })}
+                    </g>
+                  );
+                })}
+
+                {/* Noise-floor reference line. Position: yScale(noiseFloor)
+                    inside each lane, clipped to the lane frame. Dashed slate
+                    color so it reads as a reference, not signal. */}
+                {showNoiseFloor && hasRawTrace && lane.dyes.map(dye => {
+                  const nf = snrInfo.noiseFloorByDye[dye];
+                  if (nf == null) return null;
+                  const y = yScale(nf);
+                  if (y < lane.top || y > lane.top + lane.h) return null;
+                  return (
+                    <g key={`nf-${li}-${dye}`} pointerEvents="none">
+                      <line x1={m.l} x2={m.l + plotW} y1={y} y2={y}
+                            stroke="#475569" strokeWidth="0.7" strokeDasharray="3 2" opacity="0.7" />
+                      {stackChannels && (
+                        <text x={m.l + plotW - 3} y={y - 2} fontSize="8" fill="#475569" textAnchor="end" fontWeight="600">
+                          3σ · {nf.toFixed(0)}
+                        </text>
+                      )}
                     </g>
                   );
                 })}
@@ -3603,9 +3887,9 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                         <g key={`cutmk-${i}`}>
                           <line x1={xScale(mk.size)} x2={xScale(mk.size)}
                                 y1={m.t} y2={m.t + lanesCount * laneH + (lanesCount - 1) * laneGap}
-                                stroke={DYE[mk.dye].color} strokeWidth="1" strokeDasharray="5 2" opacity="0.85" />
+                                stroke={colorFor(mk.dye)} strokeWidth="1" strokeDasharray="5 2" opacity="0.85" />
                           <rect x={xScale(mk.size) - 22} y={m.t + 16 + (i % 4) * 14}
-                                width={44} height={12} rx="2" fill={DYE[mk.dye].color} opacity="0.92" />
+                                width={44} height={12} rx="2" fill={colorFor(mk.dye)} opacity="0.92" />
                           <text x={xScale(mk.size)} y={m.t + 25 + (i % 4) * 14}
                                 fontSize="8.5" fontWeight="700" fill="white" textAnchor="middle"
                                 style={{ fontFamily: "JetBrains Mono, monospace" }}>
@@ -3645,8 +3929,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                     );
                     return (
                       <g key={`tr-${li}-${dye}`}>
-                        <path d={path.fill}   fill={DYE[dye].color} opacity={stackChannels ? fillOpacity : fillOpacity * 0.5} />
-                        <path d={path.stroke} fill="none" stroke={DYE[dye].color} strokeWidth={1.5} opacity={dye === "O" ? traceOpacity * 0.68 : traceOpacity} />
+                        <path d={path.fill}   fill={colorFor(dye)} opacity={stackChannels ? fillOpacity : fillOpacity * 0.5} />
+                        <path d={path.stroke} fill="none" stroke={colorFor(dye)} strokeWidth={1.5} opacity={dye === "O" ? traceOpacity * 0.68 : traceOpacity} />
                       </g>
                     );
                   } else {
@@ -3654,7 +3938,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                       <g key={`st-${li}-${dye}`}>
                         {lp.map((p, i) => {
                           const x = xScale(p.size);
-                          return <line key={i} x1={x} x2={x} y1={yScale(0)} y2={yScale(p.height)} stroke={DYE[dye].color} strokeWidth="1.2" opacity={dye === "O" ? 0.6 : 0.92} />;
+                          return <line key={i} x1={x} x2={x} y1={yScale(0)} y2={yScale(p.height)} stroke={colorFor(dye)} strokeWidth="1.2" opacity={dye === "O" ? 0.6 : 0.92} />;
                         })}
                       </g>
                     );
@@ -3695,7 +3979,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                     const py = yOf(ys[i]);
                     d += (i === 0 ? "M" : "L") + px.toFixed(1) + "," + py.toFixed(1);
                   }
-                  const stroke = residual ? "#c026d3" : DYE[dye].color;
+                  const stroke = residual ? "#c026d3" : colorFor(dye);
                   return (
                     <path key={`raw-${li}-${dye}`} d={d} fill="none"
                           stroke={stroke} strokeWidth={rawStroke}
@@ -3728,7 +4012,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                     const y = yScale(p.height);
                     return (
                       <g key={`lbl-${li}-${i}`} pointerEvents="none">
-                        <text x={x} y={y - 4} fontSize="9" textAnchor="middle" fill={DYE[p.dye].color} fontWeight="600" fontFamily="ui-monospace, monospace">
+                        <text x={x} y={y - 4} fontSize="9" textAnchor="middle" fill={colorFor(p.dye)} fontWeight="600" fontFamily="ui-monospace, monospace">
                           {p.size.toFixed(1)}
                         </text>
                       </g>
@@ -3767,8 +4051,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                             <circle
                               cx={x} cy={y}
                               r={pinned ? 5 : 3}
-                              fill={pinned ? DYE[dye].color : "white"}
-                              stroke={DYE[dye].color}
+                              fill={pinned ? colorFor(dye) : "white"}
+                              stroke={colorFor(dye)}
                               strokeWidth={pinned ? 1.5 : 1.2}
                               opacity={pinned ? 1 : (mode === "trace" ? 0.9 : 0.7)}
                               pointerEvents="none"
