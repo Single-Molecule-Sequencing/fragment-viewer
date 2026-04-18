@@ -696,6 +696,110 @@ export function evaluateDATailing({ side, topEnd, botEnd }) {
   return { overhangType, overhangLen, dATailable, confidence, reason };
 }
 
+// ----------------------------------------------------------------------
+// Post-dA-tailing product prediction: given an end's geometry + the local
+// construct sequence, simulate the lab's exo+dA protocol and return the
+// final terminal structure, adapter compatibility, and sequencing
+// direction. Used by PostTailingPanel.
+// ----------------------------------------------------------------------
+export function predictPostTailing({ side, topEnd, botEnd, topSeq }) {
+  const evalIn = evaluateDATailing({ side, topEnd, botEnd });
+  const rc = (b) => ({ A: "T", T: "A", G: "C", C: "G", N: "N" })[(b || "N").toUpperCase()] || "N";
+  const tEnd = Math.max(0, Math.min((topSeq || "").length, topEnd));
+  const bEnd = Math.max(0, Math.min((topSeq || "").length, botEnd));
+
+  // Extract terminal sequence context (last 2 bases near the cut side).
+  // On LEFT end:  top 3' terminus is at position tEnd-1 (the last base of
+  //               the left fragment on top). Bot 5' terminus sits at bEnd-1
+  //               (the base paired with top[bEnd-1], read as its complement).
+  // On RIGHT end: top 5' terminus at tEnd (first base of right fragment on
+  //               top). Bot 3' terminus at bEnd (complement of top[bEnd]).
+  let top3Before = "?";
+  let bot3Before = "?";
+  if (topSeq) {
+    if (side === "left") {
+      top3Before = (topSeq[tEnd - 1] || "?").toUpperCase();
+      // Bot 3' end on LEFT side is at the OUTER (construct-start) edge of
+      // the LEFT fragment — use the complement of the first base.
+      bot3Before = rc(topSeq[0] || "?");
+    } else {
+      // RIGHT end: bot 3' terminus is at the cut side.
+      bot3Before = rc(topSeq[bEnd] || "?");
+      // Top 3' on RIGHT side is at the OUTER (construct-end) edge.
+      top3Before = (topSeq[topSeq.length - 1] || "?").toUpperCase();
+    }
+  }
+
+  // Exo chewback: 5' overhangs are chewed back to blunt. 3' overhangs are
+  // untouched. Post-exo overhang type:
+  const postExoOverhang = evalIn.overhangType === "5_prime" ? "blunt" : evalIn.overhangType;
+  const postExoLen = evalIn.overhangType === "5_prime" ? 0 : evalIn.overhangLen;
+
+  // dA addition: only adds to 3' ends that are EITHER blunt or recessed
+  // (post-exo blunting). Fails on 3' overhangs.
+  const dATailed = postExoOverhang === "blunt";
+
+  // For LEFT end the cut-side 3' end is TOP 3'; for RIGHT end it's BOT 3'.
+  // The OTHER 3' end of the same fragment is at the OUTER edge of the
+  // construct. Both 3' ends see dA tailing (it's a solution-phase reaction).
+  // But only the CUT-SIDE terminus is what's relevant for this editor — the
+  // outer ends are the constant fragment boundary.
+
+  // Final end code: after dA, each blunt end becomes a 1-nt 3' A overhang.
+  let endCode;
+  if (dATailed) {
+    endCode = "3'-A (dA-tailed)";
+  } else if (evalIn.overhangType === "blunt") {
+    endCode = "blunt (untreated)";
+  } else if (evalIn.overhangType === "3_prime") {
+    endCode = `${evalIn.overhangLen}-nt 3' overhang (retained)`;
+  } else {
+    endCode = `${evalIn.overhangLen}-nt 5' overhang (pre-exo)`;
+  }
+
+  // Terminal sequence after dA:
+  //   Top 3' on LEFT end: base at tEnd-1 followed by A (if tailed) → e.g. "CA"
+  //   Bot 3' on RIGHT end: complement(seq[bEnd]) followed by A (if tailed)
+  //   3' overhangs: no dA, sequence unchanged
+  const top3After = dATailed && side === "left"  ? `${top3Before}A` : top3Before;
+  const bot3After = dATailed && side === "right" ? `${bot3Before}A` : bot3Before;
+
+  // TA-ligation adapter compatibility: needs a 1-nt 3' A overhang, which
+  // is exactly what dA tailing produces from a blunt or post-exo end.
+  const adapterCompatible = dATailed;
+  const adapterReason = dATailed
+    ? "Single 3′-A overhang is the canonical substrate for T/A ligation adapters (Illumina TruSeq, ONT LSK/SQK ligation kits). Expected high-efficiency ligation."
+    : (evalIn.overhangType === "3_prime"
+        ? `3′ overhang retained (T7 exo does not process 3′ ssDNA). T/A ligation will NOT work — consider blunting enzymes (Klenow exo⁻ fill-in) OR use a compatible sticky-end adapter if the overhang sequence is defined.`
+        : `Left untreated. Blunt-end ligation adapters can be used but at lower efficiency than T/A; alternatively run dA tailing to recover T/A compatibility.`);
+
+  // Sequencing direction: after T/A adapter ligation at this cut-side end,
+  // the adapter's Y-stem presents both strands to the sequencer.
+  //   LEFT end: cut-side has top 3' + bot 5'. Adapter's T/A pairs with
+  //     top's new 3'-A. Read 1 typically primes from the adapter and reads
+  //     INTO the fragment along the top strand 5'→3' direction (from the
+  //     cut toward the construct start — so rightward-inside coordinates,
+  //     leftward when we draw construct 5'→3' left-to-right).
+  //   RIGHT end: cut-side has top 5' + bot 3'. Adapter ligates to bot's
+  //     3'-A. R1 reads along bot strand 5'→3' (from cut toward construct
+  //     end), which on the diagram runs leftward along the bot strand.
+  const readDir = side === "left"
+    ? "R1: top strand 3′→5′ (reads INTO left fragment from cut, runs ←). R2: bot strand 5′→3′ runs →."
+    : "R1: bot strand 3′→5′ (reads INTO right fragment from cut, runs →). R2: top strand 5′→3′ runs ←.";
+
+  return {
+    original: evalIn,
+    postExo: { overhangType: postExoOverhang, overhangLen: postExoLen },
+    dATailed,
+    endCode,
+    top3Before, top3After,
+    bot3Before, bot3After,
+    adapterCompatible,
+    adapterReason,
+    readingDirection: readDir,
+  };
+}
+
 // Evaluate the modeled sum-of-gaussians at a single bp position. Mirrors the
 // peak-rendering path in buildGaussianPath but returns a scalar so we can
 // sample it at arbitrary x. Used by computeResidual for the residual view
@@ -3477,10 +3581,12 @@ function ReportModal({
       exportSvgAsPng(combined, `${prefix}_dna_diagrams_combined@4x.png`, 4);
       exportSvgNative(combined, `${prefix}_dna_diagrams_combined.svg`);
     }
-    // Chromatograms (one PNG per sample)
+    // Chromatograms (one PNG per sample for each of Figure 3 + Figure 4)
     for (const s of samples) {
-      const el = chromRefs.current[s];
-      if (el) exportSvgAsPng(el, `${prefix}_chromatogram_${s}@4x.png`, 4);
+      const fig3 = chromRefs.current[`fig3-${s}`];
+      const fig4 = chromRefs.current[`fig4-${s}`];
+      if (fig3) exportSvgAsPng(fig3, `${prefix}_fig3_paired_${s}@4x.png`, 4);
+      if (fig4) exportSvgAsPng(fig4, `${prefix}_fig4_annotated_${s}@4x.png`, 4);
     }
     // Tables
     downloadAllPeakCsv();
@@ -3540,9 +3646,11 @@ function ReportModal({
             </div>
           </section>
 
-          {/* DNA diagrams — always included in the report */}
+          {/* Figure 1: construct architecture */}
           <section>
-            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Construct architecture</h3>
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">
+              Figure 1. Construct architecture{pickedGrna && <> · PAM + Cas9 cut at {pickedGrna.name}</>}
+            </h3>
             <div className="border border-zinc-200 rounded-lg bg-white p-2">
               <ConstructDiagram
                 componentSizes={componentSizes}
@@ -3557,14 +3665,33 @@ function ReportModal({
                 svgRef={constructRef}
               />
             </div>
+            <p className="text-[11px] text-zinc-500 mt-1">
+              <b>Figure 1.</b> Full {constructSize} bp ligated construct drawn 5′→3′ (top strand).
+              Colored boxes are the assembly components (fluorescent adapters Ad1/Ad2, bridge
+              oligos Br1/Br2, overhangs, target insert). Dye circles above the adapters show
+              which fluorophores label that component. {pickedGrna ? (
+                <>The purple band marks the {pickedGrna.name} PAM site (<span className="font-mono">{pickedGrna.pam_seq || "NGG"}</span>,
+                {pickedGrna.strand}-strand). The red dashed line marks the Cas9 double-strand cut
+                at construct position {pickedGrna.cut_construct}; LEFT and RIGHT fragment spans
+                are labeled beneath with their PAM-proximal / PAM-distal classification.</>
+              ) : <>Uncut view — no gRNA picked.</>}
+            </p>
           </section>
 
           {pickedGrna && cutProducts && (
             <section>
-              <h3 className="text-sm font-semibold text-zinc-800 mb-2">Expected ssDNA cut products</h3>
+              <h3 className="text-sm font-semibold text-zinc-800 mb-2">Figure 2. Expected ssDNA cut products</h3>
               <div className="border border-zinc-200 rounded-lg bg-white p-2">
                 <ProductFragmentViz products={cutProducts} constructSize={constructSize} svgRef={productsRef} />
               </div>
+              <p className="text-[11px] text-zinc-500 mt-1">
+                <b>Figure 2.</b> The four fluorophore-labeled single-stranded products released
+                after Cas9 cleavage + denaturation of the ligated construct. Each bar represents
+                one ssDNA, scaled to the {constructSize} bp construct; the dye circle marks the
+                labeled end (5′ for B / Y on Ad1, 3′ for G / R on Ad2). The right column
+                annotates each product's template classification (template / non-template strand)
+                and PAM-proximal vs PAM-distal position, plus the ssDNA length in nt.
+              </p>
             </section>
           )}
 
@@ -3607,30 +3734,120 @@ function ReportModal({
             </div>
           </section>
 
-          {/* Per-sample chromatograms — mini versions, one per sample */}
+          {/* Figure 3: paired overlay chromatogram — mirrors the front
+              page's stacked 4-color view with dotted uncut + solid cut.
+              Drawn for each loaded sample, with the first OTHER sample
+              auto-picked as the reference (matches TraceTab's auto-pair
+              default). */}
+          {samples.length >= 2 && (
+            <section>
+              <h3 className="text-sm font-semibold text-zinc-800 mb-2">
+                Figure 3. Paired 4-color stacked electropherograms (cut vs uncut, per-sample normalized)
+              </h3>
+              <div className="space-y-4">
+                {samples.map(s => {
+                  const refName = samples.find(n => n !== s) || null;
+                  return (
+                    <div key={`fig3-${s}`} className="border border-zinc-200 rounded-lg bg-white p-2">
+                      <StackedChromatogram
+                        peaks={peaksBySample[s] || {}}
+                        refPeaks={refName ? (peaksBySample[refName] || {}) : null}
+                        refSampleName={refName}
+                        currentSampleName={s}
+                        palette={palette}
+                        svgRef={(el) => { chromRefs.current[`fig3-${s}`] = el; }}
+                        range={[0, 260]}
+                        title={`${s}  ·  paired overlay vs ${refName || "—"}`}
+                        caption={[
+                          `Figure 3. 4-channel stacked electropherogram for sample ${s}. Each horizontal lane shows one dye`,
+                          `channel (B=6-FAM, G=HEX, Y=TAMRA, R=ROX) with modeled-gaussian peak heights scaled to that`,
+                          `channel's own maximum (per-sample normalization). Solid lines = current sample (${s}); dotted lines =`,
+                          `reference sample (${refName || "—"}) for side-by-side comparison. X-axis: fragment size (bp) calibrated`,
+                          `to GS500-LIZ. Colors match the dye palette indicated in the left column.`,
+                        ].join("\n")}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {/* Figure 4: same electropherogram but with EXPECTED-SPECIES
+              annotations overlaid — each dye lane gets tick marks + tags at
+              the predicted positions of assembly products and cut products.
+              Adjacent species legend reproduces the legend card. */}
           <section>
-            <h3 className="text-sm font-semibold text-zinc-800 mb-2">Per-sample chromatograms</h3>
-            <div className="space-y-3">
-              {samples.map(s => (
-                <div key={s} className="border border-zinc-200 rounded-lg bg-white">
-                  <div className="px-3 py-1.5 border-b border-zinc-100 text-xs">
-                    <span className="font-mono font-semibold text-zinc-800">{s}</span>
-                    <span className="ml-2 text-zinc-500">
-                      {["B","G","Y","R","O"].reduce((t, d) => t + (peaksBySample[s]?.[d]?.length || 0), 0)} peaks
-                    </span>
-                  </div>
-                  <div className="p-2">
-                    <MiniChromatogram
+            <h3 className="text-sm font-semibold text-zinc-800 mb-2">
+              Figure 4. Annotated 4-color stacked electropherograms with expected species
+            </h3>
+            <div className="grid md:grid-cols-[minmax(0,1fr)_320px] gap-3 items-start">
+              <div className="space-y-3">
+                {samples.map(s => (
+                  <div key={`fig4-${s}`} className="border border-zinc-200 rounded-lg bg-white p-2">
+                    <StackedChromatogram
                       peaks={peaksBySample[s] || {}}
                       expectedSpecies={expectedSpecies}
                       palette={palette}
-                      svgRef={(el) => { chromRefs.current[s] = el; }}
+                      svgRef={(el) => { chromRefs.current[`fig4-${s}`] = el; }}
+                      range={[0, 260]}
+                      currentSampleName={s}
+                      title={`${s}  ·  annotated with expected species`}
+                      caption={[
+                        `Figure 4. Annotated 4-channel stacked electropherogram for ${s}. Dotted per-dye vertical ticks mark`,
+                        `expected assembly-product positions; dashed ticks with "CUT" pills mark predicted Cas9 cut-product`,
+                        `sizes. Species-size to dye-channel mapping follows the construct architecture and picked gRNA`,
+                        `(see Figures 1–2). Traces are per-sample normalized to each channel's peak max so all four dyes`,
+                        `read cleanly; absolute RFU comparison between channels is not meaningful in this view.`,
+                      ].join("\n")}
                     />
                   </div>
+                ))}
+              </div>
+              <div className="border border-zinc-200 rounded-lg bg-white p-2">
+                <div className="px-1 py-1 text-xs font-semibold text-zinc-700">
+                  Molecular species legend
                 </div>
-              ))}
+                <div className="text-[11px] text-zinc-500 px-1 mb-2">
+                  Every expected species the CLC assay can produce, grouped by dye channel and kind (assembly precursor or Cas9 cut product).
+                </div>
+                <SpeciesLegend
+                  componentSizes={componentSizes}
+                  defaultOpen={true}
+                  gRNAs={pickedGrna ? [pickedGrna] : []}
+                  overhangs={[0, 4]}
+                  constructSize={constructSize}
+                />
+              </div>
             </div>
           </section>
+
+          {/* Figure 5: Post-dA-tailing products panel — reuses the same
+              component the front page shows, evaluated at the canonical
+              cut positions (offsets all zero = canonical cut). */}
+          {pickedGrna && (
+            <section>
+              <h3 className="text-sm font-semibold text-zinc-800 mb-2">
+                Figure 5. Post-dA-tailing molecular products
+              </h3>
+              <div className="border border-zinc-200 rounded-lg bg-white p-2">
+                <PostTailingPanel
+                  cutPos={pickedGrna.cut_construct}
+                  canonicalOverhang={0}
+                  constructSize={constructSize}
+                  offsets={{ lt: 0, lb: 0, rt: 0, rb: 0 }}
+                  topSeq={constructSeq}
+                />
+              </div>
+              <p className="text-[11px] text-zinc-500 mt-1">
+                <b>Figure 5.</b> Simulated molecular products after the lab's 5′→3′ exonuclease +
+                Klenow exo⁻ dA-tailing protocol, applied at the canonical {pickedGrna.name} cut positions.
+                Blue bars = top strand, navy bars = bot strand. Green pills = dA-tailed 3′ termini
+                (T/A-ligation adapter ready); gray pills = untreated. Each end's T/A-ligation
+                compatibility and sequencing direction are annotated.
+              </p>
+            </section>
+          )}
 
           {/* Per-sample summary (kept from prior version) */}
           <section>
@@ -3688,76 +3905,199 @@ function ReportModal({
 // modeled gaussians for each of B/G/Y/R in a single lane, with dashed
 // vertical markers at every expected-species size. svgRef prop lets the
 // caller grab the <svg> element for export (used by "Export all").
-function MiniChromatogram({ peaks, expectedSpecies, palette = "default", svgRef }) {
-  const W = 1040, H = 210;
-  const m = { l: 48, r: 16, t: 14, b: 26 };
+// Reusable stacked 4-color electropherogram for reports. Each dye channel
+// (B/G/Y/R) renders in its own lane, per-sample-normalized to its own peak
+// max (matching the front-page default). Optionally overlays a reference
+// sample (dotted) and annotates expected species positions per dye.
+// Title + caption strings render inside the SVG so they travel with exports.
+function StackedChromatogram({
+  peaks, refPeaks = null, refSampleName = null,
+  expectedSpecies = null, palette = "default", svgRef,
+  title = "", caption = "",
+  range = [0, 260],
+  currentSampleName = "",
+}) {
+  const W = 1100;
+  const m = { l: 80, r: 24, t: (title ? 34 : 12), b: (caption ? 78 : 32) };
+  const channels = ["B", "G", "Y", "R"];
+  const laneH = 92;
+  const laneGap = 8;
+  const plotH = channels.length * laneH + (channels.length - 1) * laneGap;
+  const H = m.t + plotH + m.b;
   const pw = W - m.l - m.r;
-  const ph = H - m.t - m.b;
-  const xMin = 0, xMax = 300;
-  const xScale = (bp) => m.l + ((bp - xMin) / (xMax - xMin)) * pw;
+  const [xMin, xMax] = range;
+  const xScale = (bp) => m.l + ((bp - xMin) / Math.max(1, xMax - xMin)) * pw;
   const colorFor = (d) => resolveDyeColor(d, palette);
 
-  // Compute per-dye yMax from peaks in visible range
-  const yMaxByDye = {};
-  let globalMax = 100;
-  for (const d of ["B", "G", "Y", "R"]) {
-    const lp = (peaks[d] || []).filter(p => p[0] >= xMin && p[0] <= xMax);
-    yMaxByDye[d] = lp.length ? Math.max(...lp.map(p => p[1])) * 1.12 : 100;
-    if (yMaxByDye[d] > globalMax) globalMax = yMaxByDye[d];
+  // Per-dye Y-max for the CURRENT sample only — reference overlay uses its
+  // own y-max so the dotted trace normalizes independently (per-sample
+  // normalization, matching the front-page default).
+  const curYMax = {};
+  const refYMax = {};
+  for (const d of channels) {
+    const lpC = (peaks?.[d] || []).filter(p => p[0] >= xMin && p[0] <= xMax);
+    curYMax[d] = lpC.length ? Math.max(...lpC.map(p => p[1])) * 1.12 : 100;
+    const lpR = ((refPeaks && refPeaks[d]) || []).filter(p => p[0] >= xMin && p[0] <= xMax);
+    refYMax[d] = lpR.length ? Math.max(...lpR.map(p => p[1])) * 1.12 : 100;
   }
+
+  // X ticks every 50 bp
+  const tickStep = (xMax - xMin) <= 40 ? 5 : (xMax - xMin) <= 120 ? 20 : 50;
+  const xTicks = [];
+  for (let v = Math.ceil(xMin / tickStep) * tickStep; v <= xMax; v += tickStep) xTicks.push(v);
 
   return (
     <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
       <rect x="0" y="0" width={W} height={H} fill="white" />
-      <rect x={m.l} y={m.t} width={pw} height={ph} fill="#fafbfc" stroke="#cbd5e1" strokeWidth="1" />
 
-      {/* X ticks every 50 bp */}
-      {[0, 50, 100, 150, 200, 250, 300].map(v => (
-        <g key={`t-${v}`}>
-          <line x1={xScale(v)} x2={xScale(v)} y1={m.t + ph} y2={m.t + ph + 4} stroke="#94a3b8" />
-          <text x={xScale(v)} y={m.t + ph + 16} fontSize="9" fill="#64748b" textAnchor="middle"
-                style={{ fontFamily: "JetBrains Mono, monospace" }}>{v}</text>
+      {/* Title (optional) */}
+      {title && (
+        <text x={m.l + pw / 2} y={18} fontSize="13" fill="#0f172a" textAnchor="middle" fontWeight="700">
+          {title}
+        </text>
+      )}
+
+      {/* Paired legend strip (dotted uncut + solid cut) — rendered inside
+          the SVG so export figures are self-describing */}
+      {refPeaks && (
+        <g>
+          <rect x={m.l + pw / 2 - 260} y={m.t - 20} width={520} height={14} rx="2"
+                fill="#f8fafc" stroke="#e2e8f0" strokeWidth="0.8" />
+          <g transform={`translate(${m.l + pw / 2 - 250}, ${m.t - 10})`}>
+            <line x1="0" y1="0" x2="28" y2="0" stroke="#334155" strokeWidth="1.3"
+                  strokeDasharray="1 3" strokeLinecap="round" />
+            <text x="34" y="3" fontSize="9" fill="#334155" fontWeight="600">uncut</text>
+            <text x="70" y="3" fontSize="9" fill="#64748b"
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}>{refSampleName || "reference"}</text>
+          </g>
+          <g transform={`translate(${m.l + pw / 2 + 20}, ${m.t - 10})`}>
+            <line x1="0" y1="0" x2="28" y2="0" stroke="#334155" strokeWidth="1.6" />
+            <text x="34" y="3" fontSize="9" fill="#334155" fontWeight="600">cut</text>
+            <text x="60" y="3" fontSize="9" fill="#64748b"
+                  style={{ fontFamily: "JetBrains Mono, monospace" }}>{currentSampleName || "current"}</text>
+          </g>
         </g>
-      ))}
-      <text x={m.l + pw / 2} y={H - 6} fontSize="9.5" fill="#475569" textAnchor="middle" fontWeight="600">Size (bp)</text>
+      )}
 
-      {/* Expected-species markers — vertical dashed lines at each species size */}
-      {(expectedSpecies || []).map(sp => {
-        if (sp.size < xMin || sp.size > xMax) return null;
-        const x = xScale(sp.size);
-        const primaryDye = (sp.dyes && sp.dyes[0]) || null;
+      {/* Per-channel lane rendering */}
+      {channels.map((dye, idx) => {
+        const laneTop = m.t + idx * (laneH + laneGap);
+        const yMax = curYMax[dye];
+        const rYMax = refYMax[dye];
+        const laneGeom = { laneTop, laneH, mLeft: m.l, plotW: pw };
+        const lp = (peaks?.[dye] || []).filter(p => p[0] >= xMin - 5 && p[0] <= xMax + 5);
+        const lpR = ((refPeaks && refPeaks[dye]) || []).filter(p => p[0] >= xMin - 5 && p[0] <= xMax + 5);
+        const curPath = lp.length ? buildGaussianPath(lp.map(p => [p[0], p[1], p[2], p[3]]),
+                                                     [xMin, xMax], yMax, laneGeom, 1, false) : null;
+        const refPath = lpR.length ? buildGaussianPath(lpR.map(p => [p[0], p[1], p[2], p[3]]),
+                                                     [xMin, xMax], rYMax, laneGeom, 1, false) : null;
         return (
-          <line key={`sp-${sp.id}`} x1={x} x2={x} y1={m.t} y2={m.t + ph}
-                stroke={primaryDye ? colorFor(primaryDye) : "#94a3b8"}
-                strokeWidth="0.8" strokeDasharray="2 3" opacity="0.45" />
-        );
-      })}
-
-      {/* Per-dye gaussian trace path */}
-      {["B", "G", "Y", "R"].map(d => {
-        const lp = (peaks[d] || []).filter(p => p[0] >= xMin && p[0] <= xMax);
-        if (!lp.length) return null;
-        const laneGeom = { laneTop: m.t, laneH: ph, mLeft: m.l, plotW: pw };
-        const path = buildGaussianPath(lp.map(p => [p[0], p[1], p[2], p[3]]),
-                                        [xMin, xMax], globalMax, laneGeom, 1, false);
-        return (
-          <g key={`tr-${d}`}>
-            <path d={path.fill} fill={colorFor(d)} opacity="0.12" />
-            <path d={path.stroke} fill="none" stroke={colorFor(d)} strokeWidth="1.4" opacity="0.95" />
+          <g key={`lane-${dye}`}>
+            {/* Lane background + frame */}
+            <rect x={m.l} y={laneTop} width={pw} height={laneH} fill="#fafbfc" stroke="#cbd5e1" strokeWidth="0.6" />
+            {/* Lane label (dye name + color swatch) */}
+            <g transform={`translate(${m.l - 8}, ${laneTop + laneH / 2})`}>
+              <circle cx={-6} cy="-1" r="5" fill={colorFor(dye)} />
+              <text x="-16" y="3" fontSize="10" fill="#0f172a" textAnchor="end" fontWeight="700">
+                {DYE[dye].label}
+              </text>
+              <text x="-16" y="14" fontSize="8.5" fill="#64748b" textAnchor="end"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                {DYE[dye].name}
+              </text>
+            </g>
+            {/* Expected-species markers (per dye) — drawn behind the trace */}
+            {expectedSpecies && expectedSpecies.filter(sp => {
+              const hasThisDye = (sp.dyes || []).includes(dye);
+              return hasThisDye && sp.size >= xMin && sp.size <= xMax;
+            }).map(sp => {
+              const x = xScale(sp.size);
+              const isCut = sp.kind === "cut";
+              return (
+                <g key={`sp-${dye}-${sp.id}`}>
+                  <line x1={x} x2={x} y1={laneTop} y2={laneTop + laneH}
+                        stroke={colorFor(dye)}
+                        strokeWidth="0.9"
+                        strokeDasharray={isCut ? "4 2" : "1 3"}
+                        strokeLinecap={isCut ? "butt" : "round"}
+                        opacity="0.6" />
+                  {/* Tiny tag at the top of the lane */}
+                  <rect x={x - 16} y={laneTop + 2} width="32" height="10" rx="1.5"
+                        fill={colorFor(dye)} opacity="0.9" />
+                  <text x={x} y={laneTop + 10} fontSize="7.5" fill="white" textAnchor="middle"
+                        fontWeight="700" style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                    {isCut ? "CUT" : (sp.id || "").slice(0, 6)}
+                  </text>
+                </g>
+              );
+            })}
+            {/* Reference (uncut) trace: dotted, same dye color */}
+            {refPath && (
+              <g>
+                <path d={refPath.fill} fill={colorFor(dye)} opacity="0.06" />
+                <path d={refPath.stroke} fill="none" stroke={colorFor(dye)} strokeWidth="1.2"
+                      opacity="0.9" strokeDasharray="1 3" strokeLinecap="round" />
+              </g>
+            )}
+            {/* Current (cut) trace: solid, same dye color */}
+            {curPath && (
+              <g>
+                <path d={curPath.fill} fill={colorFor(dye)} opacity="0.14" />
+                <path d={curPath.stroke} fill="none" stroke={colorFor(dye)} strokeWidth="1.5" opacity="0.95" />
+              </g>
+            )}
           </g>
         );
       })}
 
-      {/* Dye channel legend (top-left inside plot) */}
-      <g transform={`translate(${m.l + 8}, ${m.t + 8})`}>
-        {["B", "G", "Y", "R"].map((d, i) => (
-          <g key={d} transform={`translate(${i * 52}, 0)`}>
-            <line x1="0" y1="4" x2="16" y2="4" stroke={colorFor(d)} strokeWidth="2" />
-            <text x="20" y="8" fontSize="9" fill="#475569" fontWeight="600">{DYE[d].label}</text>
-          </g>
-        ))}
-      </g>
+      {/* X-axis ticks below the bottom lane */}
+      {(() => {
+        const yAxisBase = m.t + plotH;
+        return (
+          <>
+            <line x1={m.l} x2={m.l + pw} y1={yAxisBase} y2={yAxisBase} stroke="#334155" strokeWidth="0.8" />
+            {xTicks.map(v => (
+              <g key={`x-${v}`}>
+                <line x1={xScale(v)} x2={xScale(v)} y1={yAxisBase} y2={yAxisBase + 4} stroke="#94a3b8" />
+                <text x={xScale(v)} y={yAxisBase + 14} fontSize="9" fill="#64748b" textAnchor="middle"
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}>{v}</text>
+              </g>
+            ))}
+            <text x={m.l + pw / 2} y={yAxisBase + 28} fontSize="10" fill="#475569" textAnchor="middle" fontWeight="600">
+              Size (bp)
+            </text>
+          </>
+        );
+      })()}
+
+      {/* Caption — one or more lines wrapped inside the SVG so the figure
+          ships self-contained with its legend */}
+      {caption && (() => {
+        const lines = String(caption).split(/\n/);
+        const base = H - m.b + 46;
+        return lines.map((line, i) => (
+          <text key={`cap-${i}`} x={m.l} y={base + i * 11} fontSize="8.5"
+                fill="#475569" fontWeight="400">
+            {line}
+          </text>
+        ));
+      })()}
     </svg>
+  );
+}
+
+// Backwards-compatible shim: the old MiniChromatogram prop shape is retained
+// and routed through the new StackedChromatogram so callers (per-sample
+// loops in the report) don't need to be rewritten.
+function MiniChromatogram({ peaks, expectedSpecies, palette = "default", svgRef }) {
+  return (
+    <StackedChromatogram
+      peaks={peaks}
+      expectedSpecies={expectedSpecies}
+      palette={palette}
+      svgRef={svgRef}
+      range={[0, 300]}
+    />
   );
 }
 
@@ -4005,14 +4345,11 @@ function SampleStyleRow({ title, accent = "zinc", style, setField }) {
 // side of the cut with the top strand above, bot strand below. Each strand
 // terminus renders exactly where its offset puts it, so the overhang shape
 // reads directly from the geometry (no text-only explanation needed).
-function EndStructureEditor({ cutPos, canonicalOverhang, constructSize }) {
+function EndStructureEditor({ cutPos, canonicalOverhang, constructSize, offsets, setOffsets }) {
   const svgRef = useRef(null);
-  // Four offsets from the canonical cut positions. All start at zero; user
-  // can push any of them ±1 bp. Positive values extend the strand in its
-  // natural 5'→3' direction (LEFT.top = extend rightward; RIGHT.top = extend
-  // leftward means negative offset; stored here as "how much further does
-  // this strand reach past the canonical cut").
-  const [offsets, setOffsets] = useState({ lt: 0, lb: 0, rt: 0, rb: 0 });
+  // Offsets state is lifted to the parent so the PostTailingPanel below can
+  // read the same values. The parent (TraceTab) owns the state; we only
+  // drive the +/- controls here.
   // Reset offsets when the cut position changes (new gRNA picked).
   useEffect(() => { setOffsets({ lt: 0, lb: 0, rt: 0, rb: 0 }); }, [cutPos, canonicalOverhang]);
   const nudge = (k, delta) => setOffsets(o => ({
@@ -4220,6 +4557,202 @@ function EndStructureEditor({ cutPos, canonicalOverhang, constructSize }) {
           </div>
           <div className="text-[11px] text-zinc-600">{rightEval.reason}</div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Post-dA-tailing product panel: shown below the EndStructureEditor. For
+// each of LEFT and RIGHT cut-side ends, renders the end's final structure
+// after exo + dA treatment, adapter compatibility, and sequencing
+// direction. All outputs come from the shared predictPostTailing helper
+// so the display and any downstream analyses stay in sync.
+function PostTailingPanel({ cutPos, canonicalOverhang, constructSize, offsets, topSeq }) {
+  const svgRef = useRef(null);
+  const leftTop  = cutPos + (offsets.lt || 0);
+  const leftBot  = cutPos + canonicalOverhang + (offsets.lb || 0);
+  const rightTop = cutPos + (offsets.rt || 0);
+  const rightBot = cutPos + canonicalOverhang + (offsets.rb || 0);
+  const leftP  = predictPostTailing({ side: "left",  topEnd: leftTop,  botEnd: leftBot,  topSeq });
+  const rightP = predictPostTailing({ side: "right", topEnd: rightTop, botEnd: rightBot, topSeq });
+
+  // Mini diagram showing before/after side-by-side for each end.
+  const W = 1100, H = 280;
+  const m = { l: 20, r: 20, t: 34, b: 30 };
+  const pw = W - m.l - m.r;
+  const colW = pw / 2 - 20;
+  const LEFT_X = m.l;
+  const RIGHT_X = m.l + pw - colW;
+
+  // Render one end-state column. `x0` = left origin; `variant` ∈ "before" | "after".
+  const RenderEnd = ({ x0, side, p, variant }) => {
+    const topYGap = 18;
+    const yTop = m.t + 14;
+    const yBot = m.t + 14 + topYGap;
+    const showAs = variant === "before" ? p.original : { overhangType: p.dATailed ? "3_A" : p.postExo.overhangType, overhangLen: p.dATailed ? 1 : p.postExo.overhangLen };
+    // Simple schematic: two horizontal bars for the two strands of the
+    // cut-side end, with the post-dA A overhang shown in green when tailed.
+    const barCap = 100;
+    const bar1Start = x0 + 40;
+    const bar2Start = x0 + 40;
+    let topEnd = x0 + 40 + barCap;
+    let botEnd = x0 + 40 + barCap;
+    // Variations: for pre-existing 5' overhang pre-exo, bot extends past top
+    // on LEFT, or top extends past bot on RIGHT. For post-exo / dA states,
+    // the geometry is chewed back + tailed.
+    if (variant === "before") {
+      if (p.original.overhangType === "5_prime") {
+        if (side === "left") botEnd = topEnd + p.original.overhangLen * 2.2;
+        else                 botEnd = topEnd - p.original.overhangLen * 2.2; // bot shorter = top extends further (5' ohv on top)
+      } else if (p.original.overhangType === "3_prime") {
+        if (side === "left") topEnd = botEnd + p.original.overhangLen * 2.2;
+        else                 topEnd = botEnd - p.original.overhangLen * 2.2;
+      }
+    } else {
+      // After state: blunt (post-exo) then +1 bp A on 3' end (if tailed)
+      if (p.dATailed) {
+        // 3' A overhang: on LEFT, top 3' extends 1 bp past bot 5'. On RIGHT, bot 3' extends.
+        if (side === "left") topEnd = botEnd + 4;  // +4 px shows the dA tick
+        else                 botEnd = topEnd + 4;
+      } else if (p.original.overhangType === "3_prime") {
+        // 3' overhang retained (no dA)
+        if (side === "left") topEnd = botEnd + p.original.overhangLen * 2.2;
+        else                 topEnd = botEnd - p.original.overhangLen * 2.2;
+      }
+    }
+    const leftBarEnd = Math.min(bar1Start, bar2Start);
+    const rightBarEnd = Math.max(topEnd, botEnd);
+    return (
+      <g>
+        <text x={x0} y={m.t - 8} fontSize="10" fill="#475569" fontWeight="700">
+          {variant === "before" ? "Original end" : (p.dATailed ? "After exo + dA" : p.original.overhangType === "3_prime" ? "After exo (no dA)" : "After exo")}
+        </text>
+        {/* Top strand */}
+        <rect x={bar1Start} y={yTop - 3} width={Math.max(2, topEnd - bar1Start)} height="6"
+              fill="#0ea5e9" opacity="0.9" rx="1" />
+        {/* Bot strand */}
+        <rect x={bar2Start} y={yBot - 3} width={Math.max(2, botEnd - bar2Start)} height="6"
+              fill="#0369a1" opacity="0.9" rx="1" />
+        {/* Strand labels */}
+        <text x={bar1Start - 6} y={yTop + 3} fontSize="9" fill="#94a3b8" textAnchor="end" fontWeight="600">TOP</text>
+        <text x={bar2Start - 6} y={yBot + 3} fontSize="9" fill="#94a3b8" textAnchor="end" fontWeight="600">BOT</text>
+        {/* 5'/3' labels */}
+        <text x={bar1Start - 16} y={yTop + 3} fontSize="9" fill="#475569" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>5′</text>
+        <text x={bar2Start - 16} y={yBot + 3} fontSize="9" fill="#475569" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>3′</text>
+        {/* Cut-side termini labels */}
+        <text x={Math.max(topEnd, botEnd) + 6} y={yTop + 3} fontSize="9" fill="#475569" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>3′</text>
+        <text x={Math.max(topEnd, botEnd) + 6} y={yBot + 3} fontSize="9" fill="#475569" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>5′</text>
+
+        {/* Terminal sequence text for the "after" state */}
+        {variant === "after" && (
+          <g>
+            {/* Top 3' terminus sequence pill */}
+            <g transform={`translate(${Math.max(topEnd, botEnd) + 30}, ${yTop})`}>
+              <rect x="0" y="-8" width="36" height="12" rx="2"
+                    fill={p.dATailed && side === "left" ? "#10b981" : "#64748b"} />
+              <text x="18" y="1" fontSize="9" fill="white" textAnchor="middle" fontWeight="700"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                3′ {side === "left" ? p.top3After : p.top3Before}
+              </text>
+            </g>
+            {/* Bot 3' terminus sequence pill */}
+            <g transform={`translate(${Math.max(topEnd, botEnd) + 30}, ${yBot})`}>
+              <rect x="0" y="-8" width="36" height="12" rx="2"
+                    fill={p.dATailed && side === "right" ? "#10b981" : "#64748b"} />
+              <text x="18" y="1" fontSize="9" fill="white" textAnchor="middle" fontWeight="700"
+                    style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                3′ {side === "right" ? p.bot3After : p.bot3Before}
+              </text>
+            </g>
+          </g>
+        )}
+
+        {/* Arrow from before → after */}
+        {variant === "before" && (
+          <g transform={`translate(${x0 + colW - 20}, ${(yTop + yBot) / 2})`}>
+            <line x1="0" y1="0" x2="28" y2="0" stroke="#6366f1" strokeWidth="1.5" />
+            <polygon points="28,-4 36,0 28,4" fill="#6366f1" />
+          </g>
+        )}
+      </g>
+    );
+  };
+
+  return (
+    <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <div className="text-sm font-semibold text-zinc-800">Post-dA-tailing molecular products</div>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Applies the lab protocol (5′→3′ exonuclease chewback → Klenow exo⁻ 3′ dA addition) to each end and predicts the final terminus, adapter compatibility, and sequencing direction. 3′ overhangs are retained (neither exo nor dA act on them).
+          </p>
+        </div>
+        <ExportMenu svgRef={svgRef} basename="post_tailing" label="Export" />
+      </div>
+
+      {/* Visual before → after */}
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
+        <rect x="0" y="0" width={W} height={H} fill="white" />
+        {/* LEFT fragment end panel */}
+        <g>
+          <text x={LEFT_X} y={18} fontSize="12" fill="#1f2937" fontWeight="700">LEFT fragment end</text>
+          <rect x={LEFT_X - 4} y={m.t - 18} width={colW + 80} height={H - m.t - m.b + 20}
+                fill="none" stroke="#e2e8f0" strokeWidth="0.8" rx="4" />
+          <g transform={`translate(0, ${10})`}>
+            <RenderEnd x0={LEFT_X}               side="left" p={leftP}  variant="before" />
+            <RenderEnd x0={LEFT_X + colW / 2}    side="left" p={leftP}  variant="after"  />
+          </g>
+        </g>
+        {/* RIGHT fragment end panel */}
+        <g>
+          <text x={RIGHT_X} y={18} fontSize="12" fill="#1f2937" fontWeight="700">RIGHT fragment end</text>
+          <rect x={RIGHT_X - 4} y={m.t - 18} width={colW + 80} height={H - m.t - m.b + 20}
+                fill="none" stroke="#e2e8f0" strokeWidth="0.8" rx="4" />
+          <g transform={`translate(0, ${10})`}>
+            <RenderEnd x0={RIGHT_X}              side="right" p={rightP} variant="before" />
+            <RenderEnd x0={RIGHT_X + colW / 2}   side="right" p={rightP} variant="after"  />
+          </g>
+        </g>
+        {/* Figure legend embedded in the SVG so it travels with exports */}
+        <text x={W / 2} y={H - 8} fontSize="9" fill="#64748b" textAnchor="middle">
+          Figure: Before (left column) vs after (right column) the exo + dA protocol. Blue = top strand, navy = bot strand. Green pill = dA-tailed 3′ terminus ready for T/A-ligation adapters; gray pill = untreated 3′ terminus (retains original base). The single-nt dA overhang is exaggerated ×4 for visibility.
+        </text>
+      </svg>
+
+      {/* Two cards with end codes, adapter compatibility, sequencing direction */}
+      <div className="grid md:grid-cols-2 gap-3 mt-2 text-xs">
+        {[["LEFT end", leftP, "left"], ["RIGHT end", rightP, "right"]].map(([title, p, side]) => (
+          <div key={title} className="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="font-semibold text-zinc-800">{title}</span>
+              <Pill tone={p.dATailed ? "emerald" : p.original.overhangType === "3_prime" ? "rose" : "amber"}>
+                {p.endCode}
+              </Pill>
+            </div>
+            <div className="mb-1.5">
+              <span className="text-zinc-600 mr-2">Terminal:</span>
+              <span className="font-mono text-zinc-800">top 3′ {side === "left" ? p.top3After : p.top3Before}</span>
+              <span className="text-zinc-400 mx-1">·</span>
+              <span className="font-mono text-zinc-800">bot 3′ {side === "right" ? p.bot3After : p.bot3Before}</span>
+            </div>
+            <div className="mb-1.5">
+              <span className="text-zinc-600 mr-2">Adapter:</span>
+              {p.adapterCompatible ? (
+                <Pill tone="emerald">T/A ligation ✓</Pill>
+              ) : (
+                <Pill tone="rose">T/A ligation ✗</Pill>
+              )}
+            </div>
+            <div className="text-[11px] text-zinc-600">{p.adapterReason}</div>
+            <div className="mt-1.5 text-[11px] text-zinc-600 border-t border-zinc-200 pt-1.5">
+              <span className="font-semibold text-zinc-700">Reading direction:</span> {p.readingDirection}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -4532,6 +5065,10 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   ));
   const [showUncutCutMarkers, setShowUncutCutMarkers] = useState(() => seeded("showUncutCutMarkers", false));
   const [showPrecursorMarkers, setShowPrecursorMarkers] = useState(() => seeded("showPrecursorMarkers", false));
+  // End-structure offsets shared between EndStructureEditor (write) and
+  // PostTailingPanel (read). Four ±1 bp adjustments from the canonical
+  // Cas9 cut positions — persisted in the URL hash too.
+  const [endOffsets, setEndOffsets] = useState(() => seeded("endOffsets", { lt: 0, lb: 0, rt: 0, rb: 0 }));
   // Paired-sample Y-axis scaling.
   //   "shared"      — both samples share one lane yMax (current + reference
   //                   peaks pooled). Preserves absolute signal differences.
@@ -4641,6 +5178,7 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         pairScale, prepRef,
         labelPeaks, showExpected,
         currentStyle, refStyle,
+        endOffsets,
       };
       const encoded = encodeViewState(state);
       // Only mutate history if it actually changed; replaceState (not push)
@@ -4655,7 +5193,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
       pairMode, referenceSample, showUncutCutMarkers, showPrecursorMarkers,
       pairScale, prepRef,
       labelPeaks, showExpected,
-      currentStyle, refStyle]);
+      currentStyle, refStyle,
+      endOffsets]);
 
   // Resolve the reference sample name. "auto" picks the first matching
   // uncut / NoCas9 / control candidate from the loaded samples. A manual
@@ -6007,14 +6546,25 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         />
       </div>
 
-      {/* End-structure editor — interactive +/− on each of the four strand
-          termini produced by the cut. Evaluates dA-tailability for each end. */}
+      {/* End-structure editor + post-dA-tailing products. Offsets are
+          shared so the post-tailing panel reflects whatever the user nudged. */}
       {pickedGrnaForHover && (
-        <EndStructureEditor
-          cutPos={pickedGrnaForHover.cut_construct}
-          canonicalOverhang={speciesOverhangs[0] || 0}
-          constructSize={constructSize}
-        />
+        <>
+          <EndStructureEditor
+            cutPos={pickedGrnaForHover.cut_construct}
+            canonicalOverhang={speciesOverhangs[0] || 0}
+            constructSize={constructSize}
+            offsets={endOffsets}
+            setOffsets={setEndOffsets}
+          />
+          <PostTailingPanel
+            cutPos={pickedGrnaForHover.cut_construct}
+            canonicalOverhang={speciesOverhangs[0] || 0}
+            constructSize={constructSize}
+            offsets={endOffsets}
+            topSeq={constructSeq}
+          />
+        </>
       )}
 
       {/* ssDNA cut products diagram — rendered when a gRNA is picked so the
