@@ -634,6 +634,68 @@ export function computePeakShiftStats(currentPeaks, referencePeaks, tol = 2.5) {
   return stats;
 }
 
+// ----------------------------------------------------------------------
+// End-structure evaluation: given a double-strand terminus described by the
+// position of each strand's end, classify the overhang type (blunt / 5' / 3')
+// and predict whether the end will dA-tail under the lab's standard protocol.
+// ----------------------------------------------------------------------
+//
+// Lab dA-tailing chemistry:
+//   Step 1: 5'→3' exonuclease (e.g. T7 exo) chews back 5' single-strand overhangs
+//           until the end is blunt. Does NOT act on 3' overhangs.
+//   Step 2: Klenow exo- (or Taq) adds a single dA to every 3' terminus.
+//
+// Outcomes:
+//   • Blunt end                → dA-tailed cleanly (Step 2 only)
+//   • 5' overhang (≤ ~8 nt)    → chewed back by Step 1, then dA-tailed
+//   • 5' overhang (> 8 nt)     → works but efficiency drops; flagged "marginal"
+//   • 3' overhang              → dA-tail FAILS — Step 1 doesn't chew, and the
+//                                3' terminus is already base-paired/extended
+//
+// End side semantics:
+//   side="left"  = the RIGHT edge of the LEFT fragment (top 3' end + bot 5' end)
+//   side="right" = the LEFT  edge of the RIGHT fragment (top 5' end + bot 3' end)
+//
+// Inputs: topEnd, botEnd = bp positions where each strand terminates on this side.
+// Returns: { overhangType, overhangLen, dATailable, confidence, reason }.
+export function evaluateDATailing({ side, topEnd, botEnd }) {
+  const delta = topEnd - botEnd;
+  let overhangType, overhangLen;
+  if (delta === 0) {
+    overhangType = "blunt"; overhangLen = 0;
+  } else if (side === "left") {
+    // LEFT end: top 3' / bot 5'. Both strands END here (run from construct
+    // start up to this position). Top ends at higher bp = top longer = top
+    // 3' sticks out = 3' overhang.
+    overhangType = delta > 0 ? "3_prime" : "5_prime";
+    overhangLen  = Math.abs(delta);
+  } else {
+    // RIGHT end: top 5' / bot 3'. Both strands START here (run from this
+    // position to the construct end). Top STARTS at lower bp = top longer
+    // at this edge = top 5' sticks out = 5' overhang. So delta<0 → 5'.
+    overhangType = delta < 0 ? "5_prime" : "3_prime";
+    overhangLen  = Math.abs(delta);
+  }
+  let dATailable, confidence, reason;
+  if (overhangType === "blunt") {
+    dATailable = true; confidence = "high";
+    reason = "Blunt end — Klenow exo⁻ adds 3′ dA directly.";
+  } else if (overhangType === "5_prime") {
+    if (overhangLen <= 8) {
+      dATailable = true; confidence = "high";
+      reason = `${overhangLen}-nt 5′ overhang — T7 exo chews back to blunt, then 3′ dA is added.`;
+    } else {
+      dATailable = true; confidence = "marginal";
+      reason = `${overhangLen}-nt 5′ overhang — exceeds typical exo efficiency window; tailing usually succeeds but yield drops.`;
+    }
+  } else {
+    // 3' overhang — exo can't chew it; terminus is already extended.
+    dATailable = false; confidence = "high";
+    reason = `${overhangLen}-nt 3′ overhang — T7 exo does NOT process 3′ overhangs, and Klenow exo⁻ cannot add dA on top of an already-extended 3′ terminus.`;
+  }
+  return { overhangType, overhangLen, dATailable, confidence, reason };
+}
+
 // Evaluate the modeled sum-of-gaussians at a single bp position. Mirrors the
 // peak-rendering path in buildGaussianPath but returns a scalar so we can
 // sample it at arbitrary x. Used by computeResidual for the residual view
@@ -1705,6 +1767,20 @@ export function exportSvgAsWebp(svgEl, filename, scale = 4, quality = 0.92, opts
       downloadBlob(blob, filename || "fragment-viewer.webp");
     }, "image/webp", quality);
   }, opts);
+}
+
+// Merge multiple React refs so a single DOM element can be captured by both
+// a local ref (used by a component's own ExportMenu) and an external ref
+// passed in from a parent (ReportModal, DNADiagramsModal). Supports both
+// object refs (useRef) and callback refs.
+function mergeRefs(...refs) {
+  return (el) => {
+    for (const r of refs) {
+      if (!r) continue;
+      if (typeof r === "function") r(el);
+      else r.current = el;
+    }
+  };
 }
 
 // Stack two SVG elements into a single combined SVG for bundled export.
@@ -3244,6 +3320,9 @@ function DNADiagramsModal({
                 cutConstructPos={pickedGrna && includeCut ? pickedGrna.cut_construct : null}
                 overhang={pickedGrna && includeCut ? Math.abs(overhang) : null}
                 grnaStrand={pickedGrna ? pickedGrna.strand : null}
+                pamStart={pickedGrna ? pickedGrna.pam_start : null}
+                pamSeq={pickedGrna ? pickedGrna.pam_seq : null}
+                svgRef={constructRef}
               />
             </div>
           </section>
@@ -3254,7 +3333,7 @@ function DNADiagramsModal({
                 <ExportMenu svgRef={productsRef} basename="ssdna_products" label="Export" />
               </div>
               <div className="border border-zinc-200 rounded-lg bg-white p-2">
-                <ProductFragmentViz products={predictedProducts} constructSize={constructSize} />
+                <ProductFragmentViz products={predictedProducts} constructSize={constructSize} svgRef={productsRef} />
               </div>
             </section>
           )}
@@ -3473,10 +3552,10 @@ function ReportModal({
                 cutConstructPos={pickedGrna ? pickedGrna.cut_construct : null}
                 overhang={pickedGrna ? 0 : null}
                 grnaStrand={pickedGrna ? pickedGrna.strand : null}
+                pamStart={pickedGrna ? pickedGrna.pam_start : null}
+                pamSeq={pickedGrna ? pickedGrna.pam_seq : null}
+                svgRef={constructRef}
               />
-              {/* Hidden ref capture — the ConstructDiagram has its own svgRef
-                  but we need access here for the Export-all path. Attach a
-                  mirror by querying the DOM for the SVG inside the wrapper. */}
             </div>
           </section>
 
@@ -3484,7 +3563,7 @@ function ReportModal({
             <section>
               <h3 className="text-sm font-semibold text-zinc-800 mb-2">Expected ssDNA cut products</h3>
               <div className="border border-zinc-200 rounded-lg bg-white p-2">
-                <ProductFragmentViz products={cutProducts} constructSize={constructSize} />
+                <ProductFragmentViz products={cutProducts} constructSize={constructSize} svgRef={productsRef} />
               </div>
             </section>
           )}
@@ -3912,6 +3991,253 @@ function SampleStyleRow({ title, accent = "zinc", style, setField }) {
           ))}
         </div>
       </label>
+    </div>
+  );
+}
+
+// End-structure editor: after the Cas9 cut, each of the two fragments has a
+// top-strand terminus + a bot-strand terminus. Users can nudge each by ±1 bp
+// to model the effect of exonuclease chewback, fill-in, or design changes
+// on the resulting overhang. For every end we compute the overhang type +
+// length + dA-tail prediction via evaluateDATailing.
+//
+// Geometric rendering: the zoomed-in cut-site view shows ~20 bp on either
+// side of the cut with the top strand above, bot strand below. Each strand
+// terminus renders exactly where its offset puts it, so the overhang shape
+// reads directly from the geometry (no text-only explanation needed).
+function EndStructureEditor({ cutPos, canonicalOverhang, constructSize }) {
+  const svgRef = useRef(null);
+  // Four offsets from the canonical cut positions. All start at zero; user
+  // can push any of them ±1 bp. Positive values extend the strand in its
+  // natural 5'→3' direction (LEFT.top = extend rightward; RIGHT.top = extend
+  // leftward means negative offset; stored here as "how much further does
+  // this strand reach past the canonical cut").
+  const [offsets, setOffsets] = useState({ lt: 0, lb: 0, rt: 0, rb: 0 });
+  // Reset offsets when the cut position changes (new gRNA picked).
+  useEffect(() => { setOffsets({ lt: 0, lb: 0, rt: 0, rb: 0 }); }, [cutPos, canonicalOverhang]);
+  const nudge = (k, delta) => setOffsets(o => ({
+    ...o,
+    [k]: Math.max(-10, Math.min(10, (o[k] || 0) + delta)),
+  }));
+  const resetAll = () => setOffsets({ lt: 0, lb: 0, rt: 0, rb: 0 });
+
+  // Absolute strand positions. Baseline: LEFT fragment ends at cutPos on both
+  // strands (blunt) unless canonicalOverhang ≠ 0, in which case the bot
+  // strand cuts `canonicalOverhang` bp further right on the LEFT end and
+  // `canonicalOverhang` bp further right on the RIGHT end (Cas9 sticky-end
+  // chemistry: same 4-nt overhang on both sides of the cut).
+  const leftTop = cutPos + offsets.lt;
+  const leftBot = cutPos + canonicalOverhang + offsets.lb;
+  const rightTop = cutPos + offsets.rt;
+  const rightBot = cutPos + canonicalOverhang + offsets.rb;
+
+  // Evaluate dA-tailability for each end.
+  const leftEval  = evaluateDATailing({ side: "left",  topEnd: leftTop,  botEnd: leftBot  });
+  const rightEval = evaluateDATailing({ side: "right", topEnd: rightTop, botEnd: rightBot });
+
+  // Zoomed-in geometry around the cut.
+  const W = 1100;
+  const H = 240;
+  const m = { l: 110, r: 110, t: 40, b: 40 };
+  const pw = W - m.l - m.r;
+  const window_bp = 16;   // ±16 bp around the cut position
+  const xMin = Math.max(0, cutPos - window_bp);
+  const xMax = Math.min(constructSize, cutPos + window_bp);
+  const bpRange = xMax - xMin;
+  const xFor = (bp) => m.l + ((bp - xMin) / bpRange) * pw;
+
+  const strandGap = 38;    // vertical gap between the two strands
+  const yTop = m.t + 10;
+  const yBot = m.t + 10 + strandGap;
+
+  return (
+    <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div>
+          <div className="text-sm font-semibold text-zinc-800">End-structure editor · dA-tailability</div>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Nudge any strand terminus ±1 bp. The diagram updates geometrically; each end is evaluated for dA-tailing success under the lab protocol (5′→3′ exo chewback → Klenow 3′ dA).
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <ToolButton variant="secondary" onClick={resetAll} title="Reset all four strand termini to the canonical Cas9 cut positions">
+            Reset
+          </ToolButton>
+          <ExportMenu svgRef={svgRef} basename="end_structure" label="Export" />
+        </div>
+      </div>
+
+      {/* Zoomed-in cut-site diagram */}
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
+        <rect x="0" y="0" width={W} height={H} fill="white" />
+
+        {/* Scale ticks (every 1 bp within the zoom window) */}
+        {Array.from({ length: bpRange + 1 }, (_, i) => xMin + i).map(bp => {
+          const x = xFor(bp);
+          const isCut = bp === cutPos;
+          return (
+            <g key={`tk-${bp}`}>
+              <line x1={x} x2={x} y1={H - m.b} y2={H - m.b + 3}
+                    stroke={isCut ? "#dc2626" : "#cbd5e1"} strokeWidth={isCut ? 1.5 : 0.8} />
+              {(bp % 5 === 0 || isCut) && (
+                <text x={x} y={H - m.b + 14} fontSize="8.5"
+                      fill={isCut ? "#dc2626" : "#64748b"} textAnchor="middle"
+                      fontWeight={isCut ? "700" : "500"}
+                      style={{ fontFamily: "JetBrains Mono, monospace" }}>{bp}</text>
+              )}
+            </g>
+          );
+        })}
+
+        {/* 5'/3' orientation labels for each strand */}
+        <text x={m.l - 14} y={yTop + 4} fontSize="10" fill="#475569" textAnchor="end" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>5′</text>
+        <text x={m.l + pw + 14} y={yTop + 4} fontSize="10" fill="#475569" textAnchor="start" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>3′</text>
+        <text x={m.l - 14} y={yBot + 4} fontSize="10" fill="#475569" textAnchor="end" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>3′</text>
+        <text x={m.l + pw + 14} y={yBot + 4} fontSize="10" fill="#475569" textAnchor="start" fontWeight="700"
+              style={{ fontFamily: "JetBrains Mono, monospace" }}>5′</text>
+        <text x={m.l - 40} y={yTop + 4} fontSize="9" fill="#94a3b8" textAnchor="end" fontWeight="600">TOP</text>
+        <text x={m.l - 40} y={yBot + 4} fontSize="9" fill="#94a3b8" textAnchor="end" fontWeight="600">BOT</text>
+
+        {/* LEFT fragment: top strand from xMin to leftTop, bot strand from xMin to leftBot */}
+        {leftTop > xMin && (
+          <rect x={xFor(xMin)} y={yTop - 3} width={xFor(leftTop) - xFor(xMin)} height="6"
+                fill="#0ea5e9" rx="1" opacity="0.9" />
+        )}
+        {leftBot > xMin && (
+          <rect x={xFor(xMin)} y={yBot - 3} width={xFor(leftBot) - xFor(xMin)} height="6"
+                fill="#0369a1" rx="1" opacity="0.9" />
+        )}
+
+        {/* RIGHT fragment: top strand from rightTop to xMax, bot strand from rightBot to xMax */}
+        {rightTop < xMax && (
+          <rect x={xFor(rightTop)} y={yTop - 3} width={xFor(xMax) - xFor(rightTop)} height="6"
+                fill="#0ea5e9" rx="1" opacity="0.9" />
+        )}
+        {rightBot < xMax && (
+          <rect x={xFor(rightBot)} y={yBot - 3} width={xFor(xMax) - xFor(rightBot)} height="6"
+                fill="#0369a1" rx="1" opacity="0.9" />
+        )}
+
+        {/* Canonical cut line (dashed red) at cutPos */}
+        <line x1={xFor(cutPos)} x2={xFor(cutPos)}
+              y1={m.t - 6} y2={H - m.b}
+              stroke="#dc2626" strokeWidth="1.4" strokeDasharray="4 3" opacity="0.75" />
+        {/* "CUT" label */}
+        <g transform={`translate(${xFor(cutPos)}, ${m.t - 14})`}>
+          <rect x="-18" y="-10" width="36" height="12" rx="2" fill="#dc2626" />
+          <text x="0" y="-2" fontSize="9" fill="white" textAnchor="middle" fontWeight="800"
+                style={{ letterSpacing: "0.08em" }}>CUT</text>
+        </g>
+
+        {/* LEFT-end overhang shading — between leftTop and leftBot */}
+        {leftTop !== leftBot && (
+          <rect x={Math.min(xFor(leftTop), xFor(leftBot))}
+                y={yTop - 3}
+                width={Math.abs(xFor(leftTop) - xFor(leftBot))}
+                height={yBot - yTop + 6}
+                fill="#fbbf24" opacity="0.25" rx="1" />
+        )}
+        {/* RIGHT-end overhang shading */}
+        {rightTop !== rightBot && (
+          <rect x={Math.min(xFor(rightTop), xFor(rightBot))}
+                y={yTop - 3}
+                width={Math.abs(xFor(rightTop) - xFor(rightBot))}
+                height={yBot - yTop + 6}
+                fill="#fbbf24" opacity="0.25" rx="1" />
+        )}
+
+        {/* LEFT fragment caption + dA-tailability pill */}
+        <g transform={`translate(${m.l - 6}, ${H - m.b - 6})`}>
+          <text x="0" y="0" fontSize="10" fill="#1f2937" textAnchor="end" fontWeight="700">LEFT fragment</text>
+          <text x="0" y="14" fontSize="9" fill="#475569" textAnchor="end"
+                style={{ fontFamily: "JetBrains Mono, monospace" }}>
+            top 3′: {leftTop} bp · bot 5′: {leftBot} bp
+          </text>
+          <g transform="translate(0, 22)">
+            <rect x={leftEval.dATailable ? -70 : -90} y="-10" width={leftEval.dATailable ? 70 : 90} height="16" rx="3"
+                  fill={leftEval.dATailable ? (leftEval.confidence === "high" ? "#10b981" : "#f59e0b") : "#e11d48"} />
+            <text x={leftEval.dATailable ? -35 : -45} y="1" fontSize="9.5" fill="white" fontWeight="800"
+                  textAnchor="middle" style={{ letterSpacing: "0.04em" }}>
+              {leftEval.dATailable ? (leftEval.confidence === "high" ? "dA-TAIL ✓" : "dA-TAIL (marginal)") : "dA-TAIL ✗"}
+            </text>
+          </g>
+        </g>
+
+        {/* RIGHT fragment caption + dA-tailability pill */}
+        <g transform={`translate(${m.l + pw + 6}, ${H - m.b - 6})`}>
+          <text x="0" y="0" fontSize="10" fill="#1f2937" textAnchor="start" fontWeight="700">RIGHT fragment</text>
+          <text x="0" y="14" fontSize="9" fill="#475569" textAnchor="start"
+                style={{ fontFamily: "JetBrains Mono, monospace" }}>
+            top 5′: {rightTop} bp · bot 3′: {rightBot} bp
+          </text>
+          <g transform="translate(0, 22)">
+            <rect x="0" y="-10" width={rightEval.dATailable ? 70 : 90} height="16" rx="3"
+                  fill={rightEval.dATailable ? (rightEval.confidence === "high" ? "#10b981" : "#f59e0b") : "#e11d48"} />
+            <text x={rightEval.dATailable ? 35 : 45} y="1" fontSize="9.5" fill="white" fontWeight="800"
+                  textAnchor="middle" style={{ letterSpacing: "0.04em" }}>
+              {rightEval.dATailable ? (rightEval.confidence === "high" ? "dA-TAIL ✓" : "dA-TAIL (marginal)") : "dA-TAIL ✗"}
+            </text>
+          </g>
+        </g>
+      </svg>
+
+      {/* +/- controls + dA rationale cards */}
+      <div className="grid md:grid-cols-2 gap-3 mt-2 text-xs">
+        <div className="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="font-semibold text-zinc-800">LEFT fragment end</span>
+            <Pill tone={leftEval.overhangType === "blunt" ? "emerald"
+                   : leftEval.overhangType === "5_prime" ? "sky"
+                   : "rose"}>
+              {leftEval.overhangType === "blunt" ? "blunt" :
+               leftEval.overhangType === "5_prime" ? `${leftEval.overhangLen}-nt 5′ overhang` :
+               `${leftEval.overhangLen}-nt 3′ overhang`}
+            </Pill>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-2">
+            <NudgeRow label="Top strand (3′ end)" value={offsets.lt} onMinus={() => nudge("lt", -1)} onPlus={() => nudge("lt", +1)} />
+            <NudgeRow label="Bot strand (5′ end)" value={offsets.lb} onMinus={() => nudge("lb", -1)} onPlus={() => nudge("lb", +1)} />
+          </div>
+          <div className="text-[11px] text-zinc-600">{leftEval.reason}</div>
+        </div>
+        <div className="border border-zinc-200 rounded-lg p-2.5 bg-zinc-50">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="font-semibold text-zinc-800">RIGHT fragment end</span>
+            <Pill tone={rightEval.overhangType === "blunt" ? "emerald"
+                   : rightEval.overhangType === "5_prime" ? "sky"
+                   : "rose"}>
+              {rightEval.overhangType === "blunt" ? "blunt" :
+               rightEval.overhangType === "5_prime" ? `${rightEval.overhangLen}-nt 5′ overhang` :
+               `${rightEval.overhangLen}-nt 3′ overhang`}
+            </Pill>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-2">
+            <NudgeRow label="Top strand (5′ end)" value={offsets.rt} onMinus={() => nudge("rt", -1)} onPlus={() => nudge("rt", +1)} />
+            <NudgeRow label="Bot strand (3′ end)" value={offsets.rb} onMinus={() => nudge("rb", -1)} onPlus={() => nudge("rb", +1)} />
+          </div>
+          <div className="text-[11px] text-zinc-600">{rightEval.reason}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Compact +/- control used by EndStructureEditor. Label on the left,
+// current offset (signed) in the middle, buttons on the right.
+function NudgeRow({ label, value, onMinus, onPlus }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-zinc-600">{label}</span>
+      <span className="font-mono font-semibold text-zinc-800 tabular-nums min-w-[3ch] text-center">
+        {value > 0 ? `+${value}` : value}
+      </span>
+      <div className="inline-flex rounded-md border border-zinc-300 overflow-hidden">
+        <button onClick={onMinus} className="px-1.5 py-0.5 bg-white hover:bg-zinc-100 text-zinc-700 font-mono">−1</button>
+        <button onClick={onPlus}  className="px-1.5 py-0.5 bg-white hover:bg-zinc-100 text-zinc-700 font-mono">+1</button>
+      </div>
     </div>
   );
 }
@@ -5676,8 +6002,20 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
           cutConstructPos={pickedGrnaForHover ? pickedGrnaForHover.cut_construct : null}
           overhang={pickedGrnaForHover ? Math.abs(speciesOverhangs[0] || 0) : null}
           grnaStrand={pickedGrnaForHover ? pickedGrnaForHover.strand : null}
+          pamStart={pickedGrnaForHover ? pickedGrnaForHover.pam_start : null}
+          pamSeq={pickedGrnaForHover ? pickedGrnaForHover.pam_seq : null}
         />
       </div>
+
+      {/* End-structure editor — interactive +/− on each of the four strand
+          termini produced by the cut. Evaluates dA-tailability for each end. */}
+      {pickedGrnaForHover && (
+        <EndStructureEditor
+          cutPos={pickedGrnaForHover.cut_construct}
+          canonicalOverhang={speciesOverhangs[0] || 0}
+          constructSize={constructSize}
+        />
+      )}
 
       {/* ssDNA cut products diagram — rendered when a gRNA is picked so the
           four expected fluorophore-labeled single strands are visible
@@ -7560,8 +7898,9 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
 // strands as a horizontal bar, colored by channel, with dye position marked,
 // length annotated, and template/non-template and PAM-proximal/distal flags.
 // ----------------------------------------------------------------------
-function ProductFragmentViz({ products, constructSize }) {
+function ProductFragmentViz({ products, constructSize, svgRef: externalSvgRef }) {
   const fragRef = useRef(null);
+  const combinedRef = useMemo(() => mergeRefs(fragRef, externalSvgRef), [externalSvgRef]);
   if (!products) return null;
 
   // Layout zones with strict left/right reserved columns for labels so the
@@ -7588,7 +7927,7 @@ function ProductFragmentViz({ products, constructSize }) {
       <div className="absolute top-1 right-1 z-10 no-print">
         <ExportMenu svgRef={fragRef} basename="ssdna_products" label="Export" />
       </div>
-      <svg ref={fragRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
+      <svg ref={combinedRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
         <rect x="0" y="0" width={W} height={H} fill="white" />
 
         {/* Title + subtitle */}
@@ -7724,8 +8063,11 @@ function ProductFragmentViz({ products, constructSize }) {
   );
 }
 
-function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeChange, cutConstructPos, overhang, grnaStrand, productSizes }) {
+function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeChange, cutConstructPos, overhang, grnaStrand, productSizes, pamStart, pamSeq, svgRef: externalSvgRef }) {
   const consRef = useRef(null);
+  // The exported ExportMenu below uses consRef; parents can pass an external
+  // svgRef (or callback ref) to also get at the DOM node for their own export.
+  const combinedRef = useMemo(() => mergeRefs(consRef, externalSvgRef), [externalSvgRef]);
   const total = CONSTRUCT.components.reduce((t, c) => t + (componentSizes[c.key] || 0), 0) || 1;
 
   // Layout zones (all y coordinates). Each zone has a fixed pixel range so
@@ -7781,7 +8123,7 @@ function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeCha
       <div className="absolute top-1 right-1 z-10 no-print">
         <ExportMenu svgRef={consRef} basename="construct_diagram" label="Export" />
       </div>
-      <svg ref={consRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
+      <svg ref={combinedRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
         {/* White background rect for exports */}
         <rect x="0" y="0" width={W} height={H} fill="white" />
 
@@ -7855,6 +8197,38 @@ function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeCha
             </g>
           );
         })}
+
+        {/* PAM site marker — rendered before the cut overlay so the CUT
+            line stays on top. PAM is 3 bp; for a top-strand gRNA it sits
+            3' of the protospacer (immediately downstream of the cut site);
+            for a bot-strand gRNA it sits upstream (position pamStart,
+            pamStart+2). `pamSeq` is the actual 3-letter motif (e.g. "CGG")
+            when known. */}
+        {hasCut && pamStart != null && pamStart >= 0 && pamStart + 3 <= total && (
+          <g>
+            <rect x={m.l + (pamStart / total) * pw}
+                  y={Z.boxTop - 4}
+                  width={Math.max(6, (3 / total) * pw)}
+                  height={Z.boxH + 8}
+                  fill="#8b5cf6" opacity="0.18"
+                  stroke="#7c3aed" strokeWidth="0.8" strokeDasharray="3 2" />
+            {/* PAM label pill directly above the PAM window, with an NGG
+                annotation + orientation triangle showing strand direction */}
+            <g transform={`translate(${m.l + ((pamStart + 1.5) / total) * pw}, ${Z.boxTop - 10})`}>
+              <rect x="-22" y="-10" width="44" height="11" rx="2" fill="#7c3aed" />
+              <text x="0" y="-2" fontSize="8.5" fill="white" textAnchor="middle" fontWeight="800"
+                    style={{ fontFamily: "JetBrains Mono, monospace", letterSpacing: "0.06em" }}>
+                PAM {pamSeq || "NGG"}
+              </text>
+              {/* Strand-orientation arrow: top-strand PAM points →, bot-strand ← */}
+              {grnaStrand === "top" ? (
+                <polygon points="22,-4 30,-4.5 22,-5" fill="#7c3aed" />
+              ) : (
+                <polygon points="-22,-4 -30,-4.5 -22,-5" fill="#7c3aed" />
+              )}
+            </g>
+          </g>
+        )}
 
         {/* Cut site overlay — rendered AFTER boxes so it sits on top */}
         {hasCut && (
