@@ -8,6 +8,34 @@ The format is loosely [Keep a Changelog](https://keepachangelog.com/). This proj
 
 (Empty.)
 
+## v0.7.0 — 2026-04-18
+
+### Added
+- **Tailwind v3 + PostCSS + Autoprefixer** wired into the Vite pipeline. Without this the deployed Pages site rendered raw unstyled HTML; the Claude.ai artifact runtime had been hiding the gap. Build now emits a real CSS bundle (~22 KB / 4.8 KB gzipped).
+- **Inter and JetBrains Mono** loaded via Google Fonts in `index.html`.
+- **`tailwind.config.js`** extends the theme with dye-channel colors (`bg-dye-B` etc.) tied to BIOLOGY.md and a `shadow-soft` utility.
+- **Design system primitives** in `src/FragmentViewer.jsx`: `Panel`, `Stat`, `Pill`, `DyeChip`, `Field`, `ToolButton`. All exported and reusable.
+- **Chrome rewrite**: dark 48 px toolbar with brand mark, construct chip, sample count, dark-variant ToolButtons. 208 px sidebar split into Workflow tabs + Lab tools external links. Light status bar with tone-coded calibrated/uncalibrated icon and clickable version link.
+- **`skills/cas9-cut-predictor`**: Python port of `findGrnas` + `predictCutProducts`. CLI + library + 8 pytest assertions mirroring the JSX vitest cases.
+- **`skills/genemapper-parser`**: Python port of `parseGenemapperTSV`. Locked output schema spec for both `build_artifact.py` and the in-browser DropZone. 6 pytest assertions.
+- **`skills/clc-construct-registry`**: YAML registry of CLC constructs at `data/constructs.yaml`. CLI list/get/validate/json. V059_gRNA3 today; new constructs append here first.
+- **`skills/clc-visualizations`**: matplotlib mirror of every fragment-viewer figure (electropherogram, construct, Cas9 cut diagram, 4-ssDNA products). Headless, publication-quality, color tokens mirror the Tailwind theme. 4 example PNGs committed.
+- **`docs/LAB_INTEGRATIONS.md`**: ASCII graph + tables for every upstream / downstream / lateral connection.
+- **`lab-wiki/entities/concepts/clc-fragment-analysis.md`**: cross-cutting concept page linking the CLC assay across projects, decisions, and skills.
+- **`lab-papers/papers.yaml::projects[fragment-viewer].related_skills`**: 10 entries (the 4 extracted skills + 6 sibling lab skills).
+- **CI**: pytest jobs for all 3 testable skills, `clc-construct-registry validate`, ruff on `skills/`, scaffold-in-sync, fa-data-schema, ingest-roundtrip, biology-sync. Plus `cache: npm` removed from setup-node since `package-lock.json` is gitignored.
+- **GitHub Pages enabled**, deployed at the randomized private-repo subdomain. `vite.config.js::base` set to `/` for private-repo serving.
+
+### Changed
+- **Global slate-* → zinc-* palette migration** in the JSX (249 replacements). Unifies the tab-body color story with the new chrome.
+- **AutoClassifyTab dye-mobility offset panel** rebuilt with `<Panel>`, `<ToolButton>`, and `<DyeChip>` primitives. Replaces ~70 lines of bespoke styling.
+- **`src/FragmentViewer.jsx`** exports 12 helpers and constants (was 1) so the Vitest harness can import directly without rendering UI.
+- **`scripts/regen_scaffold.py`** finds the `DATA` line dynamically by scanning, so future inserts above DATA do not break the scaffold round-trip.
+
+### Fixed
+- **`classifyPeaks` vote-tally bug** at line 381: the `(voteMap.get(key) || { w: 0, ... }).pred` sentinel always evaluated truthy because the fallback object had its own `.pred`. Reduced to `const existing = voteMap.get(key); existing ? ... : ...`. Caught by the new Vitest harness.
+- **CI `esbuild --loader=jsx`** flag form rejected by current esbuild releases. Switched to `--loader:.jsx=jsx`.
+
 ## v0.6.0 — 2026-04-18
 
 ### Added

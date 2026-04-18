@@ -1,6 +1,6 @@
 # HANDOFF.md — Current project state
 
-Last updated: 2026-04-18 (post-A/B sweep, repo at commit `414f21b` or later).
+Last updated: 2026-04-18 (v0.7.0 visual overhaul + skill extraction round, repo at commit `00c8ca0` or later).
 
 ## Status
 
@@ -57,10 +57,14 @@ See `.project/UNBLOCK_PROMPTS.md`. The five items:
 
 ## Recently shipped (this session)
 
-- 9 commits on `main` taking the repo from `89d2863` to `414f21b`.
-- 4 sibling repos updated and pushed: `lab-papers` (project registration), `lab-wiki` (CE-fragment decision record + auto-anchor), `lab-query-router` (corpus paths).
+- 16 commits on `main` taking the repo from `89d2863` to `00c8ca0`.
+- 4 sibling repos updated and pushed: `lab-papers` (project registration + 10 related_skills), `lab-wiki` (CE-fragment decision record + auto-anchor + clc-fragment-analysis entity page), `lab-query-router` (corpus paths).
+- 4 new skills extracted and installed via symlink chain into `~/.claude/skills/`: `cas9-cut-predictor`, `genemapper-parser`, `clc-construct-registry`, `clc-visualizations`.
+- Tailwind v3 + Inter + JetBrains Mono now load in the Vite build (the deployed Pages site was previously rendering raw unstyled HTML).
+- Design system primitives (`Panel`, `Stat`, `Pill`, `DyeChip`, `Field`, `ToolButton`) drive the chrome and are ready for tab-body composition.
 - Latent bug fixed in `classifyPeaks` vote tally (caught by the new unit test).
 - Latent CI bug fixed in `validate.yml` esbuild loader flag.
+- GitHub Pages enabled and serving at the randomized private-repo subdomain.
 
 ## Files NOT in the repo that the viewer depends on
 

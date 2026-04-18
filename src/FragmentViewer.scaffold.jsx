@@ -1143,7 +1143,7 @@ function StatusBar({ sampleCount, peakCount, calibrated, construct }) {
         rel="noopener noreferrer"
         className="font-mono text-zinc-500 hover:text-zinc-900"
       >
-        v0.6.0
+        v0.7.0
       </a>
     </footer>
   );
