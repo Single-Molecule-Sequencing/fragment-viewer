@@ -1245,7 +1245,7 @@ export function SpeciesLegend({ componentSizes, defaultOpen = false }) {
 // ----------------------------------------------------------------------
 // Find every species (assembly + monomer + cut for the chosen gRNA) whose
 // size is within +/- tol bp of the queried bp on the queried dye. Used by
-// the hover-on-peak popover to answer "what could this peak be?"
+// the click-pinned popover to answer "what could this peak be?"
 // ----------------------------------------------------------------------
 export function speciesAtSize({ bp, dye, tol = 2.5, componentSizes, constructSize, gRNAs = [], overhangs = [0] }) {
   const all = expectedSpeciesForDye(dye, componentSizes, constructSize, gRNAs, overhangs);
@@ -1253,6 +1253,162 @@ export function speciesAtSize({ bp, dye, tol = 2.5, componentSizes, constructSiz
     .map(sp => ({ ...sp, dist: Math.abs(sp.size - bp) }))
     .filter(sp => sp.dist <= tol)
     .sort((a, b) => a.dist - b.dist);
+}
+
+// Stable id for a species across renders. Used by the SpeciesSidebar
+// per-species visibility toggles.
+export function speciesId(sp, dye) {
+  if (sp.kind === "assembly") return `asm:${dye}:${sp.size}:${sp.label}`;
+  if (sp.kind === "monomer")  return `mon:${dye}:${sp.size}`;
+  if (sp.kind === "cut")      return `cut:${dye}:${sp.size}:${sp.source_reactant || ""}:${sp.label}`;
+  return `${sp.kind}:${dye}:${sp.size}`;
+}
+
+// ----------------------------------------------------------------------
+// SpeciesSidebar — right-rail legend listing every species the active
+// plot could show (assembly + monomer + cut), with per-species visibility
+// toggles. Each row shows: checkbox, schematic thumbnail, size, name,
+// dye chips, and a line sample matching the on-plot annotation (lane
+// dye color + kind dash pattern). Dye is color-keyed; kind is pattern-
+// keyed via SPECIES_DASH. The hostingPlot can be:
+//   "trace"    -> shows species on every dye lane in TraceTab
+//   "compare"  -> shows species on the single selected dye in CompareTab
+// ----------------------------------------------------------------------
+export function SpeciesSidebar({
+  componentSizes, constructSize, gRNAs, overhangs,
+  dyes,                      // dye letters this plot covers (e.g. ["B","G","Y","R"] or ["R"])
+  hiddenIds, onToggleId,     // Set of species ids to HIDE; toggling adds/removes
+  onShowAll, onHideAll,
+  title = "Species legend",
+  subtitle = "Tick to overlay; untick to hide. Color = lane dye; pattern = kind (assembly = short dash, monomer = dotted, cut = long dash).",
+}) {
+  const groups = useMemo(() => {
+    const seen = new Set();
+    const assembly = [], monomer = [], cuts = [];
+    for (const d of dyes) {
+      const list = expectedSpeciesForDye(d, componentSizes, constructSize, gRNAs, overhangs);
+      for (const sp of list) {
+        const id = speciesId(sp, d);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const row = { ...sp, dye: d, dyeColor: DYE[d].color, id };
+        if (sp.kind === "assembly") assembly.push(row);
+        else if (sp.kind === "monomer") monomer.push(row);
+        else if (sp.kind === "cut") cuts.push(row);
+      }
+    }
+    return { assembly, monomer, cuts };
+  }, [dyes, componentSizes, constructSize, gRNAs, overhangs]);
+
+  const total = groups.assembly.length + groups.monomer.length + groups.cuts.length;
+  const hiddenCount = (() => {
+    let n = 0;
+    [...groups.assembly, ...groups.monomer, ...groups.cuts].forEach(r => { if (hiddenIds.has(r.id)) n++; });
+    return n;
+  })();
+
+  const renderRow = (row) => {
+    const visible = !hiddenIds.has(row.id);
+    // Build schematic from the species kind + (for cuts) source reactant
+    let sprops = { parts: [], leftDyes: [], rightDyes: [] };
+    let cutMark = null;
+    if (row.source_reactant) {
+      const reactant = TARGET_REACTANTS.find(r => r.id === row.source_reactant);
+      if (reactant) {
+        sprops = speciesSchematicProps(reactant);
+        cutMark = gRNAs[0]?.cut_construct ? { bp: gRNAs[0].cut_construct } : null;
+      }
+    } else {
+      const a = ASSEMBLY_PRODUCTS.find(ap => ap.dyes.includes(row.dye) && Math.abs(productSize(ap, componentSizes) - row.size) < 1);
+      if (a) sprops = speciesSchematicProps(a);
+      else if (row.kind === "monomer") {
+        // Single-component bar for the relevant adapter oligo
+        if (row.dye === "Y" && row.size === 25) sprops = { parts: ["ad1"], leftDyes: ["Y"], rightDyes: [] };
+        else if (row.dye === "B" && row.size === 29) sprops = { parts: ["ad1","oh1"], leftDyes: ["B"], rightDyes: [] };
+        else if (row.dye === "G" && row.size === 25) sprops = { parts: ["ad2"], leftDyes: [], rightDyes: ["G"] };
+        else if (row.dye === "R" && row.size === 29) sprops = { parts: ["oh2","ad2"], leftDyes: [], rightDyes: ["R"] };
+      }
+    }
+    return (
+      <li key={row.id} className={`flex items-start gap-2 px-2 py-1.5 rounded transition ${visible ? "bg-white" : "bg-zinc-50 opacity-60"} hover:bg-zinc-100`}>
+        <input
+          type="checkbox" checked={visible}
+          onChange={() => onToggleId(row.id)}
+          className="mt-1 w-3.5 h-3.5 accent-zinc-700 cursor-pointer"
+          aria-label={`Toggle ${row.label}`}
+        />
+        <div className="shrink-0 mt-0.5">
+          <SpeciesSchematic
+            parts={sprops.parts} leftDyes={sprops.leftDyes} rightDyes={sprops.rightDyes}
+            width={120} height={22}
+            showCut={cutMark}
+          />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1 text-[11px]">
+            <span className="font-mono text-zinc-800">{row.size} bp</span>
+            <DyeChip dye={row.dye} />
+          </div>
+          <div className="text-[10px] text-zinc-600 leading-tight" title={row.fullLabel || row.label}>
+            {row.label}
+          </div>
+        </div>
+        {/* Line sample: lane dye color + kind dash pattern */}
+        <svg width="22" height="14" aria-hidden className="shrink-0 mt-1">
+          <line x1="0" y1="7" x2="22" y2="7" stroke={row.dyeColor} strokeWidth="1.6" strokeDasharray={SPECIES_DASH[row.kind] || "1 2"} />
+        </svg>
+      </li>
+    );
+  };
+
+  return (
+    <Panel
+      title={title}
+      subtitle={subtitle}
+      className="lg:sticky lg:top-2 self-start"
+      actions={
+        <>
+          <ToolButton variant="ghost" onClick={onShowAll} title="Show every species">
+            Show all
+          </ToolButton>
+          <ToolButton variant="ghost" onClick={onHideAll} title="Hide every species">
+            Hide all
+          </ToolButton>
+        </>
+      }
+    >
+      <div className="text-[10px] text-zinc-500 mb-2 font-mono">
+        {total - hiddenCount}/{total} visible
+      </div>
+      {groups.assembly.length > 0 && (
+        <details open className="mb-2">
+          <summary className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1 cursor-pointer">
+            Assembly + partial ligation ({groups.assembly.length})
+          </summary>
+          <ul className="flex flex-col gap-0.5">{groups.assembly.map(renderRow)}</ul>
+        </details>
+      )}
+      {groups.monomer.length > 0 && (
+        <details open className="mb-2">
+          <summary className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1 cursor-pointer">
+            Adapter monomers ({groups.monomer.length})
+          </summary>
+          <ul className="flex flex-col gap-0.5">{groups.monomer.map(renderRow)}</ul>
+        </details>
+      )}
+      {groups.cuts.length > 0 && (
+        <details open className="mb-1">
+          <summary className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-1 cursor-pointer">
+            Cas9 cut products ({groups.cuts.length})
+          </summary>
+          <ul className="flex flex-col gap-0.5">{groups.cuts.map(renderRow)}</ul>
+        </details>
+      )}
+      {total === 0 && (
+        <div className="text-xs text-zinc-500">No expected species for the current dye(s) and gRNA selection.</div>
+      )}
+    </Panel>
+  );
 }
 
 export function componentSizesFrom(construct) {
@@ -1687,9 +1843,16 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
   // Peak hover-dot circles cover the trace heavily; off by default, toggle on demand.
   const [showPeakDots, setShowPeakDots] = useState(false);
   const [hover, setHover] = useState(null);
-  // Hover state for the species-at-size popover. Position via clientX/clientY
-  // so scroll inside the main pane doesn't drift the popover.
-  const [peakHover, setPeakHover] = useState(null);
+  // Click-pinned species popover (was hover; click is steadier and lets users
+  // scroll inside the popover and read full Cas9 nomenclature without losing it).
+  const [pinnedPeak, setPinnedPeak] = useState(null);
+  // Per-species visibility; empty Set = show every species in the overlay.
+  const [hiddenSpeciesIds, setHiddenSpeciesIds] = useState(() => new Set());
+  const toggleHidden = (id) => setHiddenSpeciesIds(s => {
+    const next = new Set(s);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const peaks = DATA.peaks[sample] || {};
   const s = cfg[sample];
@@ -1793,6 +1956,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
 
   return (
     <>
+      <div className={showSpecies ? "lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-3" : ""}>
+        <div className="min-w-0">
       {/* Sample selector */}
       <div className="bg-white rounded-lg border border-zinc-200 p-2.5 mb-2">
         <div className="flex items-center gap-2 mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">
@@ -2058,7 +2223,8 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   }
                   const overhangs = pickedGrna ? speciesOverhangs : [];
                   const species = expectedSpeciesForDye(dye, componentSizes, constructSize, pickedGrna ? [pickedGrna] : [], overhangs)
-                    .filter(sp => sp.size >= range[0] && sp.size <= range[1]);
+                    .filter(sp => sp.size >= range[0] && sp.size <= range[1])
+                    .filter(sp => !hiddenSpeciesIds.has(speciesId(sp, dye)));
                   if (species.length === 0) return null;
                   // Stack labels across rows. More rows now because cut labels are longer
                   // (full Cas9 nomenclature) so they need more vertical headroom.
@@ -2159,31 +2325,45 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
                   });
                 })()}
 
-                {/* Per-peak hover dots: visible circles when toggle is on,
-                    transparent hit-targets always so the hover popover works
-                    regardless of dot visibility. */}
+                {/* Per-peak click hit-targets. Vertical bars span the lane
+                    so they're far easier to click than tiny circles; visible
+                    dots overlay them when showPeakDots is on. */}
                 {lane.dyes.map(dye =>
                   (peaksByChannel[dye] || [])
                     .filter(p => p.size >= range[0] && p.size <= range[1])
                     .map((p, i) => {
                       const x = xScale(p.size);
                       const y = yScale(p.height);
+                      const pinned = pinnedPeak && pinnedPeak.dye === dye && Math.abs(pinnedPeak.size - p.size) < 0.05;
                       return (
-                        <circle
-                          key={`dot-${li}-${dye}-${i}`}
-                          cx={x} cy={y}
-                          r={showPeakDots ? 3 : 6}
-                          fill={showPeakDots ? "white" : "transparent"}
-                          stroke={showPeakDots ? DYE[dye].color : "transparent"}
-                          strokeWidth={showPeakDots ? 1.2 : 0}
-                          opacity={showPeakDots ? (mode === "trace" ? 0.9 : 0.7) : 1}
-                          onMouseEnter={(e) => setPeakHover({
-                            clientX: e.clientX, clientY: e.clientY,
-                            dye, size: p.size, height: p.height, area: p.area,
-                          })}
-                          onMouseLeave={() => setPeakHover(null)}
-                          style={{ cursor: "crosshair" }}
-                        />
+                        <g key={`hit-${li}-${dye}-${i}`}>
+                          {/* Big invisible hit-target rect (full lane height; ~7 px wide) */}
+                          <rect
+                            x={x - 4} y={lane.top}
+                            width={8} height={lane.h}
+                            fill="transparent"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPinnedPeak({
+                                clientX: e.clientX, clientY: e.clientY,
+                                dye, size: p.size, height: p.height, area: p.area,
+                              });
+                            }}
+                            style={{ cursor: "pointer" }}
+                          />
+                          {/* Visible dot when toggle on, or pin highlight when this peak is selected */}
+                          {(showPeakDots || pinned) && (
+                            <circle
+                              cx={x} cy={y}
+                              r={pinned ? 5 : 3}
+                              fill={pinned ? DYE[dye].color : "white"}
+                              stroke={DYE[dye].color}
+                              strokeWidth={pinned ? 1.5 : 1.2}
+                              opacity={pinned ? 1 : (mode === "trace" ? 0.9 : 0.7)}
+                              pointerEvents="none"
+                            />
+                          )}
+                        </g>
                       );
                     })
                 )}
@@ -2248,28 +2428,55 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
         <VisibleWindowCard peaksByChannel={peaksByChannel} results={results[sample]} cfg={cfg[sample]} />
       </div>
 
-      {/* Molecular species legend */}
+      {/* Static species reference card (always available) */}
       <SpeciesLegend componentSizes={componentSizes} defaultOpen={false} />
+        </div>
 
-      {/* Hover popover: every species whose size matches the hovered peak */}
-      {peakHover && (
+        {/* Right-rail sidebar with per-species visibility toggles */}
+        {showSpecies && (
+          <SpeciesSidebar
+            componentSizes={componentSizes}
+            constructSize={constructSize}
+            gRNAs={pickedGrnaForHover ? [pickedGrnaForHover] : []}
+            overhangs={pickedGrnaForHover ? speciesOverhangs : []}
+            dyes={["B", "G", "Y", "R"]}
+            hiddenIds={hiddenSpeciesIds}
+            onToggleId={toggleHidden}
+            onShowAll={() => setHiddenSpeciesIds(new Set())}
+            onHideAll={() => {
+              const all = new Set();
+              for (const d of ["B","G","Y","R"]) {
+                for (const sp of expectedSpeciesForDye(d, componentSizes, constructSize, pickedGrnaForHover ? [pickedGrnaForHover] : [], pickedGrnaForHover ? speciesOverhangs : [])) {
+                  all.add(speciesId(sp, d));
+                }
+              }
+              setHiddenSpeciesIds(all);
+            }}
+          />
+        )}
+      </div>
+
+      {/* Click-pinned popover: every species whose size matches the clicked peak */}
+      {pinnedPeak && (
         <PeakSpeciesPopover
-          hover={peakHover}
+          hover={pinnedPeak}
           componentSizes={componentSizes}
           constructSize={constructSize}
           gRNAs={pickedGrnaForHover ? [pickedGrnaForHover] : []}
           overhangs={pickedGrnaForHover ? speciesOverhangs : []}
           tol={2.5}
+          onClose={() => setPinnedPeak(null)}
         />
       )}
     </>
   );
 }
 
-// Floating popover anchored to the cursor that lists every species whose
-// size matches the hovered peak (within tol bp). Renders <SpeciesSchematic>
-// thumbnails so the user sees the molecular structure at a glance.
-function PeakSpeciesPopover({ hover, componentSizes, constructSize, gRNAs, overhangs, tol = 2.5 }) {
+// Floating popover anchored to the clicked peak. Renders <SpeciesSchematic>
+// thumbnails so the user sees the molecular structure at a glance. Stays open
+// until the user clicks the X, clicks outside, or presses Escape.
+function PeakSpeciesPopover({ hover, componentSizes, constructSize, gRNAs, overhangs, tol = 2.5, onClose }) {
+  const popoverRef = useRef(null);
   const matches = useMemo(
     () => speciesAtSize({
       bp: hover.size, dye: hover.dye, tol,
@@ -2277,9 +2484,26 @@ function PeakSpeciesPopover({ hover, componentSizes, constructSize, gRNAs, overh
     }),
     [hover.size, hover.dye, tol, componentSizes, constructSize, gRNAs, overhangs]
   );
+  // Outside-click + Escape dismissal
+  useEffect(() => {
+    const onMouseDown = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        // Don't dismiss if the user clicked another peak hit-target (let the new click pin it)
+        const isPeakHit = e.target?.tagName === "rect" && e.target.getAttribute("fill") === "transparent";
+        if (!isPeakHit) onClose && onClose();
+      }
+    };
+    const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
   // Position the popover near the cursor; flip if near the right or bottom
   // edges of the viewport so it stays fully visible.
-  const popW = 380, popH = Math.min(420, 90 + matches.length * 56);
+  const popW = 400, popH = Math.min(440, 100 + matches.length * 60);
   const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   let left = hover.clientX + 14;
@@ -2288,7 +2512,8 @@ function PeakSpeciesPopover({ hover, componentSizes, constructSize, gRNAs, overh
   if (top  + popH > vh - 8) top  = Math.max(8, hover.clientY - popH - 14);
   return (
     <div
-      className="fixed z-50 bg-white rounded-xl border border-zinc-200 shadow-xl overflow-hidden no-print pointer-events-none"
+      ref={popoverRef}
+      className="fixed z-50 bg-white rounded-xl border border-zinc-200 shadow-xl overflow-hidden no-print"
       style={{ left, top, width: popW, maxHeight: popH }}
     >
       <div className="px-3 py-2 border-b border-zinc-100 flex items-center gap-2 bg-zinc-50">
@@ -2298,6 +2523,14 @@ function PeakSpeciesPopover({ hover, componentSizes, constructSize, gRNAs, overh
           <div className="text-[10px] text-zinc-500">height {Math.round(hover.height).toLocaleString()}{hover.area ? ` · area ${Math.round(hover.area).toLocaleString()}` : ""}</div>
         </div>
         <Pill tone="neutral">{matches.length} match{matches.length === 1 ? "" : "es"}</Pill>
+        <button
+          onClick={onClose}
+          className="text-zinc-400 hover:text-zinc-700 text-base leading-none"
+          aria-label="Close"
+          title="Close (or press Escape)"
+        >
+          ×
+        </button>
       </div>
       <div className="overflow-auto max-h-72 divide-y divide-zinc-100">
         {matches.length === 0 ? (
@@ -3246,6 +3479,11 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
   const [showSpecies, setShowSpecies] = useState(false);
   const [speciesGrnaIdx, setSpeciesGrnaIdx] = useState(0);  // V059_gRNA3 (lab catalog idx 0)
   const [speciesOverhangs, setSpeciesOverhangs] = useState([0, 4]);
+  const [hiddenSpeciesIds, setHiddenSpeciesIds] = useState(() => new Set());
+  const toggleHiddenCmp = (id) => setHiddenSpeciesIds(s => {
+    const next = new Set(s); if (next.has(id)) next.delete(id); else next.add(id); return next;
+  });
+  const [pinnedPeak, setPinnedPeak] = useState(null);
 
   const candidateGrnas = useMemo(() => {
     if (!constructSeq) return [];
@@ -3313,6 +3551,8 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
 
   return (
     <>
+      <div className={showSpecies ? "lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-3" : ""}>
+        <div className="min-w-0">
       <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-2">
         <div className="text-sm font-medium mb-2">Overlay comparison</div>
         <div className="flex flex-wrap items-center gap-3 text-xs">
@@ -3501,6 +3741,38 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
             );
           })}
 
+          {/* Per-peak click hit-targets (across all picked samples) */}
+          {picked.map((ss, i) => {
+            const arr = DATA.peaks[ss]?.[dye] || [];
+            return arr
+              .filter(p => p[0] >= range[0] && p[0] <= range[1])
+              .map((p, j) => {
+                const x = xScale(p[0]);
+                const pinned = pinnedPeak && pinnedPeak.dye === dye && Math.abs(pinnedPeak.size - p[0]) < 0.05 && pinnedPeak.sample === ss;
+                return (
+                  <g key={`hit-${ss}-${j}`}>
+                    <rect
+                      x={x - 4} y={m.t}
+                      width={8} height={plotH}
+                      fill="transparent"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPinnedPeak({
+                          clientX: e.clientX, clientY: e.clientY,
+                          dye, size: p[0], height: p[1], area: p[2], sample: ss,
+                        });
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={{ cursor: "pointer" }}
+                    />
+                    {pinned && (
+                      <circle cx={x} cy={m.t + plotH * 0.5} r={5} fill={PALETTE[i % PALETTE.length]} stroke="white" strokeWidth="1.5" pointerEvents="none" />
+                    )}
+                  </g>
+                );
+              });
+          })}
+
           {/* Expected markers from current config, for selected dye, per picked sample */}
           {picked.map((ss, i) => {
             const exp = cfg[ss]?.expected[dye];
@@ -3515,7 +3787,8 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
               dye, componentSizes || {}, constructSize,
               pickedGrna ? [pickedGrna] : [],
               pickedGrna ? speciesOverhangs : []
-            ).filter(sp => sp.size >= range[0] && sp.size <= range[1]);
+            ).filter(sp => sp.size >= range[0] && sp.size <= range[1])
+             .filter(sp => !hiddenSpeciesIds.has(speciesId(sp, dye)));
             if (!species.length) return null;
             // Color comes from the active dye; kind via stroke-dash pattern.
             const dyeColor = DYE[dye].color;
@@ -3587,8 +3860,45 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
         <OverhangChart samples={samples} results={results} />
       </div>
 
-      {/* Molecular species legend (same component as TraceTab) */}
+      {/* Static species reference card (always available) */}
       <SpeciesLegend componentSizes={componentSizes} defaultOpen={false} />
+        </div>
+
+        {/* Right-rail sidebar with per-species toggles (CompareTab single dye) */}
+        {showSpecies && (
+          <SpeciesSidebar
+            componentSizes={componentSizes}
+            constructSize={constructSize}
+            gRNAs={pickedGrna ? [pickedGrna] : []}
+            overhangs={pickedGrna ? speciesOverhangs : []}
+            dyes={[dye]}
+            hiddenIds={hiddenSpeciesIds}
+            onToggleId={toggleHiddenCmp}
+            onShowAll={() => setHiddenSpeciesIds(new Set())}
+            onHideAll={() => {
+              const all = new Set();
+              for (const sp of expectedSpeciesForDye(dye, componentSizes, constructSize, pickedGrna ? [pickedGrna] : [], pickedGrna ? speciesOverhangs : [])) {
+                all.add(speciesId(sp, dye));
+              }
+              setHiddenSpeciesIds(all);
+            }}
+            title={`Species legend · ${DYE[dye].label} channel`}
+          />
+        )}
+      </div>
+
+      {/* Click-pinned popover for CompareTab (peaks across multiple samples) */}
+      {pinnedPeak && (
+        <PeakSpeciesPopover
+          hover={pinnedPeak}
+          componentSizes={componentSizes}
+          constructSize={constructSize}
+          gRNAs={pickedGrna ? [pickedGrna] : []}
+          overhangs={pickedGrna ? speciesOverhangs : []}
+          tol={2.5}
+          onClose={() => setPinnedPeak(null)}
+        />
+      )}
     </>
   );
 }
