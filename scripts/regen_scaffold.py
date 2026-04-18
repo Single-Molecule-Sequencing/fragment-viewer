@@ -24,12 +24,18 @@ def main() -> int:
         return 1
     src = VIEWER.read_text()
     lines = src.splitlines(keepends=True)
-    if not lines[5].startswith("const DATA = "):
-        print(f"[regen] Expected `const DATA = ` at line 6, got: {lines[5][:60]!r}", file=sys.stderr)
+    data_idx = next(
+        (i for i, line in enumerate(lines)
+         if line.startswith("const DATA = ") or line.startswith("let DATA = ")),
+        None,
+    )
+    if data_idx is None:
+        print("[regen] No `const DATA = ` or `let DATA = ` line found", file=sys.stderr)
         return 2
-    lines[5] = "const DATA = __DATA__;\n"
+    prefix = lines[data_idx].split("=", 1)[0].rstrip() + " = "
+    lines[data_idx] = f"{prefix}__DATA__;\n"
     SCAFFOLD.write_text("".join(lines))
-    print(f"[regen] Wrote {SCAFFOLD} ({SCAFFOLD.stat().st_size} bytes)")
+    print(f"[regen] Wrote {SCAFFOLD} ({SCAFFOLD.stat().st_size} bytes); DATA at line {data_idx + 1}")
     return 0
 
 

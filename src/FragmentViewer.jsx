@@ -1,5 +1,107 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 
+// ----------------------------------------------------------------------
+// GeneMapper TSV parser (browser-side; mirrors scripts/build_artifact.py)
+// ----------------------------------------------------------------------
+export function parseGenemapperTSV(text) {
+  const lines = text.split(/\r?\n/);
+  if (lines.length < 2) return { peaks: {} };
+  const header = lines[0].split("\t").map(h => h.trim());
+  const idx = (k) => header.findIndex(h => h.toLowerCase() === k.toLowerCase());
+  const ci = {
+    sample: idx("Sample Name") >= 0 ? idx("Sample Name") : idx("SampleName"),
+    dye:    idx("Dye/Sample Peak") >= 0 ? idx("Dye/Sample Peak") : idx("Dye"),
+    size:   idx("Size"),
+    height: idx("Height"),
+    area:   idx("Area"),
+    width:  idx("Width in BP") >= 0 ? idx("Width in BP") : idx("Width"),
+  };
+  if (ci.sample < 0 || ci.dye < 0 || ci.size < 0) {
+    throw new Error("Header missing one of: Sample Name, Dye/Sample Peak, Size");
+  }
+  const peaks = {};
+  for (let i = 1; i < lines.length; i++) {
+    const row = lines[i].split("\t");
+    if (row.length <= ci.sample) continue;
+    const sample = (row[ci.sample] || "").trim();
+    const dyeFull = (row[ci.dye] || "").trim();
+    const dye = dyeFull.split(",")[0].trim().toUpperCase();
+    if (!sample || !dye) continue;
+    const size = parseFloat(row[ci.size]);
+    if (!Number.isFinite(size)) continue;
+    const height = parseFloat(row[ci.height]) || 0;
+    const area = parseFloat(row[ci.area]) || 0;
+    const width = parseFloat(row[ci.width]) || 1;
+    if (!peaks[sample]) peaks[sample] = {};
+    if (!peaks[sample][dye]) peaks[sample][dye] = [];
+    peaks[sample][dye].push([
+      Math.round(size * 100) / 100,
+      Math.round(height * 10) / 10,
+      Math.round(area * 10) / 10,
+      Math.round(width * 1000) / 1000,
+    ]);
+  }
+  return { peaks };
+}
+
+// ----------------------------------------------------------------------
+// Drag-drop zone for new GeneMapper TSV exports.
+// On a successful drop, calls onData with the parsed peaks object.
+// ----------------------------------------------------------------------
+function DropZone({ onData, currentSampleCount }) {
+  const [hover, setHover] = useState(false);
+  const [error, setError] = useState(null);
+  const inputRef = useRef(null);
+
+  const handleFiles = async (files) => {
+    setError(null);
+    if (!files || files.length === 0) return;
+    const f = files[0];
+    try {
+      const text = await f.text();
+      const parsed = parseGenemapperTSV(text);
+      const n = Object.keys(parsed.peaks).length;
+      if (n === 0) {
+        setError("No samples found in file. Check that it is a GeneMapper TSV export.");
+        return;
+      }
+      onData(parsed.peaks);
+    } catch (e) {
+      setError(e.message || "Failed to parse file");
+    }
+  };
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setHover(true); }}
+      onDragLeave={() => setHover(false)}
+      onDrop={(e) => { e.preventDefault(); setHover(false); handleFiles(e.dataTransfer.files); }}
+      className={`mb-2 px-3 py-2 rounded border-2 border-dashed text-xs transition ${hover ? "border-sky-500 bg-sky-50" : "border-slate-300 bg-white"} no-print`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-slate-600">
+          <strong>Drag a GeneMapper TSV here</strong> to swap in a new dataset (currently {currentSampleCount} samples).
+        </span>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="px-2 py-1 text-xs bg-slate-900 text-white rounded hover:bg-slate-700"
+        >
+          Choose file…
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".txt,.tsv,.csv"
+          onChange={(e) => handleFiles(e.target.files)}
+          className="hidden"
+        />
+      </div>
+      {error && <div className="mt-1 text-rose-600">{error}</div>}
+    </div>
+  );
+}
+
 // ======================================================================
 // DATA — peak table, shipped as a JS literal by the build step
 // ======================================================================
@@ -607,8 +709,33 @@ function buildGaussianPath(peaks, xRange, yMax, geom, smoothing = 1, logY = fals
 // ======================================================================
 // MAIN COMPONENT
 // ======================================================================
+// localStorage key for the calibration sidecar. Persists per-dye offsets across
+// page reloads. The viewer also exposes Download/Upload JSON in AutoClassifyTab
+// so calibration data can be shared across machines or committed to the repo.
+const DYE_OFFSETS_LS_KEY = "fragment-viewer:dye-offsets";
+
+function loadDyeOffsetsFromStorage() {
+  try {
+    if (typeof window === "undefined" || !window.localStorage) return null;
+    const raw = window.localStorage.getItem(DYE_OFFSETS_LS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const ok = ["B", "G", "Y", "R"].every(k => typeof parsed[k] === "number");
+    return ok ? parsed : null;
+  } catch { return null; }
+}
+
 export default function FragmentViewer() {
-  const samples = useMemo(() => Object.keys(DATA.peaks).sort(), []);
+  // Bumped on drag-drop ingest; used as a key on the outer div to remount the tree
+  // and force every useState/useMemo in the subtree to re-initialize from the new
+  // (mutated) DATA.peaks. Avoids prop-drilling peaks into all 5 tab components.
+  const [dataKey, setDataKey] = useState(0);
+  const handleNewPeaks = (newPeaks) => {
+    DATA.peaks = newPeaks;
+    setDataKey(k => k + 1);
+  };
+
+  const samples = useMemo(() => Object.keys(DATA.peaks).sort(), [dataKey]);
   const [tab, setTab] = useState("trace");   // "trace" | "peakid" | "compare"
 
   // Persistent per-sample config
@@ -621,7 +748,17 @@ export default function FragmentViewer() {
   // Per-dye mobility offset (bp). Subtracted from observed sizes during classification.
   // Calibrated from a blunt-control ligation; for ABI 3500/3730 with POP-7,
   // typical 6-FAM < HEX < TAMRA < ROX ordering. Defaults to 0 until user calibrates.
-  const [dyeOffsets, setDyeOffsets] = useState({ B: 0, G: 0, Y: 0, R: 0 });
+  // Persists to localStorage so calibration survives page reload.
+  const [dyeOffsets, setDyeOffsets] = useState(
+    () => loadDyeOffsetsFromStorage() || { B: 0, G: 0, Y: 0, R: 0 }
+  );
+  useEffect(() => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(DYE_OFFSETS_LS_KEY, JSON.stringify(dyeOffsets));
+      }
+    } catch { /* localStorage unavailable; non-fatal */ }
+  }, [dyeOffsets]);
   const setDyeOffset = (dye, v) => setDyeOffsets(s => ({ ...s, [dye]: Number(v) || 0 }));
 
   // User-editable construct sequence (defaults to V059 from SnapGene).
@@ -634,17 +771,37 @@ export default function FragmentViewer() {
   const results = useMemo(() => identifyPeaks(DATA.peaks, cfg), [cfg]);
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
+    <div key={dataKey} className="min-h-screen bg-slate-50 font-sans text-slate-900">
+      <PrintStyles />
       <div className="max-w-7xl mx-auto px-3 md:px-5 py-3">
         <Header />
+        <DropZone onData={handleNewPeaks} currentSampleCount={samples.length} />
         <TabBar tab={tab} setTab={setTab} />
         {tab === "trace"   && <TraceTab   samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
         {tab === "peakid"  && <PeakIdTab  samples={samples} cfg={cfg} setCfg={setCfg} results={results} componentSizes={componentSizes} setCSize={setCSize} />}
         {tab === "cutpred" && <CutPredictionTab samples={samples} cfg={cfg} setCfg={setCfg} results={results} />}
-        {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
+        {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
         {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} />}
       </div>
     </div>
+  );
+}
+
+// Print stylesheet: hide UI controls (.no-print), expand any clipped panes for
+// the printed PDF, and switch backgrounds to white. Triggered by the
+// "Print to PDF" button in AutoClassifyTab via window.print().
+function PrintStyles() {
+  return (
+    <style>{`
+      @media print {
+        .no-print { display: none !important; }
+        body, html { background: white !important; }
+        .min-h-screen { min-height: auto !important; background: white !important; }
+        .max-w-7xl { max-width: 100% !important; }
+        button, input, select, textarea { display: none !important; }
+        .print-show { display: block !important; }
+      }
+    `}</style>
   );
 }
 
@@ -1557,7 +1714,7 @@ function SampleConfigRow({ sample, cfg, setCfg, result, expanded, toggle }) {
 // ======================================================================
 // TAB 3 — Cross-sample comparison with overlay
 // ======================================================================
-function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffset, constructSeq, setConstructSeq, targetStart, setTargetStart, targetEnd, setTargetEnd }) {
+function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffsets, setDyeOffset, constructSeq, setConstructSeq, targetStart, setTargetStart, targetEnd, setTargetEnd }) {
   const [currentSample, setCurrentSample] = useState(samples[0] || "");
   const [heightThreshold, setHeightThreshold] = useState(100);
   const [matchTol, setMatchTol] = useState(8);
@@ -1685,7 +1842,7 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffset, co
       <div className="bg-white rounded-lg border border-slate-200 p-3 mb-3">
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-medium">Dye mobility offset (bp)</div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 no-print">
             <button onClick={handleAutoCalibrate}
               className="px-2 py-1 text-xs font-medium bg-slate-800 text-white rounded hover:bg-slate-700">
               Auto-calibrate from tallest peak
@@ -1693,6 +1850,49 @@ function AutoClassifyTab({ samples, componentSizes, dyeOffsets, setDyeOffset, co
             <button onClick={handleResetOffsets}
               className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300">
               Reset to zero
+            </button>
+            <button
+              onClick={() => {
+                const blob = new Blob([JSON.stringify({ dyeOffsets, savedAt: new Date().toISOString(), sample: currentSample, instrument: "unknown" }, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `dye_offsets_${new Date().toISOString().slice(0,10)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }}
+              className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300"
+              title="Download per-dye offsets as a JSON sidecar; commit to data/calibrations/ for sharing">
+              Download JSON
+            </button>
+            <label className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300 cursor-pointer">
+              Upload JSON
+              <input type="file" accept=".json" className="hidden"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  try {
+                    const obj = JSON.parse(await f.text());
+                    const next = obj.dyeOffsets || obj;
+                    if (setDyeOffsets && ["B","G","Y","R"].every(k => typeof next[k] === "number")) {
+                      setDyeOffsets(next);
+                    } else {
+                      alert("JSON missing one of B,G,Y,R numeric offsets.");
+                    }
+                  } catch (err) {
+                    alert("Failed to parse JSON: " + err.message);
+                  }
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <button
+              onClick={() => window.print()}
+              className="px-2 py-1 text-xs font-medium bg-slate-200 rounded hover:bg-slate-300"
+              title="Print or save the current Auto Classify view as PDF (browser print dialog)">
+              Print to PDF
             </button>
           </div>
         </div>
