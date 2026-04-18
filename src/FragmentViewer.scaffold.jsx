@@ -1732,8 +1732,18 @@ function TraceTab({ samples, cfg, setCfg, results, componentSizes, setCSize, con
       <div className="bg-white rounded-lg border border-zinc-200 p-2 mb-2">
         <div className="px-2 pt-1 pb-1 flex items-center justify-between flex-wrap gap-2">
           <div className="text-sm font-medium">{sample}</div>
-          <div className="text-[11px] text-zinc-500">
-            Drag on plot to zoom · {Object.values(peaksByChannel).reduce((t, a) => t + a.length, 0)} peaks in window
+          <div className="flex items-center gap-3">
+            <div className="text-[11px] text-zinc-500">
+              Drag on plot to zoom · {Object.values(peaksByChannel).reduce((t, a) => t + a.length, 0)} peaks in window
+            </div>
+            <ToolButton
+              icon={FileDown}
+              variant="secondary"
+              title="Download this electropherogram as a PNG (2x scale, white background)"
+              onClick={() => exportSvgAsPng(svgRef.current, `${sample}_electropherogram.png`)}
+            >
+              PNG
+            </ToolButton>
           </div>
         </div>
         <svg
@@ -3117,7 +3127,17 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
       <div className="bg-white rounded-lg border border-zinc-200 p-2 mb-2">
         <div className="px-2 pt-1 pb-1 flex items-center justify-between flex-wrap gap-2">
           <div className="text-sm font-medium">Overlay · {DYE[dye].label} ({DYE[dye].name})</div>
-          <div className="text-[11px] text-zinc-500">Drag to zoom · {picked.length} samples</div>
+          <div className="flex items-center gap-3">
+            <div className="text-[11px] text-zinc-500">Drag to zoom · {picked.length} samples</div>
+            <ToolButton
+              icon={FileDown}
+              variant="secondary"
+              title="Download this overlay plot as a PNG (2x scale, white background)"
+              onClick={() => exportSvgAsPng(svgRef.current, `cross_sample_overlay_${DYE[dye].label}.png`)}
+            >
+              PNG
+            </ToolButton>
+          </div>
         </div>
         <svg
           ref={svgRef}
@@ -3264,6 +3284,7 @@ function CompareTab({ samples, cfg, results, componentSizes, constructSeq, targe
 // length annotated, and template/non-template and PAM-proximal/distal flags.
 // ----------------------------------------------------------------------
 function ProductFragmentViz({ products, constructSize }) {
+  const fragRef = useRef(null);
   if (!products) return null;
   const W = 920, H = 230;
   const m = { l: 80, r: 80, t: 28, b: 18 };
@@ -3271,7 +3292,6 @@ function ProductFragmentViz({ products, constructSize }) {
   const rowH = 38;
   const barH = 14;
 
-  // Order: top LEFT (Y), bot LEFT (B), top RIGHT (R), bot RIGHT (G)
   const lanes = [
     { dye: "Y", row: 0 },
     { dye: "B", row: 1 },
@@ -3280,7 +3300,16 @@ function ProductFragmentViz({ products, constructSize }) {
   ];
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+    <div className="relative">
+      <button
+        onClick={() => exportSvgAsPng(fragRef.current, "ssdna_products.png")}
+        title="Download this 4-ssDNA-product diagram as a PNG"
+        className="absolute top-1 right-1 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md bg-zinc-100 text-zinc-800 hover:bg-zinc-200 border border-zinc-200 transition focus-ring no-print z-10"
+      >
+        <FileDown size={12} />
+        PNG
+      </button>
+      <svg ref={fragRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
       <text x={m.l + pw / 2} y={12} fontSize="10" fill="#475569" textAnchor="middle" fontWeight="600">
         Four labeled ssDNA products after denaturation (scaled to {constructSize} bp construct)
       </text>
@@ -3348,11 +3377,13 @@ function ProductFragmentViz({ products, constructSize }) {
           </g>
         );
       })}
-    </svg>
+      </svg>
+    </div>
   );
 }
 
 function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeChange, cutConstructPos, overhang, grnaStrand, productSizes }) {
+  const consRef = useRef(null);
   const total = CONSTRUCT.components.reduce((t, c) => t + (componentSizes[c.key] || 0), 0);
   const W = 920, H = 130;
   const m = { l: 10, r: 10, t: 18, b: 38 };
@@ -3365,8 +3396,16 @@ function ConstructDiagram({ componentSizes, highlightKey, onHighlight, onSizeCha
     return box;
   });
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+    <div className="relative">
+      <button
+        onClick={() => exportSvgAsPng(consRef.current, "construct_diagram.png")}
+        title="Download this construct diagram as a PNG"
+        className="absolute top-1 right-1 inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-md bg-zinc-100 text-zinc-800 hover:bg-zinc-200 border border-zinc-200 transition focus-ring no-print z-10"
+      >
+        <FileDown size={12} />
+        PNG
+      </button>
+      <svg ref={consRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
         {/* 5' / 3' labels */}
         <text x={m.l - 2} y={m.t - 4} fontSize="10" fill="#64748b" textAnchor="start">5' →</text>
         <text x={m.l + pw + 2} y={m.t - 4} fontSize="10" fill="#64748b" textAnchor="end">→ 3'</text>
