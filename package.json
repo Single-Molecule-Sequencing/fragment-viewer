@@ -1,6 +1,6 @@
 {
   "name": "fragment-viewer",
-  "version": "0.25.6",
+  "version": "0.26.0",
   "private": true,
   "description": "Interactive CE viewer and Cas9 cut-product predictor for the Athey lab CLC fragment analysis assay.",
   "type": "module",
