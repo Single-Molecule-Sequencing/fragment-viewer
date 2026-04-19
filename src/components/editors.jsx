@@ -121,13 +121,13 @@ export function EndStructureEditor({ cutPos, canonicalOverhang, constructSize, o
   return (
     <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div>
+        <div className="min-w-0 max-w-3xl">
           <div className="text-sm font-semibold text-zinc-800">End-structure editor · dA-tailability</div>
           <p className="text-xs text-zinc-500 mt-0.5">
             Nudge any strand terminus ±1 bp. The diagram updates geometrically; each end is evaluated for dA-tailing success under the lab protocol (5′→3′ exo chewback → Klenow 3′ dA).
           </p>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <ToolButton variant="secondary" onClick={resetAll} title="Reset all four strand termini to the canonical Cas9 cut positions">
             Reset
           </ToolButton>
@@ -193,11 +193,12 @@ export function EndStructureEditor({ cutPos, canonicalOverhang, constructSize, o
         <line x1={xFor(cutPos)} x2={xFor(cutPos)}
               y1={m.t - 6} y2={H - m.b}
               stroke="#dc2626" strokeWidth="1.4" strokeDasharray="4 3" opacity="0.75" />
-        {/* "CUT" label */}
-        <g transform={`translate(${xFor(cutPos)}, ${m.t - 14})`}>
-          <rect x="-18" y="-10" width="36" height="12" rx="2" fill="#dc2626" />
-          <text x="0" y="-2" fontSize="9" fill="white" textAnchor="middle" fontWeight="800"
-                style={{ letterSpacing: "0.08em" }}>CUT</text>
+        {/* "CUT" label — unified geometry with ConstructDiagram per gh#20:
+            rect 32×14 rx=3, text centered (no letter-spacing trailing-space bug). */}
+        <g transform={`translate(${xFor(cutPos)}, ${m.t - 12})`}>
+          <rect x="-16" y="-9" width="32" height="14" rx="3" fill="#dc2626" />
+          <text x="0" y="-2" fontSize="9.5" fill="white" textAnchor="middle"
+                fontWeight="800" dominantBaseline="middle">CUT</text>
         </g>
 
         {/* LEFT-end overhang shading — between leftTop and leftBot */}
@@ -473,13 +474,15 @@ export function PostTailingPanel({ cutPos, canonicalOverhang, constructSize, off
   return (
     <div className="bg-white rounded-lg border border-zinc-200 p-3 mb-3">
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div>
+        <div className="min-w-0 max-w-3xl">
           <div className="text-sm font-semibold text-zinc-800">Post-dA-tailing molecular products + adapter ligation</div>
           <p className="text-xs text-zinc-500 mt-0.5">
             Four-step reaction per end. Taq DNA polymerase has BOTH 5′→3′ polymerase AND 5′→3′ exonuclease activity — one enzyme handles both chewback and dA addition in the same tube. Taq lacks 3′→5′ proofreading, so 3′ overhangs survive both activities intact and block T/A ligation.
           </p>
         </div>
-        <ExportMenu svgRef={svgRef} basename="post_tailing_reactions" label="Export" />
+        <div className="shrink-0">
+          <ExportMenu svgRef={svgRef} basename="post_tailing_reactions" label="Export" />
+        </div>
       </div>
 
       <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>

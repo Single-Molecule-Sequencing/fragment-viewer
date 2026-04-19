@@ -41,8 +41,10 @@ export function ProductFragmentViz({ products, constructSize, svgRef: externalSv
   const xForBp = (bp) => m.l + (bp / Math.max(1, constructSize)) * pw;
 
   return (
-    <div className="relative">
-      <div className="absolute top-1 right-1 z-10 no-print">
+    <div>
+      {/* Export in its own header row above the figure — matches
+          ConstructDiagram / EndStructureEditor / PostTailingPanel (gh#18+#19). */}
+      <div className="flex items-center justify-end mb-1.5 no-print">
         <ExportMenu svgRef={fragRef} basename="ssdna_products" label="Export" />
       </div>
       <svg ref={combinedRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
@@ -237,8 +239,11 @@ export function ConstructDiagram({ componentSizes, highlightKey, onHighlight, on
   const labelsTooClose = hasCut && Math.abs(rightCenter - leftCenter) < 160;
 
   return (
-    <div className="relative">
-      <div className="absolute top-1 right-1 z-10 no-print">
+    <div>
+      {/* Export sits in its own header row above the figure, not floating
+          on top of the 3′ end label. Matches EndStructureEditor /
+          PostTailingPanel header layout — fixes gh#18. */}
+      <div className="flex items-center justify-end mb-1.5 no-print">
         <ExportMenu svgRef={consRef} basename="construct_diagram" label="Export" />
       </div>
       <svg ref={combinedRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" style={{ background: "white" }}>
@@ -368,12 +373,14 @@ export function ConstructDiagram({ componentSizes, highlightKey, onHighlight, on
                     stroke="#dc2626" strokeWidth="2.2" strokeDasharray="4 2" />
             )}
             {/* Scissor glyph + "CUT" label above — positioned so they don't
-                collide with dye markers. Centered over the primary cut. */}
+                collide with dye markers. Centered over the primary cut.
+                Unified geometry with EndStructureEditor per gh#20:
+                rect 32×14 rx=3, text at box vertical center, no letter-spacing
+                (letter-spacing adds trailing space that breaks textAnchor=middle). */}
             <g transform={`translate(${cutX1}, ${Z.cutLabel})`}>
               <rect x="-16" y="-9" width="32" height="14" rx="3" fill="#dc2626" />
-              <text x="0" y="1" fontSize="9.5" fill="white" textAnchor="middle"
-                    fontWeight="800" dominantBaseline="middle"
-                    style={{ letterSpacing: "0.08em" }}>CUT</text>
+              <text x="0" y="-2" fontSize="9.5" fill="white" textAnchor="middle"
+                    fontWeight="800" dominantBaseline="middle">CUT</text>
               <polygon points="-4,7 4,7 0,12" fill="#dc2626" />
             </g>
 
