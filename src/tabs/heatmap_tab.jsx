@@ -195,7 +195,7 @@ export function HeatmapTab({ samples, componentSizes, constructSeq, targetStart,
             No samples match the current filter.
           </div>
         ) : (
-          <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+          <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block">
             {/* Column headers: dye-colored capsule + bp-size + kind */}
             {species.map((sp, ci) => {
               const x = labelW + ci * cellW;

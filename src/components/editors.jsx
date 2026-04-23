@@ -225,11 +225,12 @@ export function EndStructureEditor({ cutPos, canonicalOverhang, constructSize, o
                 style={{ fontFamily: "JetBrains Mono, monospace" }}>
             top 3′: {leftTop} bp · bot 5′: {leftBot} bp
           </text>
-          <g transform="translate(0, 22)">
-            <rect x={leftEval.dATailable ? -70 : -90} y="-10" width={leftEval.dATailable ? 70 : 90} height="16" rx="3"
+          {/* Pill pushed below the caption line so it can't overlap the "bp · bot 5′: N bp" text. */}
+          <g transform="translate(0, 34)">
+            <rect x={leftEval.dATailable ? -70 : -92} y="-8" width={leftEval.dATailable ? 70 : 92} height="16" rx="3"
                   fill={leftEval.dATailable ? (leftEval.confidence === "high" ? "#10b981" : "#f59e0b") : "#e11d48"} />
-            <text x={leftEval.dATailable ? -35 : -45} y="1" fontSize="9.5" fill="white" fontWeight="800"
-                  textAnchor="middle" style={{ letterSpacing: "0.04em" }}>
+            <text x={leftEval.dATailable ? -35 : -46} y="0" fontSize="9.5" fill="white" fontWeight="800"
+                  textAnchor="middle" dominantBaseline="central">
               {leftEval.dATailable ? (leftEval.confidence === "high" ? "dA-TAIL ✓" : "dA-TAIL (marginal)") : "dA-TAIL ✗"}
             </text>
           </g>
@@ -242,11 +243,11 @@ export function EndStructureEditor({ cutPos, canonicalOverhang, constructSize, o
                 style={{ fontFamily: "JetBrains Mono, monospace" }}>
             top 5′: {rightTop} bp · bot 3′: {rightBot} bp
           </text>
-          <g transform="translate(0, 22)">
-            <rect x="0" y="-10" width={rightEval.dATailable ? 70 : 90} height="16" rx="3"
+          <g transform="translate(0, 34)">
+            <rect x="0" y="-8" width={rightEval.dATailable ? 70 : 92} height="16" rx="3"
                   fill={rightEval.dATailable ? (rightEval.confidence === "high" ? "#10b981" : "#f59e0b") : "#e11d48"} />
-            <text x={rightEval.dATailable ? 35 : 45} y="1" fontSize="9.5" fill="white" fontWeight="800"
-                  textAnchor="middle" style={{ letterSpacing: "0.04em" }}>
+            <text x={rightEval.dATailable ? 35 : 46} y="0" fontSize="9.5" fill="white" fontWeight="800"
+                  textAnchor="middle" dominantBaseline="central">
               {rightEval.dATailable ? (rightEval.confidence === "high" ? "dA-TAIL ✓" : "dA-TAIL (marginal)") : "dA-TAIL ✗"}
             </text>
           </g>
@@ -387,26 +388,29 @@ export function PostTailingPanel({ cutPos, canonicalOverhang, constructSize, off
       const botTerm = side === "right" ? p.bot3After : p.bot3Before;
       if (topTerm && topTerm !== "?") {
         const tag = topTerm.slice(-2);
+        const pillW = tag.length * 6 + 4;
         els.push(
           <g key="tseq" transform={`translate(${topEnd + 3}, ${yTop})`}>
-            <rect x="0" y="-6" width={tag.length * 6 + 4} height="9" rx="1.5" fill={p.dATailed && side === "left" ? "#10b981" : "#94a3b8"} />
-            <text x={(tag.length * 6 + 4) / 2} y="1.5" fontSize="7.5" fill="white" textAnchor="middle" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>{tag}</text>
+            <rect x="0" y="-6" width={pillW} height="9" rx="1.5" fill={p.dATailed && side === "left" ? "#10b981" : "#94a3b8"} />
+            <text x={pillW / 2} y="-1.5" fontSize="7.5" fill="white" textAnchor="middle" dominantBaseline="central" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>{tag}</text>
           </g>
         );
       }
       if (botTerm && botTerm !== "?") {
         const tag = botTerm.slice(-2);
+        const pillW = tag.length * 6 + 4;
         els.push(
           <g key="bseq" transform={`translate(${botEnd + 3}, ${yBot})`}>
-            <rect x="0" y="-6" width={tag.length * 6 + 4} height="9" rx="1.5" fill={p.dATailed && side === "right" ? "#10b981" : "#94a3b8"} />
-            <text x={(tag.length * 6 + 4) / 2} y="1.5" fontSize="7.5" fill="white" textAnchor="middle" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>{tag}</text>
+            <rect x="0" y="-6" width={pillW} height="9" rx="1.5" fill={p.dATailed && side === "right" ? "#10b981" : "#94a3b8"} />
+            <text x={pillW / 2} y="-1.5" fontSize="7.5" fill="white" textAnchor="middle" dominantBaseline="central" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>{tag}</text>
           </g>
         );
       }
     }
     if (adapterAttached) {
       const adapterLen = 60;
-      const adapterStart = Math.min(topEnd, botEnd) + 10;
+      // Clear the 2-char terminal-base tag pill (width ≤ 16 + 3 gap) before drawing the adapter.
+      const adapterStart = Math.min(topEnd, botEnd) + 24;
       const adapterEnd = adapterStart + adapterLen;
       els.push(
         <g key="adapter">
@@ -414,7 +418,7 @@ export function PostTailingPanel({ cutPos, canonicalOverhang, constructSize, off
           <rect x={adapterStart} y={yBot - 3} width={adapterLen} height="6" fill={ADAPTER_PURPLE_DARK} opacity="0.9" rx="1.5" />
           <g transform={`translate(${adapterStart - 8}, ${side === "left" ? yTop : yBot})`}>
             <rect x="-7" y="-6" width="14" height="9" rx="1.5" fill="#f59e0b" />
-            <text x="0" y="1.5" fontSize="7.5" fill="white" textAnchor="middle" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>T</text>
+            <text x="0" y="-1.5" fontSize="7.5" fill="white" textAnchor="middle" dominantBaseline="central" fontWeight="800" style={{ fontFamily: "JetBrains Mono, monospace" }}>T</text>
           </g>
           <line x1={adapterStart - 1} x2={side === "left" ? topEnd + 1 : botEnd + 1}
                 y1={side === "left" ? yTop : yBot}

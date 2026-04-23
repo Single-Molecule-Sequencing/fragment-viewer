@@ -124,14 +124,7 @@ export function Sidebar({ tab, setTab }) {
         })}
       </ul>
       <div className="mt-auto p-3 border-t border-zinc-100">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">Lab tools</div>
-        <ul className="flex flex-col gap-0.5 text-xs text-zinc-600">
-          <SidebarLink href="https://github.com/Single-Molecule-Sequencing/cas9-targeted-sequencing" label="cas9-targeted-sequencing" />
-          <SidebarLink href="https://github.com/Single-Molecule-Sequencing/golden-gate" label="golden-gate" />
-          <SidebarLink href="https://github.com/Single-Molecule-Sequencing/sma-seq-workspace" label="sma-seq" />
-          <SidebarLink href="https://www.pharmvar.org" label="PharmVar" />
-        </ul>
-        <div className="mt-3 text-[10px] text-zinc-500 leading-snug">
+        <div className="text-[10px] text-zinc-500 leading-snug">
           Drag a GeneMapper TSV anywhere in this window to swap datasets.
         </div>
       </div>

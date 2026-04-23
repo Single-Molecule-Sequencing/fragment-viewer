@@ -138,8 +138,8 @@ export function ProductFragmentViz({ products, constructSize, svgRef: externalSv
               {/* Dye circle ON the bar edge, with dye letter inside */}
               <circle cx={dyeX} cy={yBar + barH / 2} r="9" fill={dyeColor}
                       stroke="white" strokeWidth="1.8" />
-              <text x={dyeX} y={yBar + barH / 2 + 3.5} fontSize="9"
-                    fill="white" textAnchor="middle" fontWeight="800"
+              <text x={dyeX} y={yBar + barH / 2} fontSize="9"
+                    fill="white" textAnchor="middle" dominantBaseline="central" fontWeight="800"
                     style={{ fontFamily: "JetBrains Mono, monospace" }}>{dye}</text>
 
               {/* Length label — inside or outside depending on bar width */}
@@ -265,7 +265,7 @@ export function ConstructDiagram({ componentSizes, highlightKey, onHighlight, on
               return (
                 <g key={d}>
                   <circle cx={cx} cy={Z.dyeTop} r="7" fill={DYE[d].color} stroke="white" strokeWidth="1.4" />
-                  <text x={cx} y={Z.dyeLabel} fontSize="8.5" fill="white" textAnchor="middle" fontWeight="800"
+                  <text x={cx} y={Z.dyeTop} fontSize="8.5" fill="white" textAnchor="middle" dominantBaseline="central" fontWeight="800"
                         style={{ fontFamily: "JetBrains Mono, monospace" }}>{d}</text>
                 </g>
               );
@@ -452,8 +452,8 @@ export function ConstructDiagram({ componentSizes, highlightKey, onHighlight, on
 
       {/* Editable component sizes — form chrome below the SVG, excluded from exports */}
       {onSizeChange && (
-        <div className="flex flex-wrap gap-2 pt-1 text-xs no-print">
-          <span className="text-zinc-500 font-semibold uppercase tracking-wide">Component sizes (bp):</span>
+        <div className="flex flex-wrap items-center gap-2 pt-1 text-xs no-print">
+          <span className="text-zinc-500 font-semibold uppercase tracking-wide leading-none">Component sizes (bp):</span>
           {CONSTRUCT.components.map(c => (
             <label key={c.key} className="flex items-center gap-1">
               <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: c.color }} />
