@@ -1,5 +1,15 @@
 # Fragment Viewer
 
+[![Website](https://img.shields.io/badge/Website-GitHub_Pages-blue)](https://single-molecule-sequencing.github.io/fragment-viewer/)
+[![Repo](https://img.shields.io/badge/GitHub-Repository-black?logo=github)](https://github.com/Single-Molecule-Sequencing/fragment-viewer)
+[![Issues](https://img.shields.io/github/issues/Single-Molecule-Sequencing/fragment-viewer)](https://github.com/Single-Molecule-Sequencing/fragment-viewer/issues)
+
+## Quick Links
+
+- [Live site](https://single-molecule-sequencing.github.io/fragment-viewer/) — interactive Cas9 fragment visualizer with dye-color electropherograms
+- [GitHub repository](https://github.com/Single-Molecule-Sequencing/fragment-viewer) — source, issues
+- [Open issues](https://github.com/Single-Molecule-Sequencing/fragment-viewer/issues) — active work, feature requests
+
 **Part of the [Athey Lab](https://single-molecule-sequencing.github.io/) ecosystem.**
 
 > **Open the tool:** **[single-molecule-sequencing.github.io/fragment-viewer](https://single-molecule-sequencing.github.io/fragment-viewer/)**
