@@ -1,0 +1,41 @@
+name: Build Report PDF
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'content/**'
+      - '.github/workflows/build-report.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pandoc + xelatex
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pandoc texlive-xetex texlive-fonts-recommended texlive-latex-recommended fonts-dejavu
+      - name: Build PDF
+        run: |
+          set -euxo pipefail
+          pandoc content/report.md -o report.pdf \
+            --toc --number-sections \
+            --pdf-engine=xelatex \
+            -V mainfont='DejaVu Sans' \
+            -V monofont='DejaVu Sans Mono' \
+            -V geometry:margin=1in
+      - name: Commit PDF if changed
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add report.pdf
+          if git diff --staged --quiet; then
+            echo "No PDF changes"
+          else
+            git commit -m "auto: rebuild report.pdf [skip ci]"
+            git push
+          fi
