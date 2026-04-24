@@ -1,4 +1,9 @@
 name: Build Report PDF
+
+concurrency:
+  group: report-build-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
