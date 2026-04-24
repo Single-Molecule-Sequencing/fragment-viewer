@@ -21,6 +21,7 @@ Interactive capillary-electrophoresis viewer and Cas9 cut-product predictor for 
 The tool turns raw capillary-electrophoresis output into interpretable biology — peak identification, cut-site prediction, post-dA-tailing product modeling, adapter-ligation compatibility, and publication-ready figures — entirely in the browser.
 
 ---
+- [Lab pulse](https://single-molecule-sequencing.github.io/pulse/) — org-wide activity dashboard (updated daily)
 
 ## Why this exists
 
