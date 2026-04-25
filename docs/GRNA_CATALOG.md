@@ -1,6 +1,10 @@
 # GRNA_CATALOG.md — How the lab gRNA catalog works
 
-`LAB_GRNA_CATALOG` is a JS array of objects defined in `src/FragmentViewer.jsx` (around line 432). Every entry has the shape:
+The lab gRNA catalog is now a JSON file at `public/grna_catalog.json`, fetched at runtime by the deployed viewer. The embedded JS array in `src/lib/grna_catalog.js` is a baseline that ships with the bundle so the viewer remains usable offline / when the JSON fetch fails.
+
+To add a gRNA, edit **`public/grna_catalog.json`** and submit a PR. No JS rebuild required — once the PR merges, the next visitor to the deployed viewer sees the new entry on first page load.
+
+Every entry has the shape:
 
 ```js
 { name: "V059_gRNA3", spacer: "NNNNNNNNNNNNNNNNNNNN", source: "...", target: "...", notes: "..." }
@@ -26,16 +30,13 @@ If the spacer is empty or not exactly 20 nt, `matchLabCatalog` returns null. So 
 
 ## 2. Adding a new entry
 
-1. Open `src/FragmentViewer.jsx`. Find `const LAB_GRNA_CATALOG = [`.
-2. Append your entry above the closing `];`.
-3. From the repo root, run:
-
-```bash
-python scripts/ingest_to_kb.py --grnas
-```
-
+1. Open `public/grna_catalog.json`.
+2. Append your entry to the JSON array (mind the trailing comma — JSON does not allow it on the last element).
+3. (Optional) If the entry should also be available offline / for tests, mirror it into the embedded baseline in `src/lib/grna_catalog.js`. Otherwise the JSON is enough.
 4. Add a one-line entry to `docs/CHANGELOG.md` under the next version stub.
 5. Commit with a message like `Add CYP3A5_intron3_1 to gRNA catalog`.
+
+The runtime fetch validates the JSON shape; a malformed file falls back silently to the embedded baseline rather than corrupting the live catalog. Check the browser console for `[fragment-viewer] gRNA catalog fetch fell back to embedded baseline: <reason>` if your edits aren't showing up.
 
 ## 3. Spacer convention
 

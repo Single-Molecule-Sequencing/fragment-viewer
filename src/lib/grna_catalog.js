@@ -4,8 +4,22 @@
 // plus the closely-related pure helpers (normalizeSpacer, matchLabCatalog).
 // matchLabCatalog accepts an optional custom catalog so callers can
 // override the module default — see issue #2 fix in v0.23.0.
+//
+// Runtime catalog override
+// ------------------------
+// The embedded array below is the offline / test-time baseline catalog. At
+// runtime the viewer fetches `public/grna_catalog.json` (canonical, edited
+// without a JS rebuild) and replaces the in-memory catalog via
+// `loadGrnaCatalog`. Components that import LAB_GRNA_CATALOG see the
+// updated value on their next render because ES module named exports are
+// live bindings to the module's `let` variables.
+//
+// To add a gRNA:
+//   1. Edit `public/grna_catalog.json` and submit a PR.
+//   2. (Optional) keep the embedded baseline in sync if the entry is needed
+//      offline / for tests that use the demo construct V059_gRNA3.
 
-export const LAB_GRNA_CATALOG = [
+export let LAB_GRNA_CATALOG = [
   // --- Active fragment analysis construct (V059_gRNA3) ---
   { name: "V059_gRNA3",             spacer: "AGTCCTGTGGTGAGGTGACG", source: "= grna_cyp2d6_rachel03 in cas9-targeted grna_master.tsv (Rachel gRNA 3.0, V0-59 plasmid). Bot-strand match in V059 target window (RC = CGTCACCTCACCACAGGACT on top). User-supplied spacer 2026-04-18.", target: "V059 synthetic target (118 bp)", notes: "Active gRNA used in the capillary electrophoresis dataset. Bot-strand PAM (CCT on top, AGG on bot)." },
 
@@ -44,9 +58,57 @@ export const LAB_GRNA_CATALOG = [
   { name: "chrXq_2",                spacer: "GCTTCATATCCTATCCTCTG", source: "pilot_grna_positions.bed; GRCh38 chrX:155963128-155963148 (+), PAM=AGG", target: "chrX:155963128-155963148 (+)",  notes: "Subtelomeric pilot, Xq arm; adjacent-frame to chrXq_3 (Δ=2bp on +)" },
   { name: "chrXq_3",                spacer: "TTCATATCCTATCCTCTGAG", source: "pilot_grna_positions.bed; GRCh38 chrX:155963130-155963150 (+), PAM=GGG", target: "chrX:155963130-155963150 (+)",  notes: "Subtelomeric pilot, Xq arm; GGG PAM → elevated ±1 wobble per 15485-JL panel-eval v1.6; adjacent-frame to chrXq_2 (Δ=2bp on +)" },
 
-  // ---- ADD NEW LAB gRNAs BELOW ----
+  // ---- ADD NEW LAB gRNAs BELOW (or, preferably, in public/grna_catalog.json) ----
   // { name: "Your_gRNA_Name", spacer: "NNNNNNNNNNNNNNNNNNNN", source: "...", target: "...", notes: "..." },
 ];
+
+// Validates that a catalog candidate has the expected shape. Used to guard
+// the runtime fetch — a malformed JSON payload should fall back to the
+// embedded baseline rather than corrupt the live catalog.
+export function validateCatalogShape(candidate) {
+  if (!Array.isArray(candidate)) return false;
+  for (const entry of candidate) {
+    if (!entry || typeof entry !== "object") return false;
+    if (typeof entry.name !== "string" || !entry.name) return false;
+    if (typeof entry.spacer !== "string") return false;
+  }
+  return true;
+}
+
+// Replaces the in-memory LAB_GRNA_CATALOG. Components that import this
+// binding see the new value on their next render. Use through
+// loadGrnaCatalog (which validates shape); direct callers should validate.
+export function setGrnaCatalog(arr) {
+  if (!validateCatalogShape(arr)) {
+    throw new TypeError("setGrnaCatalog: array of {name, spacer, ...} entries expected");
+  }
+  LAB_GRNA_CATALOG = arr;
+}
+
+// Fetches the catalog JSON at `url` (default: public/grna_catalog.json
+// served at runtime). On success the live catalog is replaced and the
+// fetched count is returned. On any failure (network, JSON parse, shape
+// validation) the embedded baseline is preserved and the error reason is
+// returned in the result. Never throws; the viewer must remain usable.
+export async function loadGrnaCatalog(url = "./grna_catalog.json") {
+  if (typeof fetch !== "function") {
+    return { ok: false, reason: "fetch unavailable", count: LAB_GRNA_CATALOG.length };
+  }
+  try {
+    const resp = await fetch(url, { cache: "no-cache" });
+    if (!resp.ok) {
+      return { ok: false, reason: `HTTP ${resp.status}`, count: LAB_GRNA_CATALOG.length };
+    }
+    const json = await resp.json();
+    if (!validateCatalogShape(json)) {
+      return { ok: false, reason: "invalid catalog shape", count: LAB_GRNA_CATALOG.length };
+    }
+    setGrnaCatalog(json);
+    return { ok: true, count: json.length };
+  } catch (err) {
+    return { ok: false, reason: String(err?.message || err), count: LAB_GRNA_CATALOG.length };
+  }
+}
 
 // Normalize spacer for comparison (uppercase, DNA only, strip U's)
 export function normalizeSpacer(s) {

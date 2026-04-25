@@ -60,9 +60,11 @@ export {
 };
 import {
   LAB_GRNA_CATALOG, normalizeSpacer, matchLabCatalog, inventoryStatus,
+  loadGrnaCatalog,
 } from "./lib/grna_catalog.js";
 export {
   LAB_GRNA_CATALOG, normalizeSpacer, matchLabCatalog, inventoryStatus,
+  loadGrnaCatalog,
 };
 import {
   reverseComplement, findGrnas, predictCutProducts, classifyPeaks,
@@ -203,6 +205,25 @@ export default function FragmentViewer() {
   // and force every useState/useMemo in the subtree to re-initialize from the new
   // (mutated) DATA.peaks. Avoids prop-drilling peaks into all 5 tab components.
   const [dataKey, setDataKey] = useState(0);
+
+  // Bumped after the runtime gRNA catalog is fetched, to trigger a re-render
+  // of components that read LAB_GRNA_CATALOG via the live module binding.
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const base = (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.BASE_URL) || "/";
+      const url = `${base.replace(/\/$/, "")}/grna_catalog.json`;
+      const result = await loadGrnaCatalog(url);
+      if (cancelled) return;
+      if (result.ok) {
+        setCatalogVersion(v => v + 1);
+      } else if (typeof console !== "undefined") {
+        console.info(`[fragment-viewer] gRNA catalog fetch fell back to embedded baseline: ${result.reason}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const handleNewPeaks = (newPeaks, newTraces) => {
     DATA.peaks = newPeaks;
     if (newTraces && typeof newTraces === "object") DATA.traces = newTraces;
@@ -401,7 +422,7 @@ export default function FragmentViewer() {
   }, [reportOpen, helpOpen]);
 
   return (
-    <div key={dataKey} className="h-screen flex flex-col bg-zinc-50 text-zinc-900 font-sans antialiased">
+    <div key={`${dataKey}-${catalogVersion}`} className="h-screen flex flex-col bg-zinc-50 text-zinc-900 font-sans antialiased">
       <PrintStyles />
       <DropOverlay onData={handleNewPeaks} />
       <Toolbar
