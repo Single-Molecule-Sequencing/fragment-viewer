@@ -22,8 +22,10 @@ def main() -> int:
     if not VIEWER.exists():
         print(f"[regen] {VIEWER} not found", file=sys.stderr)
         return 1
-    # Explicit UTF-8: the JSX has em-dashes; Python's default encoding on
-    # Windows is cp1252 and raises UnicodeDecodeError on those bytes.
+    # Explicit UTF-8: the JSX has em-dashes and other non-ASCII characters,
+    # and Python's default text encoding on Windows is cp1252, which raises
+    # UnicodeDecodeError on those bytes. CI runs on Linux (UTF-8 default)
+    # so this only bites local Windows runs.
     src = VIEWER.read_text(encoding="utf-8")
     lines = src.splitlines(keepends=True)
     data_idx = next(
