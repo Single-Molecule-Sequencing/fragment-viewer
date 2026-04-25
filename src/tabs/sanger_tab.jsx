@@ -31,6 +31,13 @@ import {
   computeConsensus,
   computeQualityHistogram,
 } from "../lib/sanger.js";
+import {
+  ENZYME_CATALOG,
+  findEnzymeSites,
+  findOrfs,
+  gcComposition,
+  overallGc,
+} from "../lib/sequence_analyses.js";
 import { downloadBlob } from "../lib/export.js";
 
 // Sanger dye-channel convention. Different from CE (B/G/Y/R for fluorophore
@@ -449,6 +456,15 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
           )}
           {activeSample && (
             <QualityHistogramPanel sample={activeSample} qCutoff={qCutoff} />
+          )}
+          {(reference || multiReadAnalysis?.consensus.consensusSeq) && (
+            <SequenceAnalysesPanel
+              activeRead={activeSample}
+              qCutoff={qCutoff}
+              consensusSeq={multiReadAnalysis?.consensus.consensusSeq || ""}
+              referenceSeq={reference}
+              referenceLabel={referenceLabel}
+            />
           )}
           {score && <AlignmentSummary score={score} sample={activeSample} reference={reference} />}
           {score && <MismatchTable score={score} />}
@@ -1197,8 +1213,8 @@ function MismatchTable({ score }) {
 function Th({ children }) {
   return <th className="text-left px-2 py-1 font-medium text-zinc-700">{children}</th>;
 }
-function Td({ children, className = "" }) {
-  return <td className={`px-2 py-1 ${className}`}>{children}</td>;
+function Td({ children, className = "", ...rest }) {
+  return <td className={`px-2 py-1 ${className}`} {...rest}>{children}</td>;
 }
 
 
@@ -1414,3 +1430,202 @@ function QualityHistogramPanel({ sample, qCutoff }) {
     </div>
   );
 }
+
+
+// ----------------------------------------------------------------------
+// SequenceAnalysesPanel — restriction sites + ORFs + GC composition
+// ----------------------------------------------------------------------
+//
+// Three sub-panels stacked vertically. Operates on three possible target
+// sequences and the user picks which to analyze:
+//   1. Active read (Mott-trimmed) — what was actually sequenced
+//   2. Consensus across all loaded reads — what the reads agree on
+//   3. Reference — the expected design
+//
+// Type-IIS hits in particular are surfaced loud because a spurious BsaI
+// or BsmBI in a Golden Gate insert is a hazard for the next assembly.
+
+function SequenceAnalysesPanel({ activeRead, qCutoff, consensusSeq, referenceSeq, referenceLabel }) {
+  // Derive analyzable target sequences.
+  const targets = useMemo(() => {
+    const out = [];
+    if (activeRead) {
+      const trim = mottTrim(activeRead.qScores, qCutoff);
+      const seq = activeRead.basecalls.slice(trim.start, trim.end);
+      if (seq.length >= 6) out.push({ key: "active", label: `Active read (${activeRead.sampleName}, ${seq.length} bp)`, seq });
+    }
+    if (consensusSeq && consensusSeq.length >= 6) {
+      out.push({ key: "consensus", label: `Consensus (${consensusSeq.length} bp)`, seq: consensusSeq });
+    }
+    if (referenceSeq && referenceSeq.length >= 6) {
+      out.push({ key: "ref", label: `Reference (${referenceLabel || `${referenceSeq.length} bp`})`, seq: referenceSeq });
+    }
+    return out;
+  }, [activeRead, qCutoff, consensusSeq, referenceSeq, referenceLabel]);
+
+  const [selected, setSelected] = useState(targets[0]?.key);
+  // Reset selection if the previous target disappears (e.g., user clears reference).
+  useEffect(() => {
+    if (!targets.find(t => t.key === selected)) setSelected(targets[0]?.key);
+  }, [targets, selected]);
+
+  const target = targets.find(t => t.key === selected);
+  if (!target) return null;
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs">
+      <div className="font-medium text-zinc-800 mb-2 flex items-center justify-between">
+        <span>Sequence analyses</span>
+        <select
+          value={selected}
+          onChange={e => setSelected(e.target.value)}
+          className="text-xs border border-zinc-300 rounded px-2 py-0.5"
+        >
+          {targets.map(t => (
+            <option key={t.key} value={t.key}>{t.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="space-y-3">
+        <RestrictionSitesSection seq={target.seq} />
+        <ORFSection seq={target.seq} />
+        <GCSection seq={target.seq} />
+      </div>
+    </div>
+  );
+}
+
+function RestrictionSitesSection({ seq }) {
+  const hits = useMemo(() => findEnzymeSites(seq), [seq]);
+  const typeIIS = hits.filter(h => h.isTypeIIS);
+  const otherHits = hits.filter(h => !h.isTypeIIS);
+  return (
+    <div className="border border-zinc-100 rounded p-2">
+      <div className="font-medium text-zinc-800 mb-1">
+        Restriction sites
+        {typeIIS.length > 0 && (
+          <span className="ml-2 inline-block px-1.5 py-0.5 rounded text-[10px] bg-rose-100 text-rose-800">
+            {typeIIS.length} Type-IIS hit{typeIIS.length === 1 ? "" : "s"} (Golden Gate hazard)
+          </span>
+        )}
+      </div>
+      {hits.length === 0 ? (
+        <div className="text-zinc-500">No catalog sites in this sequence.</div>
+      ) : (
+        <table className="w-full">
+          <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
+            <tr>
+              <Th>Enzyme</Th>
+              <Th>Recognition</Th>
+              <Th>Position</Th>
+              <Th>Strand</Th>
+              <Th>Class</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...typeIIS, ...otherHits].map((h, i) => {
+              const enzyme = ENZYME_CATALOG.find(e => e.name === h.enzyme);
+              return (
+                <tr key={i} className={`border-t border-zinc-100 ${h.isTypeIIS ? "bg-rose-50/40" : ""}`}>
+                  <Td className="font-medium">{h.enzyme}</Td>
+                  <Td className="font-mono">{enzyme?.recognition}</Td>
+                  <Td className="font-mono">{h.start}–{h.end}</Td>
+                  <Td>{h.strand === 1 ? "+" : "−"}</Td>
+                  <Td className="text-[10px]">{h.isTypeIIS ? "Type-IIS" : "Class-II"}</Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function ORFSection({ seq }) {
+  const orfs = useMemo(() => findOrfs(seq, { minLengthAa: 50 }), [seq]);
+  if (orfs.length === 0) {
+    return (
+      <div className="border border-zinc-100 rounded p-2">
+        <div className="font-medium text-zinc-800 mb-1">Open reading frames (≥50 aa)</div>
+        <div className="text-zinc-500">No ORFs of ≥50 aa found in any of 6 frames.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="border border-zinc-100 rounded p-2">
+      <div className="font-medium text-zinc-800 mb-1">
+        Open reading frames (≥50 aa) <span className="text-zinc-500">— {orfs.length} found, longest {orfs[0].lengthAa} aa</span>
+      </div>
+      <table className="w-full">
+        <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
+          <tr><Th>Length (aa)</Th><Th>Strand</Th><Th>Frame</Th><Th>Position</Th></tr>
+        </thead>
+        <tbody>
+          {orfs.slice(0, 10).map((o, i) => (
+            <tr key={i} className="border-t border-zinc-100">
+              <Td className="font-mono">{o.lengthAa}</Td>
+              <Td>{o.strand === 1 ? "+" : "−"}</Td>
+              <Td className="font-mono">{o.frame}</Td>
+              <Td className="font-mono">{o.start}–{o.end}</Td>
+            </tr>
+          ))}
+          {orfs.length > 10 && (
+            <tr><Td colSpan={4} className="text-zinc-500 text-[10px]">+{orfs.length - 10} smaller ORFs not shown</Td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function GCSection({ seq }) {
+  const overall = overallGc(seq);
+  const W = 600, H = 60, padX = 30, padY = 8;
+  const plotW = W - 2 * padX;
+  const plotH = H - 2 * padY;
+  const window = Math.max(20, Math.min(100, Math.floor(seq.length / 20)));
+  const gcArr = useMemo(() => gcComposition(seq, window), [seq, window]);
+  // Subsample to ~plotW points for SVG perf on long sequences.
+  const stride = Math.max(1, Math.floor(seq.length / plotW));
+  const points = [];
+  for (let i = 0; i < seq.length; i += stride) {
+    const x = padX + (i / Math.max(1, seq.length - 1)) * plotW;
+    const y = padY + (1 - gcArr[i]) * plotH;
+    points.push([x, y]);
+  }
+  const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  return (
+    <div className="border border-zinc-100 rounded p-2">
+      <div className="font-medium text-zinc-800 mb-1 flex items-center justify-between">
+        <span>GC composition <span className="text-zinc-500 font-normal">(window {window} bp)</span></span>
+        <span className="font-mono text-[10px] text-zinc-600">overall {(overall * 100).toFixed(1)}%</span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+        {/* 50% GC reference line */}
+        <line
+          x1={padX} x2={W - padX}
+          y1={padY + plotH / 2} y2={padY + plotH / 2}
+          stroke="#9ca3af" strokeDasharray="3 2" strokeWidth={0.6}
+        />
+        <text x={padX - 4} y={padY + plotH / 2 + 3} fontSize={8} textAnchor="end" fill="#9ca3af">50%</text>
+        <text x={padX - 4} y={padY + 6} fontSize={8} textAnchor="end" fill="#9ca3af">100%</text>
+        <text x={padX - 4} y={padY + plotH + 3} fontSize={8} textAnchor="end" fill="#9ca3af">0%</text>
+        <path d={d} stroke="#0ea5e9" strokeWidth={1} fill="none" />
+        {/* Position ticks */}
+        {[0, 0.5, 1].map(f => {
+          const x = padX + f * plotW;
+          return (
+            <g key={f}>
+              <line x1={x} x2={x} y1={H - padY} y2={H - padY + 2} stroke="#9ca3af" />
+              <text x={x} y={H - 1} fontSize={8} textAnchor="middle" fill="#6b7280">
+                {Math.round(f * (seq.length - 1))}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
