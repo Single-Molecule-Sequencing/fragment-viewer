@@ -63,9 +63,9 @@ function parseFasta(text) {
   return text.replace(/\s+/g, "").toUpperCase();
 }
 
-export function SangerTab() {
+export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
   const [samples, setSamples] = useState({}); // {stem: parsed}
-  const [active, setActive] = useState(null);
+  const [active, setActive] = useState(initialActiveSample || null);
   const [reference, setReference] = useState("");
   const [referenceLabel, setReferenceLabel] = useState("");
   const [qCutoff, setQCutoff] = useState(20);
@@ -73,6 +73,31 @@ export function SangerTab() {
   const [pasteOpen, setPasteOpen] = useState(false);
 
   const fileInputRef = useRef(null);
+
+  // Honor ?ref=<url> from FragmentViewer's URL-param pass-through. Same-origin
+  // URLs work directly; cross-origin requires CORS on the source server. We
+  // fetch only once per mount; subsequent drag-drops or paste take over.
+  useEffect(() => {
+    if (!initialRefUrl || reference) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(initialRefUrl);
+        if (!resp.ok) {
+          if (!cancelled) setError(`?ref fetch failed: HTTP ${resp.status}`);
+          return;
+        }
+        const buf = await resp.arrayBuffer();
+        const sg = parseSnapgene(buf);
+        if (cancelled) return;
+        setReference(sg.sequence);
+        setReferenceLabel(`${initialRefUrl.split("/").pop() || "ref"} (${sg.length} bp${sg.isCircular ? ", circular" : ""})`);
+      } catch (e) {
+        if (!cancelled) setError(`?ref load failed: ${e.message || e}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [initialRefUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ----- File ingest --------------------------------------------------
   const ingestFile = useCallback(async (file) => {
