@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 
 import { parseSangerAbif } from "../lib/abif.js";
-import { parseSnapgene } from "../lib/snapgene.js";
+import { parseSnapgene, writeSnapgene } from "../lib/snapgene.js";
 import {
   mottTrim,
   scoreSangerVsReference,
@@ -68,9 +68,14 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
   const [active, setActive] = useState(initialActiveSample || null);
   const [reference, setReference] = useState("");
   const [referenceLabel, setReferenceLabel] = useState("");
+  const [referenceTopology, setReferenceTopology] = useState({ isCircular: false, topologyByte: 0 });
   const [qCutoff, setQCutoff] = useState(20);
   const [error, setError] = useState(null);
   const [pasteOpen, setPasteOpen] = useState(false);
+  // Per-sample chromatogram zoom: {sampleName: {start, end} | null}.
+  // start/end are trace-data-point indices (same coordinate space as
+  // peakLocations). null = full-range view.
+  const [zoomBySample, setZoomBySample] = useState({});
 
   const fileInputRef = useRef(null);
 
@@ -117,6 +122,7 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
         const sg = parseSnapgene(buf);
         setReference(sg.sequence);
         setReferenceLabel(`${file.name} (${sg.length} bp${sg.isCircular ? ", circular" : ""})`);
+        setReferenceTopology({ isCircular: sg.isCircular, topologyByte: sg.topologyByte });
       } else if (lower.endsWith(".fasta") || lower.endsWith(".fa") || lower.endsWith(".fna")) {
         const text = new TextDecoder().decode(buf);
         const seq = parseFasta(text);
@@ -143,7 +149,7 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
     return scoreSangerVsReference(activeSample, reference, { qCutoff });
   }, [activeSample, reference, qCutoff]);
 
-  // ----- CSV / SVG export --------------------------------------------
+  // ----- CSV / SVG / FASTA / .dna export ------------------------------
   const handleExportMismatchCsv = () => {
     if (!score) return;
     const rows = [["position_in_reference", "ref_base", "query_base", "kind"]];
@@ -161,6 +167,95 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
     const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
     downloadBlob(blob, `sanger_chromatogram_${active}.svg`);
   };
+
+  // FASTA of the active sample's Mott-trimmed basecalls (matches what the
+  // alignment scored against — i.e., the high-quality window only).
+  const handleExportTrimmedFasta = () => {
+    if (!activeSample) return;
+    const trim = mottTrim(activeSample.qScores, qCutoff);
+    const seq = activeSample.basecalls.slice(trim.start, trim.end);
+    const fasta = `>${activeSample.sampleName}_Q${qCutoff}_${trim.start}-${trim.end}\n${seq}\n`;
+    downloadBlob(
+      new Blob([fasta], { type: "text/plain;charset=utf-8" }),
+      `${activeSample.sampleName}_trimmed.fasta`,
+    );
+  };
+
+  // Multi-record FASTA with every loaded sample's trimmed read.
+  const handleExportAllFasta = () => {
+    const names = Object.keys(samples).sort();
+    if (names.length === 0) return;
+    const records = [];
+    for (const n of names) {
+      const s = samples[n];
+      const trim = mottTrim(s.qScores, qCutoff);
+      records.push(`>${n}_Q${qCutoff}_${trim.start}-${trim.end}\n${s.basecalls.slice(trim.start, trim.end)}`);
+    }
+    downloadBlob(
+      new Blob([records.join("\n") + "\n"], { type: "text/plain;charset=utf-8" }),
+      `sanger_reads_${new Date().toISOString().slice(0, 10)}.fasta`,
+    );
+  };
+
+  // SnapGene .dna of just the active sample's trimmed read (no reference
+  // context). Useful when there is no expected reference yet — the user
+  // gets a SnapGene-ready file from a chromatogram alone.
+  const handleExportTrimmedDna = () => {
+    if (!activeSample) return;
+    const trim = mottTrim(activeSample.qScores, qCutoff);
+    const seq = activeSample.basecalls.slice(trim.start, trim.end);
+    const features = [{
+      name: `${activeSample.sampleName} trimmed`,
+      type: "misc_feature",
+      start: 0, end: seq.length, strand: 1,
+      color: "#4f46e5",
+    }];
+    const buf = writeSnapgene({ sequence: seq, isCircular: false, features });
+    downloadBlob(new Blob([buf], { type: "application/octet-stream" }), `${activeSample.sampleName}_trimmed.dna`);
+  };
+
+  // SnapGene .dna of the reference with each loaded sample's aligned read
+  // embedded as a feature spanning [targetStart..targetEnd]. Mirrors the
+  // lab's "Sanger Results Aligned ... ASSEMBLED.dna" hand-built artifacts.
+  const handleExportAnnotatedRefDna = () => {
+    if (!reference) return;
+    const features = [];
+    const names = Object.keys(samples).sort();
+    let i = 0;
+    for (const n of names) {
+      const s = samples[n];
+      const r = scoreSangerVsReference(s, reference, { qCutoff });
+      if (r.length === 0) continue;
+      const ok = r.verdict === "pass";
+      const warn = r.verdict === "warn";
+      const color = ok ? "#16a34a" : warn ? "#f59e0b" : "#e11d48";
+      const pct = (r.identity * 100).toFixed(2);
+      features.push({
+        name: `${n}: ${pct}% (${r.matches}/${r.length}, ${r.mismatches} mm, ${r.gaps} gap)`,
+        type: "misc_feature",
+        start: r.targetStart,
+        end: r.targetEnd,
+        strand: 1,
+        color,
+      });
+      i++;
+    }
+    const buf = writeSnapgene({
+      sequence: reference,
+      isCircular: referenceTopology.isCircular,
+      topologyByte: referenceTopology.topologyByte,
+      features,
+    });
+    const fname = `${(referenceLabel || "reference").replace(/[\\/:*?"<>|]/g, "_").replace(/\.[a-z0-9]+$/i, "")}_sanger_annotated.dna`;
+    downloadBlob(new Blob([buf], { type: "application/octet-stream" }), fname);
+  };
+
+  // ----- Zoom helpers ------------------------------------------------
+  const setZoom = (range) => {
+    if (!active) return;
+    setZoomBySample(prev => ({ ...prev, [active]: range }));
+  };
+  const resetZoom = () => setZoom(null);
 
   // ----- Render -------------------------------------------------------
   return (
@@ -217,9 +312,16 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
             qCutoff={qCutoff}
             setQCutoff={setQCutoff}
             score={score}
+            samples={samples}
+            hasReference={!!reference}
             onExportCsv={handleExportMismatchCsv}
             onExportSvg={handleExportSvg}
-            disableExports={!score}
+            onExportTrimmedFasta={handleExportTrimmedFasta}
+            onExportAllFasta={handleExportAllFasta}
+            onExportTrimmedDna={handleExportTrimmedDna}
+            onExportAnnotatedRefDna={handleExportAnnotatedRefDna}
+            onResetZoom={resetZoom}
+            zoomActive={!!(active && zoomBySample[active])}
           />
 
           <ChromatogramPanel
@@ -227,8 +329,19 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
             qCutoff={qCutoff}
             score={score}
             svgRef={chromatogramRef}
+            zoom={active ? zoomBySample[active] : null}
+            setZoom={setZoom}
           />
 
+          {Object.keys(samples).length > 1 && reference && (
+            <MultiSampleSummary
+              samples={samples}
+              reference={reference}
+              qCutoff={qCutoff}
+              active={active}
+              onPick={setActive}
+            />
+          )}
           {score && <AlignmentSummary score={score} sample={activeSample} reference={reference} />}
           {score && <MismatchTable score={score} />}
         </div>
@@ -401,9 +514,16 @@ function PasteReferenceModal({ onClose, onApply }) {
 // Controls bar
 // ----------------------------------------------------------------------
 
-function ControlsBar({ qCutoff, setQCutoff, score, onExportCsv, onExportSvg, disableExports }) {
+function ControlsBar({
+  qCutoff, setQCutoff, score, samples, hasReference,
+  onExportCsv, onExportSvg, onExportTrimmedFasta, onExportAllFasta,
+  onExportTrimmedDna, onExportAnnotatedRefDna,
+  onResetZoom, zoomActive,
+}) {
+  const sampleCount = Object.keys(samples || {}).length;
+  const hasActive = !!score?.length || (samples && Object.values(samples).some(s => s.basecalls?.length));
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-3 flex flex-wrap items-center gap-4">
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 flex flex-wrap items-center gap-3">
       <label className="text-xs flex items-center gap-2">
         <span className="text-zinc-700">Mott Q-cutoff</span>
         <input
@@ -417,23 +537,63 @@ function ControlsBar({ qCutoff, setQCutoff, score, onExportCsv, onExportSvg, dis
 
       {score && <VerdictPill verdict={score.verdict} identity={score.identity} />}
 
-      <div className="ml-auto flex items-center gap-2">
+      {zoomActive && (
         <button
-          onClick={onExportCsv}
-          disabled={disableExports}
-          className="px-2.5 py-1.5 rounded border border-zinc-300 text-xs flex items-center gap-1 disabled:opacity-40 hover:bg-zinc-50"
+          onClick={onResetZoom}
+          className="px-2.5 py-1.5 rounded border border-zinc-300 text-xs flex items-center gap-1 hover:bg-zinc-50"
+          title="Reset chromatogram zoom to full range (or press F)"
         >
-          <FileDown size={12} /> CSV mismatches
+          Reset zoom
         </button>
-        <button
-          onClick={onExportSvg}
-          disabled={!score && true}
-          className="px-2.5 py-1.5 rounded border border-zinc-300 text-xs flex items-center gap-1 disabled:opacity-40 hover:bg-zinc-50"
-        >
-          <FileDown size={12} /> SVG chromatogram
-        </button>
+      )}
+
+      <div className="ml-auto flex items-center gap-2 flex-wrap">
+        <ExportGroup label="From chromatogram">
+          <ExportBtn onClick={onExportTrimmedFasta} disabled={!hasActive} title="Mott-trimmed basecalls of the active sample as FASTA">
+            FASTA (active)
+          </ExportBtn>
+          <ExportBtn onClick={onExportTrimmedDna} disabled={!hasActive} title="SnapGene .dna of the active sample's trimmed basecalls (no reference)">
+            .dna (active)
+          </ExportBtn>
+          <ExportBtn onClick={onExportAllFasta} disabled={sampleCount === 0} title={`Multi-record FASTA: every loaded sample (${sampleCount})`}>
+            FASTA (all {sampleCount})
+          </ExportBtn>
+        </ExportGroup>
+        <ExportGroup label="With reference">
+          <ExportBtn onClick={onExportAnnotatedRefDna} disabled={!hasReference || sampleCount === 0} title="SnapGene .dna of the reference annotated with each loaded read as a feature">
+            Annotated .dna
+          </ExportBtn>
+          <ExportBtn onClick={onExportCsv} disabled={!score} title="Mismatches between the active read and reference, as CSV">
+            CSV mismatches
+          </ExportBtn>
+          <ExportBtn onClick={onExportSvg} disabled={!score} title="Current chromatogram as SVG (Illustrator-editable)">
+            SVG
+          </ExportBtn>
+        </ExportGroup>
       </div>
     </div>
+  );
+}
+
+function ExportGroup({ label, children }) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[10px] uppercase tracking-wider text-zinc-500 mr-1">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function ExportBtn({ onClick, disabled, title, children }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="px-2 py-1 rounded border border-zinc-300 text-xs flex items-center gap-1 disabled:opacity-40 hover:bg-zinc-50"
+    >
+      <FileDown size={11} /> {children}
+    </button>
   );
 }
 
@@ -452,7 +612,7 @@ function VerdictPill({ verdict, identity }) {
 // Chromatogram (SVG)
 // ----------------------------------------------------------------------
 
-function ChromatogramPanel({ sample, qCutoff, score, svgRef }) {
+function ChromatogramPanel({ sample, qCutoff, score, svgRef, zoom, setZoom }) {
   if (!sample) {
     return (
       <div className="rounded-lg border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-500">
@@ -464,30 +624,42 @@ function ChromatogramPanel({ sample, qCutoff, score, svgRef }) {
   const { basecalls, qScores, peakLocations, traces } = sample;
   const trim = useMemo(() => mottTrim(qScores, qCutoff), [qScores, qCutoff]);
 
-  // Visible window: clamp to peakLocations to avoid drawing the entire trace
-  // when only a small Q-window is informative.
+  // Visible window: zoom range overrides full trace; clamp to legal bounds.
   const traceLen = traces.A?.length || traces.C?.length || traces.G?.length || traces.T?.length || 0;
   if (!traceLen) {
     return <div className="rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-500">No analyzed-trace channels (DATA9..12) in this file.</div>;
   }
-  const xStart = peakLocations[0] ?? 0;
-  const xEnd = peakLocations[peakLocations.length - 1] ?? traceLen - 1;
+  const fullStart = peakLocations[0] ?? 0;
+  const fullEnd = peakLocations[peakLocations.length - 1] ?? traceLen - 1;
+  // Clamp zoom to within the full range and ensure at least 4 data points wide
+  // (otherwise the chromatogram becomes uninterpretable).
+  const minSpan = 4;
+  const xStart = Math.max(fullStart, Math.min(fullEnd - minSpan, zoom?.start ?? fullStart));
+  const xEnd = Math.min(fullEnd, Math.max(xStart + minSpan, zoom?.end ?? fullEnd));
   const W = 1100;
   const H = 200;
   const padX = 10;
   const padTop = 18;
   const padBot = 28;
+  const plotLeft = padX;
+  const plotRight = W - padX;
+  const plotWidth = plotRight - plotLeft;
 
-  // Find max channel value for scaling.
+  // Integer iteration bounds; zoom math can produce fractional xStart/xEnd
+  // but the trace arrays are integer-indexed.
+  const iStart = Math.max(0, Math.floor(xStart));
+  const iEnd = Math.min(traceLen - 1, Math.ceil(xEnd));
+
+  // Find max channel value within the visible window for y-scaling.
   let maxY = 100;
   for (const base of ["A", "C", "G", "T"]) {
     const t = traces[base];
     if (!t) continue;
-    for (let i = xStart; i <= xEnd; i++) {
+    for (let i = iStart; i <= iEnd; i++) {
       if (t[i] > maxY) maxY = t[i];
     }
   }
-  const xToPx = (x) => padX + ((x - xStart) / Math.max(1, xEnd - xStart)) * (W - 2 * padX);
+  const xToPx = (x) => plotLeft + ((x - xStart) / Math.max(1e-6, xEnd - xStart)) * plotWidth;
   const yToPx = (y) => padTop + (1 - y / maxY) * (H - padTop - padBot);
 
   // Mott trim region in trace-x coordinates.
@@ -520,13 +692,80 @@ function ChromatogramPanel({ sample, qCutoff, score, svgRef }) {
     }
   }
 
+  // ----- Zoom interaction -------------------------------------------
+  // Convert a CSS-pixel x within the SVG to a trace-data-point index.
+  const cssXToTraceX = (svgEl, clientX) => {
+    if (!svgEl) return null;
+    const r = svgEl.getBoundingClientRect();
+    const cssLeft = r.left + (plotLeft / W) * r.width;
+    const cssWidth = (plotWidth / W) * r.width;
+    const t = (clientX - cssLeft) / cssWidth;
+    const tClamped = Math.max(0, Math.min(1, t));
+    return xStart + tClamped * (xEnd - xStart);
+  };
+  const [brush, setBrush] = useState(null);  // {x0, x1} in trace coords
+  const onMouseDown = (e) => {
+    if (e.button !== 0) return;
+    const t = cssXToTraceX(e.currentTarget, e.clientX);
+    if (t == null) return;
+    setBrush({ x0: t, x1: t });
+  };
+  const onMouseMove = (e) => {
+    if (!brush) return;
+    const t = cssXToTraceX(e.currentTarget, e.clientX);
+    if (t == null) return;
+    setBrush({ x0: brush.x0, x1: t });
+  };
+  const onMouseUp = () => {
+    if (!brush) return;
+    const lo = Math.min(brush.x0, brush.x1);
+    const hi = Math.max(brush.x0, brush.x1);
+    setBrush(null);
+    if (hi - lo >= minSpan && setZoom) {
+      setZoom({ start: Math.round(lo), end: Math.round(hi) });
+    }
+  };
+  const onMouseLeave = () => setBrush(null);
+  const onDoubleClick = () => { if (setZoom) setZoom(null); };
+  const onWheel = (e) => {
+    if (!setZoom) return;
+    e.preventDefault();
+    // Zoom factor: scroll up → zoom in (smaller range), scroll down → out.
+    const factor = e.deltaY < 0 ? 0.85 : 1.15;
+    const center = cssXToTraceX(e.currentTarget, e.clientX);
+    if (center == null) return;
+    const newSpan = Math.max(minSpan, (xEnd - xStart) * factor);
+    const newStart = Math.max(fullStart, center - newSpan * ((center - xStart) / Math.max(1, xEnd - xStart)));
+    const newEnd = Math.min(fullEnd, newStart + newSpan);
+    if (newStart <= fullStart && newEnd >= fullEnd) {
+      setZoom(null);  // back to full range → drop the override
+    } else {
+      setZoom({ start: Math.round(newStart), end: Math.round(newEnd) });
+    }
+  };
+
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-3 overflow-x-auto">
       <div className="text-xs text-zinc-600 mb-1 flex items-center justify-between">
         <span>{sample.sampleName} — {basecalls.length} bp · trim Q≥{qCutoff}: {trim.start}–{trim.end}</span>
-        <span className="font-mono text-zinc-500">trace points {xStart}–{xEnd}</span>
+        <span className="font-mono text-zinc-500">
+          trace points {xStart.toFixed(0)}–{xEnd.toFixed(0)}
+          {zoom ? <span className="ml-2 text-indigo-600">zoomed</span> : null}
+        </span>
       </div>
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${H}`}
+        width="100%" height={H}
+        preserveAspectRatio="none"
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave}
+        onDoubleClick={onDoubleClick}
+        onWheel={onWheel}
+        style={{ cursor: brush ? "ew-resize" : "crosshair", userSelect: "none" }}
+      >
         {/* Trim shading */}
         {trim.end > trim.start && (
           <rect
@@ -541,8 +780,8 @@ function ChromatogramPanel({ sample, qCutoff, score, svgRef }) {
           const t = traces[base];
           if (!t) return null;
           let d = "";
-          for (let i = xStart; i <= xEnd; i++) {
-            const cmd = i === xStart ? "M" : "L";
+          for (let i = iStart; i <= iEnd; i++) {
+            const cmd = i === iStart ? "M" : "L";
             d += `${cmd}${xToPx(i).toFixed(1)},${yToPx(t[i]).toFixed(1)} `;
           }
           return (
@@ -572,21 +811,27 @@ function ChromatogramPanel({ sample, qCutoff, score, svgRef }) {
             />
           );
         })}
-        {/* Basecall labels (only when readable) */}
-        {basecalls.length <= 250 && peakLocations.map((px, i) => {
-          if (px < xStart || px > xEnd) return null;
-          const base = basecalls[i] || "N";
-          return (
-            <text
-              key={i}
-              x={xToPx(px)} y={padTop - 4}
-              fontSize={9}
-              textAnchor="middle"
-              fill={SANGER_BASE_COLORS[base] || "#6b7280"}
-              fontFamily="monospace"
-            >{base}</text>
-          );
-        })}
+        {/* Basecall labels — visible when the *visible* span is short enough
+            to render them legibly (~250 visible bases). Zooming in reveals
+            them on long reads. */}
+        {(() => {
+          const visiblePeaks = peakLocations.filter(px => px >= xStart && px <= xEnd);
+          if (visiblePeaks.length > 250) return null;
+          return peakLocations.map((px, i) => {
+            if (px < xStart || px > xEnd) return null;
+            const base = basecalls[i] || "N";
+            return (
+              <text
+                key={i}
+                x={xToPx(px)} y={padTop - 4}
+                fontSize={9}
+                textAnchor="middle"
+                fill={SANGER_BASE_COLORS[base] || "#6b7280"}
+                fontFamily="monospace"
+              >{base}</text>
+            );
+          });
+        })()}
         {/* Q-score line at the bottom */}
         <QScoreLine
           qScores={qScores} peakLocations={peakLocations}
@@ -606,8 +851,22 @@ function ChromatogramPanel({ sample, qCutoff, score, svgRef }) {
             </g>
           );
         })}
+        {/* Brush selection rectangle (visible while user is dragging). */}
+        {brush && Math.abs(brush.x1 - brush.x0) > 1 && (
+          <rect
+            x={Math.min(xToPx(brush.x0), xToPx(brush.x1))}
+            y={padTop - 6}
+            width={Math.abs(xToPx(brush.x1) - xToPx(brush.x0))}
+            height={H - padTop - padBot + 6}
+            fill="#6366f1" fillOpacity={0.18}
+            stroke="#6366f1" strokeOpacity={0.5}
+          />
+        )}
       </svg>
-      <Legend />
+      <div className="mt-1 flex items-center justify-between text-[10px] text-zinc-500">
+        <Legend />
+        <span>Drag to brush-zoom · scroll to zoom in/out · double-click to reset</span>
+      </div>
     </div>
   );
 }
@@ -641,7 +900,7 @@ function QScoreLine({ qScores, peakLocations, xStart, xEnd, xToPx, yBase, qThres
 
 function Legend() {
   return (
-    <div className="mt-1 flex items-center gap-3 text-[10px] text-zinc-600">
+    <div className="flex items-center gap-3 text-[10px] text-zinc-600">
       {Object.entries(SANGER_BASE_COLORS).filter(([b]) => b !== "N").map(([base, c]) => (
         <span key={base} className="inline-flex items-center gap-1">
           <span style={{ background: c }} className="inline-block w-3 h-1.5 rounded" /> {base}
@@ -656,6 +915,98 @@ function Legend() {
       <span className="inline-flex items-center gap-1">
         <span className="inline-block w-px h-3" style={{ background: "#f43f5e" }} /> mismatch
       </span>
+    </div>
+  );
+}
+
+
+// ----------------------------------------------------------------------
+// Multi-sample summary panel
+// ----------------------------------------------------------------------
+//
+// Shows when ≥2 .ab1 files are loaded against a reference. Each row is one
+// loaded sample with its alignment verdict + reference range; click to
+// focus that sample in the chromatogram. Mirrors the lab's per-construct
+// "Sanger Verification" workflow where 6 reads from PS1–PS6 primers all
+// align against one expected Golden Gate assembly reference.
+
+function MultiSampleSummary({ samples, reference, qCutoff, active, onPick }) {
+  const rows = useMemo(() => {
+    const out = [];
+    for (const name of Object.keys(samples).sort()) {
+      const s = samples[name];
+      const r = scoreSangerVsReference(s, reference, { qCutoff });
+      out.push({ name, score: r });
+    }
+    return out;
+  }, [samples, reference, qCutoff]);
+
+  const refLen = reference.length;
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs">
+      <div className="font-medium text-zinc-800 mb-2">
+        Multi-sample alignment ({rows.length} reads against {refLen} bp reference)
+      </div>
+      <table className="w-full">
+        <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
+          <tr>
+            <Th>Sample</Th>
+            <Th>Verdict</Th>
+            <Th>Identity</Th>
+            <Th>Coverage on reference</Th>
+            <Th>Mismatches</Th>
+            <Th>Gaps</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ name, score }) => {
+            const v = VERDICT_STYLE[score.verdict] || VERDICT_STYLE.fail;
+            const isActive = name === active;
+            const covPct = refLen ? (((score.targetEnd - score.targetStart) / refLen) * 100) : 0;
+            return (
+              <tr
+                key={name}
+                onClick={() => onPick(name)}
+                className={`border-t border-zinc-100 cursor-pointer ${isActive ? "bg-indigo-50" : "hover:bg-zinc-50"}`}
+              >
+                <Td className="font-mono">{name}</Td>
+                <Td>
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${v.bg} ${v.text}`}>
+                    {v.label}
+                  </span>
+                </Td>
+                <Td className="font-mono">{(score.identity * 100).toFixed(2)}%</Td>
+                <Td>
+                  <CoverageBar start={score.targetStart} end={score.targetEnd} total={refLen} verdict={score.verdict} />
+                  <span className="font-mono text-[10px] text-zinc-500">
+                    {score.targetStart}-{score.targetEnd} ({covPct.toFixed(0)}%)
+                  </span>
+                </Td>
+                <Td className="font-mono">{score.mismatches}</Td>
+                <Td className="font-mono">{score.gaps}</Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CoverageBar({ start, end, total, verdict }) {
+  if (!total) return null;
+  const color = verdict === "pass" ? "#16a34a" : verdict === "warn" ? "#f59e0b" : "#e11d48";
+  return (
+    <div className="relative h-1.5 w-full bg-zinc-100 rounded mb-0.5">
+      <div
+        className="absolute top-0 h-full rounded"
+        style={{
+          left: `${(start / total) * 100}%`,
+          width: `${Math.max(1, ((end - start) / total) * 100)}%`,
+          background: color,
+        }}
+      />
     </div>
   );
 }
