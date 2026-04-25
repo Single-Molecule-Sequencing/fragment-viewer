@@ -258,3 +258,209 @@ export function scoreSangerVsReference(parsed, reference, opts = {}) {
     mismatchList: enumerateMismatches(aln),
   };
 }
+
+
+// ----------------------------------------------------------------------
+// Multi-read analytics: coverage map, consensus, quality histogram.
+// ----------------------------------------------------------------------
+//
+// All pure functions. Inputs are scoreSangerVsReference outputs (we already
+// have alignedTarget / alignedQuery / targetStart for each read), so these
+// scale to N reads without re-aligning anything.
+
+/**
+ * Walks each read's alignment and accumulates a depth-of-coverage profile
+ * across the reference. Insertions in the read advance only the read pointer,
+ * so they don't add coverage at any reference position; deletions in the read
+ * still count as coverage at the reference position they consumed (read was
+ * aligned and made a call).
+ *
+ * @param {Array<{score: object}>} reads - each must have a `.score` of the
+ *   shape returned by scoreSangerVsReference (alignedTarget, alignedQuery,
+ *   targetStart, targetEnd).
+ * @param {number} refLen - reference length (0-based exclusive upper bound).
+ * @returns {Uint16Array} depth[i] = number of reads covering reference pos i.
+ */
+export function computeCoverageDepth(reads, refLen) {
+  const depth = new Uint16Array(refLen);
+  for (const read of reads) {
+    const score = read?.score;
+    if (!score || !score.length) continue;
+    let tPos = score.targetStart;
+    const t = score.alignedTarget;
+    const q = score.alignedQuery;
+    for (let k = 0; k < t.length; k++) {
+      const tc = t[k];
+      const qc = q[k];
+      // Insertion in read (gap in target) — no reference position consumed.
+      if (tc === "-") continue;
+      // Mismatch / match / deletion all "use up" one reference position.
+      if (tPos < refLen) depth[tPos] = Math.min(65535, depth[tPos] + 1);
+      tPos++;
+      // Note: query gap (qc === "-") still advances tPos because the read
+      // was aligned — the deletion in the read is informative coverage.
+      void qc;
+    }
+  }
+  return depth;
+}
+
+
+/**
+ * Find contiguous reference ranges with zero read coverage.
+ *
+ * @param {Uint16Array} depth - from computeCoverageDepth
+ * @returns {Array<{start: number, end: number}>} 0-based half-open gaps
+ */
+export function findCoverageGaps(depth) {
+  const gaps = [];
+  let runStart = -1;
+  for (let i = 0; i < depth.length; i++) {
+    if (depth[i] === 0 && runStart < 0) runStart = i;
+    else if (depth[i] !== 0 && runStart >= 0) {
+      gaps.push({ start: runStart, end: i });
+      runStart = -1;
+    }
+  }
+  if (runStart >= 0) gaps.push({ start: runStart, end: depth.length });
+  return gaps;
+}
+
+
+/**
+ * Majority-vote consensus across overlapping reads at each reference
+ * position. At each pos, consider every read whose alignment makes a
+ * non-gap call there and count base votes. Consensus is the majority base;
+ * ties resolve to 'N'. Positions with zero coverage become 'n' (lowercase
+ * to flag uncovered) or the reference base if `fillFromRef` is true.
+ *
+ * @param {Array<{name?: string, score: object}>} reads
+ * @param {string} reference - upper-cased reference sequence
+ * @param {{fillFromRef?: boolean, gapAsLowercase?: boolean}} opts
+ * @returns {{
+ *   consensusSeq: string,        // length === reference.length
+ *   coverage: Uint16Array,       // depth per ref position
+ *   uncertainty: Array<{pos:number, votes:Array<{base:string,count:number,readNames:string[]}>}>,
+ *   gaps: Array<{start:number,end:number}>
+ * }}
+ */
+export function computeConsensus(reads, reference, opts = {}) {
+  const fillFromRef = opts.fillFromRef ?? true;
+  const gapAsLowercase = opts.gapAsLowercase ?? true;
+  const refLen = reference.length;
+
+  // Per-position bucket of {base: {count, readNames[]}}.
+  const buckets = Array.from({ length: refLen }, () => ({}));
+  for (const read of reads) {
+    const score = read?.score;
+    if (!score || !score.length) continue;
+    const name = read.name || "anon";
+    let tPos = score.targetStart;
+    const t = score.alignedTarget;
+    const q = score.alignedQuery;
+    for (let k = 0; k < t.length; k++) {
+      const tc = t[k];
+      const qc = q[k];
+      if (tc === "-") continue;  // insertion in read, no ref position
+      if (tPos < refLen) {
+        // For both match/mismatch/deletion-in-read we record what the read
+        // contributed at this ref pos. For deletions (qc === "-") the call
+        // is the gap symbol; we tally those too because they're informative.
+        const callBase = qc;
+        const slot = (buckets[tPos][callBase] ??= { count: 0, readNames: [] });
+        slot.count++;
+        slot.readNames.push(name);
+      }
+      tPos++;
+    }
+  }
+
+  const consensus = new Array(refLen);
+  const coverage = new Uint16Array(refLen);
+  const uncertainty = [];
+  for (let i = 0; i < refLen; i++) {
+    const bucket = buckets[i];
+    const entries = Object.entries(bucket); // [[base, {count, readNames}], ...]
+    if (entries.length === 0) {
+      consensus[i] = fillFromRef
+        ? (gapAsLowercase ? reference[i].toLowerCase() : reference[i])
+        : (gapAsLowercase ? "n" : "N");
+      continue;
+    }
+    let total = 0;
+    let bestCount = 0;
+    let bestBase = "N";
+    let tied = false;
+    for (const [base, info] of entries) {
+      total += info.count;
+      if (info.count > bestCount) {
+        bestCount = info.count;
+        bestBase = base;
+        tied = false;
+      } else if (info.count === bestCount) {
+        tied = true;
+      }
+    }
+    coverage[i] = total;
+    consensus[i] = tied ? "N" : (bestBase === "-" ? "-" : bestBase.toUpperCase());
+    if (entries.length > 1) {
+      uncertainty.push({
+        pos: i,
+        votes: entries.map(([base, info]) => ({
+          base,
+          count: info.count,
+          readNames: info.readNames.slice(),
+        })),
+      });
+    }
+  }
+
+  return {
+    consensusSeq: consensus.join(""),
+    coverage,
+    uncertainty,
+    gaps: findCoverageGaps(coverage),
+  };
+}
+
+
+/**
+ * Per-Q-score histogram over a quality-score array. Bins are integer Q
+ * values 0..max; counts are how many bases hit each bin. Returns mean
+ * and median for quick header stats.
+ *
+ * @param {number[] | Uint8Array} qScores
+ * @returns {{bins: number[], max: number, mean: number, median: number, total: number}}
+ */
+export function computeQualityHistogram(qScores) {
+  if (!qScores || qScores.length === 0) {
+    return { bins: [], max: 0, mean: 0, median: 0, total: 0 };
+  }
+  let max = 0;
+  for (let i = 0; i < qScores.length; i++) {
+    const q = qScores[i];
+    if (q > max) max = q;
+  }
+  const bins = new Array(max + 1).fill(0);
+  let sum = 0;
+  for (let i = 0; i < qScores.length; i++) {
+    const q = qScores[i] | 0;
+    bins[q]++;
+    sum += q;
+  }
+  // Median via cumulative count.
+  const total = qScores.length;
+  let cum = 0;
+  let median = 0;
+  for (let q = 0; q <= max; q++) {
+    cum += bins[q];
+    if (cum >= total / 2) { median = q; break; }
+  }
+  return {
+    bins,
+    max,
+    mean: sum / total,
+    median,
+    total,
+  };
+}
