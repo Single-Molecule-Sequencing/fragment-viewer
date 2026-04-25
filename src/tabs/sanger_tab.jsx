@@ -27,6 +27,9 @@ import { parseSnapgene, writeSnapgene } from "../lib/snapgene.js";
 import {
   mottTrim,
   scoreSangerVsReference,
+  computeCoverageDepth,
+  computeConsensus,
+  computeQualityHistogram,
 } from "../lib/sanger.js";
 import { downloadBlob } from "../lib/export.js";
 
@@ -257,6 +260,91 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
   };
   const resetZoom = () => setZoom(null);
 
+  // ----- Multi-read analytics: coverage + consensus -----------------
+  // Compute one-shot when reference + ≥1 sample loaded; share results
+  // across MultiSampleSummary, CoverageMapPanel, ConsensusPanel.
+  const multiReadAnalysis = useMemo(() => {
+    if (!reference || Object.keys(samples).length === 0) return null;
+    const reads = Object.entries(samples).map(([name, s]) => ({
+      name,
+      score: scoreSangerVsReference(s, reference, { qCutoff }),
+    }));
+    const depth = computeCoverageDepth(reads, reference.length);
+    const consensus = computeConsensus(reads, reference);
+    return { reads, depth, consensus };
+  }, [samples, reference, qCutoff]);
+
+  // ----- Verification CSV export ------------------------------------
+  // One row per loaded sample: same shape as the lab's
+  // "Sanger Verification_<date>.xlsx" worksheets — name, verdict,
+  // identity %, coverage range, mismatch + gap counts.
+  const handleExportVerificationCsv = () => {
+    if (!multiReadAnalysis) return;
+    const header = ["sample", "verdict", "identity_pct", "matches", "length", "mismatches", "gaps", "ref_start", "ref_end", "trim_q_cutoff", "trim_start", "trim_end"];
+    const rows = [header.join(",")];
+    for (const { name, score } of multiReadAnalysis.reads) {
+      rows.push([
+        name,
+        score.verdict,
+        (score.identity * 100).toFixed(2),
+        score.matches,
+        score.length,
+        score.mismatches,
+        score.gaps,
+        score.targetStart,
+        score.targetEnd,
+        score.qCutoff,
+        score.trim?.start ?? 0,
+        score.trim?.end ?? 0,
+      ].join(","));
+    }
+    const blob = new Blob([rows.join("\n") + "\n"], { type: "text/csv;charset=utf-8" });
+    downloadBlob(blob, `sanger_verification_${new Date().toISOString().slice(0, 10)}.csv`);
+  };
+
+  // ----- Consensus exports ------------------------------------------
+  const handleExportConsensusFasta = () => {
+    if (!multiReadAnalysis) return;
+    const seq = multiReadAnalysis.consensus.consensusSeq;
+    const fasta = `>${(referenceLabel || "consensus").replace(/\s+/g, "_")}_consensus\n${seq}\n`;
+    downloadBlob(
+      new Blob([fasta], { type: "text/plain;charset=utf-8" }),
+      `sanger_consensus_${new Date().toISOString().slice(0, 10)}.fasta`,
+    );
+  };
+  const handleExportConsensusDna = () => {
+    if (!multiReadAnalysis) return;
+    const seq = multiReadAnalysis.consensus.consensusSeq;
+    // Annotate each gap region as a "no coverage" feature so reviewers
+    // can spot them visually in SnapGene.
+    const features = multiReadAnalysis.consensus.gaps.map(g => ({
+      name: `coverage gap (${g.end - g.start} bp)`,
+      type: "misc_feature",
+      start: g.start, end: g.end, strand: 0,
+      color: "#9ca3af",
+    }));
+    // Mark uncertainty positions as 1-bp features.
+    for (const u of multiReadAnalysis.consensus.uncertainty.slice(0, 200)) {
+      const votes = u.votes.map(v => `${v.base}×${v.count}`).join("/");
+      features.push({
+        name: `disagreement: ${votes}`,
+        type: "misc_feature",
+        start: u.pos, end: u.pos + 1, strand: 0,
+        color: "#f59e0b",
+      });
+    }
+    const buf = writeSnapgene({
+      sequence: seq.toUpperCase().replace(/[^ACGTN-]/g, "N"),
+      isCircular: referenceTopology.isCircular,
+      topologyByte: referenceTopology.topologyByte,
+      features,
+    });
+    downloadBlob(
+      new Blob([buf], { type: "application/octet-stream" }),
+      `sanger_consensus_${new Date().toISOString().slice(0, 10)}.dna`,
+    );
+  };
+
   // ----- Render -------------------------------------------------------
   return (
     <div className="flex flex-col gap-4">
@@ -333,14 +421,34 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
             setZoom={setZoom}
           />
 
-          {Object.keys(samples).length > 1 && reference && (
+          {multiReadAnalysis && Object.keys(samples).length > 1 && (
             <MultiSampleSummary
-              samples={samples}
-              reference={reference}
-              qCutoff={qCutoff}
+              reads={multiReadAnalysis.reads}
+              refLen={reference.length}
+              active={active}
+              onPick={setActive}
+              onExportVerificationCsv={handleExportVerificationCsv}
+            />
+          )}
+          {multiReadAnalysis && (
+            <CoverageMapPanel
+              depth={multiReadAnalysis.depth}
+              reads={multiReadAnalysis.reads}
+              refLen={reference.length}
               active={active}
               onPick={setActive}
             />
+          )}
+          {multiReadAnalysis && Object.keys(samples).length > 0 && (
+            <ConsensusPanel
+              consensus={multiReadAnalysis.consensus}
+              refLen={reference.length}
+              onExportFasta={handleExportConsensusFasta}
+              onExportDna={handleExportConsensusDna}
+            />
+          )}
+          {activeSample && (
+            <QualityHistogramPanel sample={activeSample} qCutoff={qCutoff} />
           )}
           {score && <AlignmentSummary score={score} sample={activeSample} reference={reference} />}
           {score && <MismatchTable score={score} />}
@@ -930,23 +1038,21 @@ function Legend() {
 // "Sanger Verification" workflow where 6 reads from PS1–PS6 primers all
 // align against one expected Golden Gate assembly reference.
 
-function MultiSampleSummary({ samples, reference, qCutoff, active, onPick }) {
-  const rows = useMemo(() => {
-    const out = [];
-    for (const name of Object.keys(samples).sort()) {
-      const s = samples[name];
-      const r = scoreSangerVsReference(s, reference, { qCutoff });
-      out.push({ name, score: r });
-    }
-    return out;
-  }, [samples, reference, qCutoff]);
-
-  const refLen = reference.length;
-
+function MultiSampleSummary({ reads, refLen, active, onPick, onExportVerificationCsv }) {
+  const rows = useMemo(() => [...reads].sort((a, b) => a.name.localeCompare(b.name)), [reads]);
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs">
-      <div className="font-medium text-zinc-800 mb-2">
-        Multi-sample alignment ({rows.length} reads against {refLen} bp reference)
+      <div className="font-medium text-zinc-800 mb-2 flex items-center justify-between">
+        <span>Multi-sample alignment ({rows.length} reads against {refLen} bp reference)</span>
+        {onExportVerificationCsv && (
+          <button
+            onClick={onExportVerificationCsv}
+            className="px-2 py-1 rounded border border-zinc-300 text-[10px] flex items-center gap-1 hover:bg-zinc-50"
+            title="Export this table as CSV (mirrors lab Sanger Verification xlsx)"
+          >
+            <FileDown size={11} /> Verification CSV
+          </button>
+        )}
       </div>
       <table className="w-full">
         <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
@@ -1093,4 +1199,218 @@ function Th({ children }) {
 }
 function Td({ children, className = "" }) {
   return <td className={`px-2 py-1 ${className}`}>{children}</td>;
+}
+
+
+// ----------------------------------------------------------------------
+// CoverageMapPanel — depth-of-coverage profile across the reference
+// ----------------------------------------------------------------------
+//
+// SVG bar chart, one column per reference position. Bar height encodes
+// depth (0 = invisible, ≥1 visible). Each loaded read renders as a
+// horizontal stripe positioned by its targetStart..targetEnd, color-coded
+// by per-read verdict. Clicking a stripe focuses that sample. This is
+// the lab's de-facto question: "where on the assembly do I have
+// verification coverage, and where do I still need to sequence?"
+
+function CoverageMapPanel({ depth, reads, refLen, active, onPick }) {
+  const W = 1100;
+  const padX = 10;
+  const headerH = 18;
+  const rowH = 9;
+  const trackH = Math.max(40, reads.length * rowH);
+  const depthH = 36;
+  const H = headerH + depthH + trackH + 14;
+  const plotW = W - 2 * padX;
+  const xToPx = (refPos) => padX + (refPos / Math.max(1, refLen)) * plotW;
+
+  let maxDepth = 0;
+  for (let i = 0; i < depth.length; i++) if (depth[i] > maxDepth) maxDepth = depth[i];
+  if (maxDepth === 0) maxDepth = 1;
+
+  // Build a smoothed/decimated depth poly for SVG perf when refLen is huge.
+  const stride = Math.max(1, Math.floor(refLen / W));
+  const polyPoints = [];
+  for (let i = 0; i < refLen; i += stride) {
+    polyPoints.push([xToPx(i), headerH + depthH - (depth[i] / maxDepth) * (depthH - 4)]);
+  }
+  const depthPoly = polyPoints
+    .map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
+    .join(" ")
+    + ` L${xToPx(refLen).toFixed(1)},${(headerH + depthH).toFixed(1)} L${padX},${(headerH + depthH).toFixed(1)} Z`;
+
+  const sortedReads = [...reads].sort((a, b) =>
+    (a.score?.targetStart ?? 0) - (b.score?.targetStart ?? 0)
+  );
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs">
+      <div className="font-medium text-zinc-800 mb-1 flex items-center justify-between">
+        <span>Reference coverage</span>
+        <span className="text-[10px] text-zinc-500">
+          max depth {maxDepth} · {reads.length} read{reads.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+        {/* Reference axis ticks */}
+        {[0, 0.25, 0.5, 0.75, 1.0].map(f => {
+          const refPos = Math.round(f * refLen);
+          return (
+            <g key={f}>
+              <line x1={xToPx(refPos)} x2={xToPx(refPos)} y1={headerH - 4} y2={headerH} stroke="#9ca3af" />
+              <text x={xToPx(refPos)} y={headerH - 6} textAnchor="middle" fontSize={9} fill="#6b7280">
+                {refPos}
+              </text>
+            </g>
+          );
+        })}
+        {/* Depth profile */}
+        <path d={depthPoly} fill="#bae6fd" stroke="#0369a1" strokeWidth={0.5} />
+        {/* Per-read stripes */}
+        {sortedReads.map((r, i) => {
+          const s = r.score;
+          if (!s || !s.length) return null;
+          const y = headerH + depthH + 6 + i * rowH;
+          const x0 = xToPx(s.targetStart);
+          const x1 = xToPx(s.targetEnd);
+          const verdict = s.verdict;
+          const color = verdict === "pass" ? "#16a34a" : verdict === "warn" ? "#f59e0b" : "#e11d48";
+          const isActive = r.name === active;
+          return (
+            <g key={r.name} onClick={() => onPick?.(r.name)} style={{ cursor: "pointer" }}>
+              <rect
+                x={x0} y={y - rowH / 2 + 1}
+                width={Math.max(2, x1 - x0)} height={rowH - 2}
+                fill={color} fillOpacity={isActive ? 0.95 : 0.55}
+                stroke={isActive ? "#1e40af" : "transparent"}
+                strokeWidth={isActive ? 1 : 0}
+              />
+              <title>{`${r.name} — ${s.targetStart}–${s.targetEnd} · ${(s.identity * 100).toFixed(1)}% identity (${verdict})`}</title>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="mt-1 text-[10px] text-zinc-500">
+        Click a read stripe to focus it. Bars above show how many reads cover each reference position.
+      </div>
+    </div>
+  );
+}
+
+
+// ----------------------------------------------------------------------
+// ConsensusPanel — majority-vote consensus across overlapping reads
+// ----------------------------------------------------------------------
+
+function ConsensusPanel({ consensus, refLen, onExportFasta, onExportDna }) {
+  const { consensusSeq, gaps, uncertainty } = consensus;
+  const coveredLen = refLen - gaps.reduce((acc, g) => acc + (g.end - g.start), 0);
+  const covPct = refLen ? (coveredLen / refLen) * 100 : 0;
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs">
+      <div className="font-medium text-zinc-800 mb-2 flex items-center justify-between">
+        <span>Consensus</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onExportFasta}
+            className="px-2 py-1 rounded border border-zinc-300 text-[10px] flex items-center gap-1 hover:bg-zinc-50"
+            title="Multi-base consensus sequence as FASTA (uppercase = covered, lowercase = uncovered ref fallback, N = disagreement)"
+          >
+            <FileDown size={11} /> Consensus FASTA
+          </button>
+          <button
+            onClick={onExportDna}
+            className="px-2 py-1 rounded border border-zinc-300 text-[10px] flex items-center gap-1 hover:bg-zinc-50"
+            title="Consensus as SnapGene .dna; coverage gaps + disagreement positions annotated as features"
+          >
+            <FileDown size={11} /> Consensus .dna
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-3 mb-2">
+        <Stat label="Length" value={`${consensusSeq.length} bp`} />
+        <Stat label="Covered" value={`${coveredLen} bp (${covPct.toFixed(1)}%)`} />
+        <Stat label="Disagreements" value={String(uncertainty.length)} />
+      </div>
+      {gaps.length > 0 && (
+        <div className="text-[11px] text-zinc-700">
+          <span className="font-medium">Coverage gaps</span> ({gaps.length}):
+          <span className="ml-2 font-mono">
+            {gaps.slice(0, 5).map(g => `${g.start}–${g.end}`).join(", ")}
+            {gaps.length > 5 ? `, +${gaps.length - 5} more` : ""}
+          </span>
+        </div>
+      )}
+      {uncertainty.length > 0 && (
+        <div className="text-[11px] text-zinc-700 mt-1">
+          <span className="font-medium">Disagreements</span> (first 5):
+          <span className="ml-2 font-mono">
+            {uncertainty.slice(0, 5).map(u =>
+              `pos ${u.pos}: ${u.votes.map(v => `${v.base}×${v.count}`).join("/")}`
+            ).join("; ")}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ----------------------------------------------------------------------
+// QualityHistogramPanel — per-Q histogram of the active sample
+// ----------------------------------------------------------------------
+
+function QualityHistogramPanel({ sample, qCutoff }) {
+  const hist = useMemo(() => computeQualityHistogram(sample.qScores), [sample]);
+  if (hist.total === 0) return null;
+  const W = 600, H = 90;
+  const padX = 30, padY = 10;
+  const plotW = W - 2 * padX;
+  const plotH = H - 2 * padY;
+  const maxBin = Math.max(1, ...hist.bins);
+  const xToPx = (q) => padX + (q / Math.max(1, hist.max)) * plotW;
+  const barW = plotW / Math.max(1, hist.max + 1);
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs">
+      <div className="font-medium text-zinc-800 mb-1 flex items-center justify-between">
+        <span>{sample.sampleName} — Q-score distribution</span>
+        <span className="text-[10px] text-zinc-500 font-mono">
+          mean {hist.mean.toFixed(1)} · median {hist.median} · max {hist.max}
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none">
+        {hist.bins.map((count, q) => {
+          if (count === 0) return null;
+          const h = (count / maxBin) * plotH;
+          const x = xToPx(q) - barW / 2;
+          // Color: below cutoff = warning, above = healthy.
+          const fill = q < qCutoff ? "#f59e0b" : "#0ea5e9";
+          return (
+            <rect
+              key={q}
+              x={x} y={H - padY - h}
+              width={Math.max(1, barW - 1)} height={h}
+              fill={fill}
+              opacity={0.8}
+            >
+              <title>Q={q}: {count} bases</title>
+            </rect>
+          );
+        })}
+        {/* Cutoff guide */}
+        <line x1={xToPx(qCutoff)} x2={xToPx(qCutoff)} y1={padY} y2={H - padY}
+              stroke="#475569" strokeDasharray="3 2" strokeWidth={0.8} />
+        <text x={xToPx(qCutoff)} y={padY + 8} fontSize={9} textAnchor="middle" fill="#475569">
+          Q≥{qCutoff}
+        </text>
+        {/* X-axis ticks at multiples of 10 */}
+        {[0, 10, 20, 30, 40, 50, 60].filter(q => q <= hist.max).map(q => (
+          <g key={q}>
+            <line x1={xToPx(q)} x2={xToPx(q)} y1={H - padY} y2={H - padY + 3} stroke="#9ca3af" />
+            <text x={xToPx(q)} y={H - 1} fontSize={8} textAnchor="middle" fill="#6b7280">{q}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
 }
