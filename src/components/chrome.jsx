@@ -16,7 +16,7 @@ import {
 import { Pill, ToolButton } from "./primitives.jsx";
 import { UploadButton } from "./drop_zone.jsx";
 
-export function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp, onOpenDnaDiagrams, darkMode, setDarkMode }) {
+export function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenReport, palette, setPalette, onDownloadCsv, onCopyLink, onOpenHelp, onOpenDnaDiagrams, onOpenExportStudio, darkMode, setDarkMode }) {
   return (
     <header className="h-12 flex items-center gap-4 px-4 bg-zinc-950 text-zinc-100 border-b border-zinc-800 no-print">
       <div className="flex items-center gap-2.5">
@@ -69,6 +69,16 @@ export function Toolbar({ sampleCount, onUpload, onResetCalibration, onOpenRepor
         <ToolButton icon={ExternalLink} variant="dark" title="Copy a shareable URL that restores the current view (sample, zoom, channels, palette, pairing) on another machine" onClick={onCopyLink}>
           Link
         </ToolButton>
+        {onOpenExportStudio && (
+          <ToolButton
+            icon={FileDown}
+            variant="dark"
+            title="Open the Export panel — single-pane-of-glass for CSV / Report / DNA diagrams / shareable URL exports"
+            onClick={onOpenExportStudio}
+          >
+            Export…
+          </ToolButton>
+        )}
         <ToolButton
           icon={darkMode ? Sun : Moon}
           variant="dark"

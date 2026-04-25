@@ -101,6 +101,7 @@ export { LabInventoryBadge, LabInventoryPanel };
 import PrintStyles from "./components/print_styles.jsx";
 import KeyboardHelpModal from "./components/keyboard_help_modal.jsx";
 import { FirstRunTour, shouldShowTour } from "./components/first_run_tour.jsx";
+import { ExportStudioModal } from "./components/export_studio_modal.jsx";
 
 import { DropOverlay, UploadButton } from "./components/drop_zone.jsx";
 export { DropOverlay, UploadButton };
@@ -340,6 +341,7 @@ export default function FragmentViewer() {
     if (shouldShowTour()) setTourOpen(true);
   }, []);
   const [dnaOpen, setDnaOpen] = useState(false);
+  const [exportStudioOpen, setExportStudioOpen] = useState(false);
   // Brief toast surfaced by Toolbar actions (link copied, CSV downloaded).
   const [toast, setToast] = useState(null);
   useEffect(() => {
@@ -448,6 +450,7 @@ export default function FragmentViewer() {
         onResetCalibration={() => setDyeOffsets({ B: 0, G: 0, Y: 0, R: 0 })}
         onOpenReport={() => setReportOpen(true)}
         onOpenDnaDiagrams={() => setDnaOpen(true)}
+        onOpenExportStudio={() => setExportStudioOpen(true)}
         palette={palette}
         setPalette={setPalette}
         onDownloadCsv={handleDownloadCsv}
@@ -455,6 +458,16 @@ export default function FragmentViewer() {
         onOpenHelp={() => setHelpOpen(true)}
         darkMode={darkMode}
         setDarkMode={setDarkMode}
+      />
+      <ExportStudioModal
+        open={exportStudioOpen}
+        onClose={() => setExportStudioOpen(false)}
+        onDownloadCsv={handleDownloadCsv}
+        onOpenReport={() => setReportOpen(true)}
+        onOpenDnaDiagrams={() => setDnaOpen(true)}
+        onCopyLink={handleCopyLink}
+        sampleCount={samples.length}
+        hasUserData={dataKey > 0}
       />
       <DNADiagramsModal
         open={dnaOpen}
