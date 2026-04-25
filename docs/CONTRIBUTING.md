@@ -42,6 +42,18 @@ npm run dev
 
 Open the printed `localhost` URL. Hot reload is on.
 
+### Windows: rollup native binary
+
+If `npm run dev` or `npm test` fails on Windows with `Cannot find module @rollup/rollup-win32-x64-msvc`, you've hit [npm/cli#4828](https://github.com/npm/cli/issues/4828) — npm's optional platform-specific deps don't always install correctly when `package-lock.json` was generated on a different OS. One-line fix:
+
+```bash
+npm install --no-save @rollup/rollup-win32-x64-msvc
+```
+
+This installs the missing native binary without modifying `package-lock.json`. Run it once after a fresh clone or `rm -rf node_modules`; you don't need to re-run on every `npm install`.
+
+A more permanent fix is to migrate the project to [bun](https://bun.sh), which doesn't have this bug. That migration is tracked as a follow-up — it touches the GitHub Actions workflow and the Pages deploy, so it warrants a focused PR with a real CI run.
+
 To preview the production build:
 
 ```bash
