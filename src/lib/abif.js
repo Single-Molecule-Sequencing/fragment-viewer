@@ -101,7 +101,12 @@ export function parseAbifBuffer(arrayBuffer) {
         value = new Array(numElements);
         for (let j = 0; j < numElements; j++) value[j] = view.getFloat32(offset + j * 4, false);
       } else if (elemType === 1) {
-        value = view.getUint8(offset);
+        // Single byte → scalar; multi-byte → Uint8Array (e.g., PCON Q-scores).
+        if (numElements <= 1) {
+          value = view.getUint8(offset);
+        } else {
+          value = new Uint8Array(arrayBuffer, offset, numElements);
+        }
       } else if (elemType === 3) {
         value = view.getUint16(offset, false);
       }
@@ -221,4 +226,81 @@ export function parseFsaArrayBuffer(arrayBuffer, fileName = "sample") {
     calibration_anchors: interp ? GS500LIZ_SIZES.length : 0,
   };
   return { sampleName: stem, peaks, meta, calibrated: !!interp, traces, bpAxis };
+}
+
+
+// ----------------------------------------------------------------------
+// Sanger ABIF (.ab1) ingestion
+// ----------------------------------------------------------------------
+//
+// Sanger reads carry a different tag set than CE fragment-analysis runs:
+//   PBAS1   — basecall string (one ASCII char per call: A/C/G/T/N)
+//   PCON1   — Phred-style per-base quality scores (Uint8Array, one per base)
+//   PLOC1/2 — basecall locations (data-point index per base; Int16 array)
+//   DATA9   — analyzed channel for the base assigned the dye index 1 (G usually)
+//   DATA10  — channel 2 (A usually)
+//   DATA11  — channel 3 (T usually)
+//   DATA12  — channel 4 (C usually)
+//   DyeN1..N4 — dye chemistry name strings
+//   FWO_1   — base order ("ACGT" or "GATC" etc.) — maps DATA9..12 → A/C/G/T
+//
+// The Sanger trace channels overlap raw DATA1..4 (the same instrument), but
+// DATA9..12 are the *analyzed* (basecaller-input) traces that align with PLOC.
+// We expose both the raw 4-channel traces and basecalls + Q-scores so the
+// viewer can render a chromatogram aligned with basecall labels.
+
+export function parseSangerAbif(arrayBuffer, fileName = "sample") {
+  const { entries, version } = parseAbifBuffer(arrayBuffer);
+  const get = (k) => entries[k]?.value;
+
+  const basecalls = (get("PBAS1") || "").toUpperCase();
+  const qRaw = get("PCON1");
+  const qScores = qRaw instanceof Uint8Array
+    ? Array.from(qRaw)
+    : (typeof qRaw === "number" ? [qRaw] : []);
+  const peakLocsRaw = get("PLOC2") || get("PLOC1") || [];
+  const peakLocations = Array.isArray(peakLocsRaw) ? peakLocsRaw.slice() : [];
+
+  // Base order. Default ACGT if missing.
+  const fwoStr = get("FWO_1") || "ACGT";
+  const baseOrder = fwoStr.slice(0, 4).toUpperCase().split("");
+
+  // Map analyzed-trace channels (DATA9..12) onto A/C/G/T via baseOrder.
+  const traces = { A: null, C: null, G: null, T: null };
+  for (let i = 0; i < 4; i++) {
+    const t = get(`DATA${9 + i}`);
+    const base = baseOrder[i];
+    if (t && (base === "A" || base === "C" || base === "G" || base === "T")) {
+      traces[base] = t;
+    }
+  }
+
+  // Length sanity: aligned channels should all match.
+  const traceLength = traces.A?.length || traces.C?.length
+    || traces.G?.length || traces.T?.length || 0;
+
+  const stem = fileName.replace(/\.[Aa][Bb]1$/, "").replace(/\.[Ff][Ss][Aa]$/, "")
+    .replace(/^.*[\\/]/, "");
+
+  const meta = {
+    abifVersion: version,
+    instrument_model: get("MODL1") || "",
+    dye_chemistry: [1, 2, 3, 4, 5].map(i => get(`DyeN${i}`) || "").filter(Boolean),
+    well: get("TUBE1") || "",
+    container_id: get("CTNM1") || "",
+    base_order: fwoStr,
+    n_basecalls: basecalls.length,
+    n_quality_scores: qScores.length,
+    trace_length: traceLength,
+  };
+
+  return {
+    sampleName: stem,
+    basecalls,
+    qScores,
+    peakLocations,
+    traces,
+    baseOrder,
+    meta,
+  };
 }

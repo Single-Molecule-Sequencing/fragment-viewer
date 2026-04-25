@@ -94,6 +94,7 @@ export function Sidebar({ tab, setTab }) {
     { id: "autoclass", label: "Auto Classify",     icon: Layers,     hint: "Cluster and identify peaks across all dyes" },
     { id: "compare",   label: "Cross-Sample",      icon: GitCompare, hint: "Overhang offsets and purity grid" },
     { id: "heatmap",   label: "Batch Heatmap",     icon: Database,   hint: "Sample × species heatmap · 96-well-plate view" },
+    { id: "sanger",    label: "Sanger",            icon: Microscope, hint: "Sanger .ab1 chromatogram + alignment vs .dna reference" },
   ];
   return (
     <nav className="w-52 shrink-0 bg-white border-r border-zinc-200 flex flex-col no-print">
