@@ -8,6 +8,35 @@ The format is loosely [Keep a Changelog](https://keepachangelog.com/). This proj
 
 (Empty.)
 
+## v0.30.0 — 2026-04-25
+
+### Added
+
+- **Sanger viewer** as the seventh tab (gh#26). Drag-drop `.ab1` Sanger chromatograms; drag-drop a SnapGene `.dna` (or paste FASTA) for the reference; SVG chromatogram with 4-channel trace, basecall labels (when n_bases ≤ 250), Q-score line, Mott Q-trim shading, mismatch highlight bars; alignment stats (identity, matches, mismatches, gaps, trim ranges); mismatch table with kind pills; CSV + SVG export. Self-contained: own drag-drop, sample list, chromatogram canvas; doesn't share `DATA.peaks` with the CE tabs.
+- **`src/lib/snapgene.js`** (gh#25): pure-JS SnapGene `.dna` reader. Mirror of `golden-gate/lib/qc/snapgene.py`. Surfaces sequence, topology byte (preserves methylation flags), `isCircular`, and a flattened array of feature segments. SnapGene 1-based-inclusive ranges convert to 0-based-exclusive end so cross-language tests compare field-equivalent.
+- **`src/lib/sanger.js`** (gh#26): Mott Q-trim, Smith-Waterman local alignment with affine gaps (defaults match Biopython `PairwiseAligner` local mode used by the Python pipeline), mismatch enumeration, one-shot `scoreSangerVsReference`. ~230 lines, no deps.
+- **`parseSangerAbif()`** in `src/lib/abif.js` (gh#26): extracts PBAS basecalls, PCON Q-scores, PLOC peak locations, DATA9–12 (analyzed channels), FWO_1 base-order map. Companion to the existing `parseFsaArrayBuffer` for CE traces.
+- **Runtime-fetched gRNA catalog** at `public/grna_catalog.json` (gh#27). Replaces the JS-literal `LAB_GRNA_CATALOG`. Lab edits ship without a viewer rebuild — once a PR to that file merges, the next visitor sees the new entry on first load. Embedded baseline in `src/lib/grna_catalog.js` stays as offline / test fallback. New helpers: `validateCatalogShape`, `setGrnaCatalog`, `loadGrnaCatalog` (fail-soft: fetch failures log a console reason and preserve the baseline).
+- **Cross-tool URL deep-link params** (gh#28): `?tab=trace|peakid|cutpred|autoclass|compare|heatmap|sanger`, `?ref=<url>` (SnapGene `.dna` URL fetched + parsed by SangerTab), `?sample=<id>` (focuses a sample). Validation in `parseUrlParams`: only known tab names accepted; only `http`/`https`/path refs; non-http schemes rejected. `buildViewerUrl(base, opts)` is the producer-side helper; mirrored in `golden-gate/lib/qc/viewer_links.py` so PDF QC reports can deep-link into specific viewer states.
+- **First-run tour** (gh#29): five-step dismissible overlay shown on first visit. Replay accessible from the Keyboard Help modal. localStorage-gated; bumping `TOUR_VERSION` re-shows to existing users when content changes meaningfully.
+- **Export Studio** (gh#30): single discoverable "Export…" toolbar button → modal that aggregates CSV / Report / DNA diagrams / shareable URL with descriptions of what each export contains. Strictly additive — every existing toolbar button keeps working unchanged.
+
+### Fixed
+
+- **`src/lib/abif.js` `elemType=1`** scalar-vs-array bug: was reading a single byte regardless of `numElements`, which silently dropped multi-byte arrays like PCON Q-scores. Now returns a `Uint8Array` when `numElements > 1`. Strict superset of prior behavior; all CE-trace fixtures still pass.
+- **`scripts/regen_scaffold.py`** uses explicit UTF-8 for read + write. Default text encoding on Windows is cp1252, which raised `UnicodeDecodeError` on em-dashes in the JSX. CI on Linux never hit it; one-line fix benefits local Windows runs.
+
+### Documentation
+
+- **`docs/ARCHITECTURE.md`** §1: tab count from six → seven; describes the Sanger tab's scope and shared lib reuse (`abif.js`, `snapgene.js`, `sanger.js`).
+- **`docs/GRNA_CATALOG.md`**: edit instructions reflect the JSON-as-source-of-truth convention; documents the silent-fallback console message.
+- **`docs/CONTRIBUTING.md`** §3: Windows rollup-native one-line workaround documented (gh#31). Notes that full bun migration is a tracked follow-up.
+- **`README.md`**: version drift fix (v0.22.0 → v0.30.0); dropped stale "139 tests passing" claim in favor of CI reporting the current count.
+
+### Tests
+
+- 211 vitest cases at the tip of the stack (was 168 on v0.29.0). New suites: `snapgene.test.mjs` (8), `sanger.test.mjs` (14), `grna_catalog_runtime.test.mjs` (11), `url_params.test.mjs` (16), `first_run_tour.test.mjs` (5). No prior tests touched.
+
 ## v0.7.0 — 2026-04-18
 
 ### Added
