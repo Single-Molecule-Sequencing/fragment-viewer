@@ -46,9 +46,11 @@ export {
 };
 import {
   buildPeakTableCSV, encodeViewState, decodeViewState,
+  parseUrlParams, buildViewerUrl,
 } from "./lib/viewstate.js";
 export {
   buildPeakTableCSV, encodeViewState, decodeViewState,
+  parseUrlParams, buildViewerUrl,
 };
 import {
   parseGenemapperTSV, parseAbifBuffer, calibrateLizJs,
@@ -250,7 +252,14 @@ export default function FragmentViewer() {
   }, []);
 
   const samples = useMemo(() => Object.keys(DATA.peaks).sort(), [dataKey]);
-  const [tab, setTab] = useState("trace");   // "trace" | "peakid" | "cutpred" | "autoclass" | "compare" | "heatmap" | "sanger"
+
+  // Cross-tool URL params (?tab=, ?ref=, ?sample=). Parsed once on mount;
+  // ?tab= sets the initial tab; ?ref / ?sample are forwarded to SangerTab.
+  const initialUrlParams = useMemo(() => {
+    if (typeof window === "undefined") return {};
+    return parseUrlParams(window.location.search);
+  }, []);
+  const [tab, setTab] = useState(initialUrlParams.tab || "trace");   // "trace" | "peakid" | "cutpred" | "autoclass" | "compare" | "heatmap" | "sanger"
 
   // Persistent per-sample config
   const [cfg, setCfg] = useState(() => computeAutoDefaults(DATA.peaks));
@@ -457,7 +466,7 @@ export default function FragmentViewer() {
             {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
             {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} />}
             {tab === "heatmap" && <HeatmapTab samples={samples} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} palette={palette} />}
-            {tab === "sanger"  && <SangerTab />}
+            {tab === "sanger"  && <SangerTab initialRefUrl={initialUrlParams.ref} initialActiveSample={initialUrlParams.sample} />}
           </div>
         </main>
       </div>
