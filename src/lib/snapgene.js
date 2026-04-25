@@ -199,7 +199,132 @@ function parseAttrs(s) {
   let m;
   ATTR_RE.lastIndex = 0;
   while ((m = ATTR_RE.exec(s)) !== null) {
-    out[m[1]] = m[2];
+    out[m[1]] = xmlUnescape(m[2]);
   }
   return out;
+}
+
+// Decode the small set of XML entities used by SnapGene feature attributes.
+// Numeric entities aren't currently emitted in feature names by the writer,
+// but tolerate them on read so externally-authored .dna files don't trip.
+function xmlUnescape(s) {
+  return String(s)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_m, d) => String.fromCharCode(parseInt(d, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&amp;/g, "&"); // last so we don't double-decode
+}
+
+
+// ----------------------------------------------------------------------
+// SnapGene .dna writer (round-trip companion to parseSnapgene)
+// ----------------------------------------------------------------------
+//
+// Produces a minimal .dna byte stream that SnapGene 4.x+ opens as a valid
+// file. We write only three segments — cookie (0x09), sequence (0x00),
+// features (0x0A) — which is what every consumer of our pipeline needs
+// (primers, notes, enzymes are not currently emitted; SnapGene fills in
+// reasonable defaults if missing).
+//
+// API:
+//   writeSnapgene({sequence, isCircular?, topologyByte?, features?}) -> Uint8Array
+//
+// `topologyByte` overrides the topology-from-isCircular default and lets
+// callers preserve methylation flags read out of an existing .dna file.
+
+const COOKIE_PAYLOAD = strToBytes("SnapGene\x00\x01\x00\x0f\x00\x14");
+
+export function writeSnapgene({
+  sequence,
+  isCircular = false,
+  topologyByte,
+  features = [],
+} = {}) {
+  if (typeof sequence !== "string") {
+    throw new TypeError("writeSnapgene: sequence (string) required");
+  }
+
+  const cookie = makeSegmentBytes(SEGMENT_COOKIE, COOKIE_PAYLOAD);
+
+  const topology = topologyByte != null ? topologyByte : (isCircular ? 0x01 : 0x00);
+  const seqBytes = strToBytes(sequence.toUpperCase());
+  const seqPayload = new Uint8Array(1 + seqBytes.length);
+  seqPayload[0] = topology;
+  seqPayload.set(seqBytes, 1);
+  const seqSeg = makeSegmentBytes(SEGMENT_SEQUENCE, seqPayload);
+
+  const segments = [cookie, seqSeg];
+  if (features.length > 0) {
+    const xml = featuresToXml(features);
+    segments.push(makeSegmentBytes(SEGMENT_FEATURES, strToBytes(xml)));
+  }
+  return concatBytes(segments);
+}
+
+function makeSegmentBytes(id, payload) {
+  const out = new Uint8Array(5 + payload.length);
+  out[0] = id;
+  // Big-endian length prefix.
+  new DataView(out.buffer, out.byteOffset).setUint32(1, payload.length, false);
+  out.set(payload, 5);
+  return out;
+}
+
+function concatBytes(arrs) {
+  const total = arrs.reduce((n, a) => n + a.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const a of arrs) {
+    out.set(a, off);
+    off += a.length;
+  }
+  return out;
+}
+
+function strToBytes(s) {
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(s);
+  }
+  const buf = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) buf[i] = s.charCodeAt(i) & 0xff;
+  return buf;
+}
+
+// XML escape for feature name/type/color. Coordinates are integers, so safe.
+function xmlEscape(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function featuresToXml(features) {
+  // Group consecutive features by name+type+strand+color into one <Feature>
+  // with multiple <Segment range="..."> entries — that's how SnapGene
+  // represents multi-segment features (e.g., a CDS split by an intron).
+  // For our use case we emit one <Feature> per record because the records
+  // come back from parseSnapgene already flattened per-segment, and that's
+  // the simplest output that opens correctly in SnapGene.
+  const parts = [`<Features nextValidID="${features.length}">`];
+  for (let i = 0; i < features.length; i++) {
+    const f = features[i];
+    // Convert 0-based-exclusive end → 1-based-inclusive (SnapGene convention).
+    const start1 = (f.start | 0) + 1;
+    const end1 = (f.end | 0);
+    const direction = f.strand > 0 ? "1" : f.strand < 0 ? "2" : "0";
+    parts.push(
+      `<Feature recentID="${i}" name="${xmlEscape(f.name || "feature")}" `
+      + `type="${xmlEscape(f.feature_type || f.type || "misc_feature")}" `
+      + `directionality="${direction}" allowSegmentOverlaps="0" consecutiveTranslationNumbering="1">`
+      + `<Segments><Segment range="${start1}-${end1}" `
+      + `color="${xmlEscape(f.color || "#a6acaf")}" type="standard"/></Segments>`
+      + `</Feature>`
+    );
+  }
+  parts.push("</Features>");
+  return parts.join("");
 }
