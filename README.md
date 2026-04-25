@@ -164,7 +164,7 @@ Edit `src/FragmentViewer.jsx`, find `LAB_GRNA_CATALOG`, append your entry. See `
 
 ## Status
 
-Public, client-only, hosted free on GitHub Pages. Current version: **v0.22.0** (April 2026). 139 tests passing. All figures publication-ready at 4×–8× raster resolution, native SVG export for Illustrator editing.
+Public, client-only, hosted free on GitHub Pages. Current version: **v0.29.0** (April 2026). All figures publication-ready at 4×–8× raster resolution, native SVG export for Illustrator editing.
 
 ---
 
