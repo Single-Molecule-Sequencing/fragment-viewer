@@ -22,7 +22,9 @@ def main() -> int:
     if not VIEWER.exists():
         print(f"[regen] {VIEWER} not found", file=sys.stderr)
         return 1
-    src = VIEWER.read_text()
+    # Explicit UTF-8: the JSX has em-dashes; Python's default encoding on
+    # Windows is cp1252 and raises UnicodeDecodeError on those bytes.
+    src = VIEWER.read_text(encoding="utf-8")
     lines = src.splitlines(keepends=True)
     data_idx = next(
         (i for i, line in enumerate(lines)
@@ -36,7 +38,7 @@ def main() -> int:
         return 2
     prefix = lines[data_idx].split("=", 1)[0].rstrip() + " = "
     lines[data_idx] = f"{prefix}__DATA__;\n"
-    SCAFFOLD.write_text("".join(lines))
+    SCAFFOLD.write_text("".join(lines), encoding="utf-8")
     print(f"[regen] Wrote {SCAFFOLD} ({SCAFFOLD.stat().st_size} bytes); DATA at line {data_idx + 1}")
     return 0
 
