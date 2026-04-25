@@ -124,9 +124,10 @@ import { CutPredictionTab, OverhangChart } from "./tabs/cut_prediction_tab.jsx";
 import { AutoClassifyTab } from "./tabs/auto_classify_tab.jsx";
 import { PeakIdTab, PeakSpeciesPopover, SampleSummaryCard } from "./tabs/peak_id_tab.jsx";
 import { TraceTab } from "./tabs/trace_tab.jsx";
+import { SangerTab } from "./tabs/sanger_tab.jsx";
 export {
   HeatmapTab, CompareTab, CutPredictionTab, OverhangChart, AutoClassifyTab,
-  PeakIdTab, PeakSpeciesPopover, SampleSummaryCard, TraceTab,
+  PeakIdTab, PeakSpeciesPopover, SampleSummaryCard, TraceTab, SangerTab,
 };
 
 
@@ -270,7 +271,7 @@ export default function FragmentViewer() {
   }, []);
 
   const samples = useMemo(() => Object.keys(DATA.peaks).sort(), [dataKey]);
-  const [tab, setTab] = useState("trace");   // "trace" | "peakid" | "cutpred" | "autoclass" | "compare" | "heatmap"
+  const [tab, setTab] = useState("trace");   // "trace" | "peakid" | "cutpred" | "autoclass" | "compare" | "heatmap" | "sanger"
 
   // Persistent per-sample config
   const [cfg, setCfg] = useState(() => computeAutoDefaults(DATA.peaks));
@@ -477,6 +478,7 @@ export default function FragmentViewer() {
             {tab === "autoclass" && <AutoClassifyTab samples={samples} componentSizes={componentSizes} dyeOffsets={dyeOffsets} setDyeOffsets={setDyeOffsets} setDyeOffset={setDyeOffset} constructSeq={constructSeq} setConstructSeq={setConstructSeq} targetStart={targetStart} setTargetStart={setTargetStart} targetEnd={targetEnd} setTargetEnd={setTargetEnd} />}
             {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} />}
             {tab === "heatmap" && <HeatmapTab samples={samples} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} palette={palette} />}
+            {tab === "sanger"  && <SangerTab />}
           </div>
         </main>
       </div>

@@ -55,9 +55,11 @@ fragment-viewer/
     └── validate.yml                   CI: jsx parse, biology sync, python syntax, ruff, ingest test
 ```
 
-## 2. The six tabs (in `src/FragmentViewer.jsx`)
+## 2. The seven tabs (in `src/FragmentViewer.jsx`)
 
 Tabs are conditionally rendered from a single `tab` state variable. Each tab is a sub-section of the main `FragmentViewer` component. To find a tab component in the source, grep the function definition rather than relying on line numbers — the file is ~9500 lines and the positions drift with every release.
+
+Six tabs are CE-fragment-analysis tabs (Electropherogram, Peak ID, Cut Prediction, Auto Classify, Cross-Sample, Batch Heatmap). The seventh tab — **Sanger** — is the lab's `.ab1` Sanger-sequencing chromatogram + alignment-to-reference QC viewer. It shares the lab's tooling primitives (`src/lib/abif.js` for ABIF parsing, `src/lib/snapgene.js` for `.dna` reference ingestion, `src/lib/sanger.js` for Mott Q-trim + local alignment) but is otherwise self-contained: its own drag-drop, sample list, chromatogram canvas, and mismatch table. The Sanger tab's analytics mirror golden-gate's Python QC pipeline (`golden-gate/lib/qc/sanger.py`) so the same input pair produces the same identity number across the two tools.
 
 | Tab | Component | Navigate with | Primary functions used |
 |---|---|---|---|
