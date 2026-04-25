@@ -7,7 +7,7 @@
 import { useEffect } from "react";
 import { ToolButton } from "./primitives.jsx";
 
-function KeyboardHelpModal({ open, onClose }) {
+function KeyboardHelpModal({ open, onClose, onShowTour }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
@@ -73,6 +73,16 @@ function KeyboardHelpModal({ open, onClose }) {
           <p className="text-[11px] text-zinc-500 pt-2 border-t border-zinc-100">
             Shortcuts are ignored when typing in an input, select, or textarea.
           </p>
+          {onShowTour && (
+            <div className="pt-2 border-t border-zinc-100">
+              <button
+                onClick={() => { onClose(); onShowTour(); }}
+                className="text-xs text-indigo-700 hover:text-indigo-900 hover:underline"
+              >
+                Replay first-run tour →
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
