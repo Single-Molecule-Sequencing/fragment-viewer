@@ -100,6 +100,7 @@ import { LabInventoryBadge, LabInventoryPanel } from "./components/lab_inventory
 export { LabInventoryBadge, LabInventoryPanel };
 import PrintStyles from "./components/print_styles.jsx";
 import KeyboardHelpModal from "./components/keyboard_help_modal.jsx";
+import { FirstRunTour, shouldShowTour } from "./components/first_run_tour.jsx";
 
 import { DropOverlay, UploadButton } from "./components/drop_zone.jsx";
 export { DropOverlay, UploadButton };
@@ -332,6 +333,12 @@ export default function FragmentViewer() {
 
   const [reportOpen, setReportOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  // Auto-open the tour on first ever visit. localStorage-gated; explicit
+  // dismiss / "Get started" sets the seen flag so this only fires once.
+  useEffect(() => {
+    if (shouldShowTour()) setTourOpen(true);
+  }, []);
   const [dnaOpen, setDnaOpen] = useState(false);
   // Brief toast surfaced by Toolbar actions (link copied, CSV downloaded).
   const [toast, setToast] = useState(null);
@@ -463,7 +470,12 @@ export default function FragmentViewer() {
           <span>{toast.text}</span>
         </div>
       )}
-      <KeyboardHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <KeyboardHelpModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onShowTour={() => setTourOpen(true)}
+      />
+      <FirstRunTour open={tourOpen} onClose={() => setTourOpen(false)} />
       <ReportModal
         open={reportOpen}
         onClose={() => setReportOpen(false)}
