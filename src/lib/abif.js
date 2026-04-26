@@ -249,6 +249,79 @@ export function parseFsaArrayBuffer(arrayBuffer, fileName = "sample") {
 // We expose both the raw 4-channel traces and basecalls + Q-scores so the
 // viewer can render a chromatogram aligned with basecall labels.
 
+// Parse a .phd.1 Phred-format basecall companion file (text). Some Sanger
+// services emit .phd.1 alongside .ab1; this lets the viewer ingest a
+// .phd.1 alone when no .ab1 is available. Output shape matches
+// parseSangerAbif's, but traces are empty (chromatogram won't render —
+// alignment + Q-based analyses still work).
+//
+// Format (Phred-style):
+//   BEGIN_SEQUENCE <name>
+//   BEGIN_COMMENT
+//   ... metadata key: value ...
+//   END_COMMENT
+//   BEGIN_DNA
+//   <base> <q-score> <peak-position>
+//   ... one per base ...
+//   END_DNA
+//   END_SEQUENCE
+
+export function parsePhd1(text, fileName = "sample") {
+  const lines = text.split(/\r?\n/);
+  const meta = {};
+  const basecalls = [];
+  const qScores = [];
+  const peakLocations = [];
+  let inComment = false;
+  let inDna = false;
+  let sampleName = fileName.replace(/\.phd\.1$/i, "").replace(/^.*[\\/]/, "");
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("BEGIN_SEQUENCE")) {
+      const parts = line.split(/\s+/);
+      if (parts[1]) sampleName = parts[1];
+      continue;
+    }
+    if (line === "BEGIN_COMMENT") { inComment = true; continue; }
+    if (line === "END_COMMENT") { inComment = false; continue; }
+    if (line === "BEGIN_DNA") { inDna = true; continue; }
+    if (line === "END_DNA") { inDna = false; continue; }
+    if (inComment) {
+      const ix = line.indexOf(":");
+      if (ix > 0) meta[line.slice(0, ix).trim()] = line.slice(ix + 1).trim();
+      continue;
+    }
+    if (inDna) {
+      const parts = line.split(/\s+/);
+      if (parts.length >= 2) {
+        const base = parts[0].toUpperCase();
+        const q = parseInt(parts[1], 10);
+        const pl = parts[2] ? parseInt(parts[2], 10) : -1;
+        basecalls.push(base);
+        qScores.push(Number.isFinite(q) ? q : 0);
+        peakLocations.push(Number.isFinite(pl) ? pl : -1);
+      }
+    }
+  }
+  return {
+    sampleName,
+    basecalls: basecalls.join(""),
+    qScores,
+    peakLocations,
+    traces: { A: null, C: null, G: null, T: null },  // no trace data in .phd.1
+    baseOrder: ["A", "C", "G", "T"],
+    meta: {
+      ...meta,
+      source_format: "phd.1",
+      n_basecalls: basecalls.length,
+      n_quality_scores: qScores.length,
+      trace_length: 0,
+    },
+  };
+}
+
+
 export function parseSangerAbif(arrayBuffer, fileName = "sample") {
   const { entries, version } = parseAbifBuffer(arrayBuffer);
   const get = (k) => entries[k]?.value;
