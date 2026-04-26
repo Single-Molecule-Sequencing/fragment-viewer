@@ -22,7 +22,7 @@ import {
   Upload, FileDown, AlertTriangle, CheckCircle2, Microscope,
 } from "lucide-react";
 
-import { parseSangerAbif } from "../lib/abif.js";
+import { parseSangerAbif, parsePhd1 } from "../lib/abif.js";
 import { parseSnapgene, writeSnapgene } from "../lib/snapgene.js";
 import {
   mottTrim,
@@ -137,6 +137,15 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
         }
         setSamples(prev => ({ ...prev, [parsed.sampleName]: parsed }));
         setActive(prev => prev ?? parsed.sampleName);
+      } else if (lower.endsWith(".phd.1") || lower.endsWith(".phd")) {
+        const text = new TextDecoder().decode(buf);
+        const parsed = parsePhd1(text, file.name);
+        if (!parsed.basecalls) {
+          setError(`${file.name}: no basecalls parsed. Is this a Phred .phd.1?`);
+          return;
+        }
+        setSamples(prev => ({ ...prev, [parsed.sampleName]: parsed }));
+        setActive(prev => prev ?? parsed.sampleName);
       } else if (lower.endsWith(".dna")) {
         const sg = parseSnapgene(buf);
         setReference(sg.sequence);
@@ -149,7 +158,7 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
         setReference(seq);
         setReferenceLabel(`${file.name} (${seq.length} bp)`);
       } else {
-        setError(`${file.name}: unsupported. Drop .ab1, .scf, .dna, .fasta.`);
+        setError(`${file.name}: unsupported. Drop .ab1, .scf, .phd.1, .dna, .fasta.`);
       }
     } catch (e) {
       setError(`${file.name}: ${e.message || e}`);
@@ -406,7 +415,7 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".ab1,.scf,.fsa,.dna,.fasta,.fa,.fna"
+          accept=".ab1,.scf,.fsa,.phd,.phd.1,.dna,.fasta,.fa,.fna"
           onChange={onUploadInput}
           className="hidden"
         />
