@@ -18,7 +18,8 @@
 // viewer dependency-free of golden-gate's build state.
 
 import { useState, useMemo, useEffect } from "react";
-import { Database, RefreshCw, AlertTriangle, ExternalLink, Search } from "lucide-react";
+import { Database, RefreshCw, AlertTriangle, ExternalLink, Search, Dna } from "lucide-react";
+import { searchPrimersBySequence, annotateHitsWithConstructs } from "../lib/registry_sequence_search.js";
 
 // Canonical URL of the registry index. Fetched at runtime; falls back to
 // the local dev path when running against a built fragment-viewer that
@@ -41,7 +42,9 @@ export function LabRegistryTab() {
   const [registry, setRegistry] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [searchMode, setSearchMode] = useState("name"); // "name" | "sequence"
   const [search, setSearch] = useState("");
+  const [seqQuery, setSeqQuery] = useState("");
   const [activeId, setActiveId] = useState(null);
 
   const load = async () => {
@@ -73,8 +76,26 @@ export function LabRegistryTab() {
     return m;
   }, [runs]);
 
-  // Filter by search query (matches id, aliases, project, status, gene).
+  // Sequence-search hits (only computed in sequence mode).
+  const seqHits = useMemo(() => {
+    if (searchMode !== "sequence") return [];
+    const raw = searchPrimersBySequence(seqQuery, primers);
+    return annotateHitsWithConstructs(raw, primerSets, constructs);
+  }, [searchMode, seqQuery, primers, primerSets, constructs]);
+
+  const sequenceMatchedConstructIds = useMemo(() => {
+    if (searchMode !== "sequence") return null;
+    return new Set(seqHits.flatMap(h => h.linkedConstructIds));
+  }, [searchMode, seqHits]);
+
+  // Filter by search query.
+  // - name mode: matches id, aliases, project, status, gene (the original behavior).
+  // - sequence mode: shows only constructs linked to the sequence-search hits.
   const visible = useMemo(() => {
+    if (searchMode === "sequence") {
+      if (!seqQuery.trim()) return constructs;
+      return constructs.filter(c => sequenceMatchedConstructIds?.has(c.id));
+    }
     if (!search.trim()) return constructs;
     const q = search.trim().toLowerCase();
     return constructs.filter(c => {
@@ -84,7 +105,7 @@ export function LabRegistryTab() {
       ].filter(Boolean).map(x => String(x).toLowerCase()).join(" ");
       return haystack.includes(q);
     });
-  }, [constructs, search]);
+  }, [searchMode, constructs, search, seqQuery, sequenceMatchedConstructIds]);
 
   const active = useMemo(
     () => activeId ? constructs.find(c => c.id === activeId) : null,
@@ -104,7 +125,20 @@ export function LabRegistryTab() {
       {registry && (
         <div className="grid grid-cols-12 gap-4">
           <div className="col-span-7 space-y-3">
-            <SearchBar value={search} onChange={setSearch} count={visible.length} total={constructs.length} />
+            <SearchModeToggle mode={searchMode} onChange={setSearchMode} />
+            {searchMode === "name" ? (
+              <SearchBar value={search} onChange={setSearch} count={visible.length} total={constructs.length} />
+            ) : (
+              <SequenceSearchBar
+                value={seqQuery}
+                onChange={setSeqQuery}
+                hitCount={seqHits.length}
+                primerCount={primers.length}
+              />
+            )}
+            {searchMode === "sequence" && seqQuery.trim() && (
+              <SequenceHitsPanel hits={seqHits} onPickConstruct={setActiveId} />
+            )}
             <ConstructTable
               constructs={visible}
               runsByConstruct={runsByConstruct}
@@ -222,6 +256,118 @@ function SearchBar({ value, onChange, count, total }) {
         className="flex-1 text-sm outline-none bg-transparent"
       />
       <span className="text-[10px] text-zinc-500 font-mono">{count}/{total}</span>
+    </div>
+  );
+}
+
+
+function SearchModeToggle({ mode, onChange }) {
+  const Btn = ({ value, label, icon: Icon }) => (
+    <button
+      onClick={() => onChange(value)}
+      className={`px-2.5 py-1 text-xs flex items-center gap-1 rounded ${
+        mode === value
+          ? "bg-indigo-600 text-white"
+          : "bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50"
+      }`}
+    >
+      <Icon size={12} />
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex items-center gap-2">
+      <Btn value="name" label="Search by name" icon={Search} />
+      <Btn value="sequence" label="Search by sequence" icon={Dna} />
+    </div>
+  );
+}
+
+
+function SequenceSearchBar({ value, onChange, hitCount, primerCount }) {
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white">
+      <div className="flex items-start gap-2 px-3 py-2">
+        <Dna size={14} className="text-zinc-400 mt-0.5" />
+        <textarea
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="Paste DNA (>=8 nt). Searches all primers in either orientation; finds exact, query-in-primer, and primer-in-query hits."
+          rows={2}
+          className="flex-1 text-xs font-mono outline-none bg-transparent resize-y"
+        />
+        <span className="text-[10px] text-zinc-500 font-mono mt-0.5">
+          {hitCount}/{primerCount}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+function SequenceHitsPanel({ hits, onPickConstruct }) {
+  if (hits.length === 0) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        No primer matches the query. The query is searched in both orientations against
+        every primer's full sequence; matches must be substrings (no mismatches).
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white">
+      <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500 border-b border-zinc-100">
+        Primer hits ({hits.length})
+      </div>
+      <div className="max-h-60 overflow-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+            <tr>
+              <Th>Primer</Th>
+              <Th>Match</Th>
+              <Th>Orient</Th>
+              <Th>Linked constructs</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {hits.map(h => (
+              <tr key={h.primer.id} className="border-t border-zinc-100 align-top">
+                <Td>
+                  <div className="font-mono">{h.primer.id}</div>
+                  <div className="font-mono text-[10px] text-zinc-500 break-all">{h.primer.sequence}</div>
+                </Td>
+                <Td>
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${
+                    h.kind === "exact" ? "bg-emerald-100 text-emerald-800"
+                    : h.kind === "query-in-primer" ? "bg-sky-100 text-sky-800"
+                    : "bg-indigo-100 text-indigo-800"
+                  }`}>
+                    {h.kind}
+                  </span>
+                </Td>
+                <Td className="font-mono text-[10px]">{h.orientation}</Td>
+                <Td>
+                  {h.linkedConstructIds.length === 0 ? (
+                    <span className="text-zinc-400 text-[10px]">no construct link</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {h.linkedConstructIds.map(cid => (
+                        <button
+                          key={cid}
+                          onClick={() => onPickConstruct(cid)}
+                          className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 hover:bg-indigo-100 hover:text-indigo-800"
+                        >
+                          {cid}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
