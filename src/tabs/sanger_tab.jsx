@@ -43,6 +43,7 @@ import {
   reverseComplement,
 } from "../lib/sequence_analyses.js";
 import { detectIssues, summarizeIssues } from "../lib/sanger_issues.js";
+import { diffSnapgene } from "../lib/snapgene_diff.js";
 import { SangerReportModal } from "../components/sanger_report_modal.jsx";
 import { downloadBlob } from "../lib/export.js";
 
@@ -97,6 +98,8 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
   const [primers, setPrimers] = useState([]);
   // Sanger PDF report modal.
   const [reportOpen, setReportOpen] = useState(false);
+  // Optional second .dna for diffing against the active reference.
+  const [compareSnapgene, setCompareSnapgene] = useState(null); // {sequence, isCircular, features, label}
 
   const fileInputRef = useRef(null);
 
@@ -558,6 +561,15 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
             referenceSeq={reference}
             referenceLabel={referenceLabel}
           />
+          {reference && (
+            <SnapGeneComparePanel
+              referenceSeq={reference}
+              referenceLabel={referenceLabel}
+              referenceTopology={referenceTopology}
+              compare={compareSnapgene}
+              setCompare={setCompareSnapgene}
+            />
+          )}
 
           {score && <AlignmentSummary score={score} sample={activeSample} reference={reference} />}
           {score && <MismatchTable score={score} />}
@@ -2188,6 +2200,210 @@ function PastePrimersModal({ onClose, onApply }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// ----------------------------------------------------------------------
+// SnapGeneComparePanel — diff two .dna files
+// ----------------------------------------------------------------------
+//
+// "Did the assembly produce what we designed?" The lab's Golden Gate
+// workflow has a designed reference .dna and an assembled-result .dna
+// (often the lab's hand-built "Sanger Results Aligned ... ASSEMBLED.dna").
+// This panel diffs them: sequence edits + feature additions/removals/
+// shifts + topology change.
+
+function SnapGeneComparePanel({ referenceSeq, referenceLabel, referenceTopology, compare, setCompare }) {
+  const fileRef = useRef(null);
+  const [error, setError] = useState(null);
+  const onPick = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    f.arrayBuffer().then(buf => {
+      try {
+        const sg = parseSnapgene(buf);
+        setCompare({
+          sequence: sg.sequence,
+          isCircular: sg.isCircular,
+          features: sg.features,
+          label: f.name,
+          length: sg.length,
+        });
+        setError(null);
+      } catch (err) {
+        setError(`${f.name}: ${err.message || err}`);
+      }
+    });
+    e.target.value = "";
+  };
+
+  const diff = useMemo(() => {
+    if (!compare) return null;
+    return diffSnapgene(
+      { sequence: referenceSeq, isCircular: referenceTopology.isCircular, features: [] },
+      { sequence: compare.sequence, isCircular: compare.isCircular, features: compare.features },
+    );
+  }, [compare, referenceSeq, referenceTopology]);
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs">
+      <div className="font-medium text-zinc-800 mb-2 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          Compare reference with another <code>.dna</code>
+        </div>
+        <div className="flex items-center gap-2">
+          {compare && (
+            <button
+              onClick={() => setCompare(null)}
+              className="px-2 py-1 rounded border border-zinc-300 text-[10px] hover:bg-zinc-50"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="px-2 py-1 rounded border border-zinc-300 text-[10px] hover:bg-zinc-50"
+          >
+            {compare ? "Replace .dna" : "Load .dna…"}
+          </button>
+          <input ref={fileRef} type="file" accept=".dna" onChange={onPick} className="hidden" />
+        </div>
+      </div>
+      {error && (
+        <div className="px-2 py-1 mb-2 rounded border border-rose-300 bg-rose-50 text-rose-900 text-xs">
+          {error}
+        </div>
+      )}
+      {!compare ? (
+        <div className="text-zinc-500">
+          Drop a second SnapGene <code>.dna</code> to diff against the active reference{referenceLabel ? ` (${referenceLabel})` : ""}.
+          Useful for "did the assembly produce what we designed?".
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-[11px] text-zinc-700">
+            <div>Reference: <span className="font-mono">{referenceLabel || `${referenceSeq.length} bp`}</span></div>
+            <div>Compare:   <span className="font-mono">{compare.label} ({compare.length} bp{compare.isCircular ? ", circular" : ""})</span></div>
+          </div>
+          <DiffSummary diff={diff} />
+          <DiffEdits diff={diff} />
+          <DiffFeatures diff={diff} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DiffSummary({ diff }) {
+  if (!diff) return null;
+  const sd = diff.sequenceDiff;
+  if (sd.identical) {
+    return (
+      <div className="rounded border border-emerald-200 bg-emerald-50 p-2 text-emerald-900 text-xs font-medium">
+        Sequences are identical (no edits)
+      </div>
+    );
+  }
+  if (sd.tooLargeToAlign) {
+    return (
+      <div className="rounded border border-amber-200 bg-amber-50 p-2 text-amber-900 text-xs">
+        Sequences too large to align ({sd.lengthA} vs {sd.lengthB} bp). Showing length comparison only.
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+      <Stat label="Identity" value={`${(sd.identity * 100).toFixed(2)}%`} />
+      <Stat label="Length A → B" value={`${sd.lengthA} → ${sd.lengthB}`} />
+      <Stat label="Substitutions" value={sd.mismatches} />
+      <Stat label="Indels" value={sd.gaps} />
+    </div>
+  );
+}
+
+function DiffEdits({ diff }) {
+  if (!diff || !diff.sequenceDiff?.edits || diff.sequenceDiff.edits.length === 0) return null;
+  const edits = diff.sequenceDiff.edits;
+  return (
+    <div className="border border-zinc-100 rounded p-2">
+      <div className="font-medium mb-1 flex items-center gap-2">
+        Sequence edits <span className="text-zinc-500">({edits.length})</span>
+      </div>
+      <div className="max-h-48 overflow-auto">
+        <table className="w-full">
+          <thead className="text-[10px] uppercase tracking-wider text-zinc-500 sticky top-0 bg-white">
+            <tr><Th>Kind</Th><Th>Pos in A</Th><Th>A base</Th><Th>Pos in B</Th><Th>B base</Th></tr>
+          </thead>
+          <tbody>
+            {edits.slice(0, 200).map((e, i) => (
+              <tr key={i} className="border-t border-zinc-100">
+                <Td>{e.kind.replace(/_/g, " ")}</Td>
+                <Td className="font-mono">{e.posA + 1}</Td>
+                <Td className="font-mono">{e.baseA}</Td>
+                <Td className="font-mono">{e.posB + 1}</Td>
+                <Td className="font-mono">{e.baseB}</Td>
+              </tr>
+            ))}
+            {edits.length > 200 && (
+              <tr><Td colSpan={5} className="text-zinc-500 text-[10px]">+{edits.length - 200} more edits not shown</Td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DiffFeatures({ diff }) {
+  if (!diff || !diff.featureDiff) return null;
+  const { onlyInA, onlyInB, bothMatched } = diff.featureDiff;
+  if (onlyInA.length === 0 && onlyInB.length === 0 && bothMatched.length === 0) {
+    return null;
+  }
+  const fuzzy = bothMatched.filter(m => !m.exact);
+  return (
+    <div className="border border-zinc-100 rounded p-2">
+      <div className="font-medium mb-1">
+        Features
+        <span className="text-zinc-500 font-normal ml-2">
+          {bothMatched.length} matched
+          {fuzzy.length > 0 ? ` (${fuzzy.length} shifted)` : ""}
+          {onlyInA.length > 0 ? ` · ${onlyInA.length} only in A` : ""}
+          {onlyInB.length > 0 ? ` · ${onlyInB.length} only in B` : ""}
+        </span>
+      </div>
+      {onlyInA.length > 0 && (
+        <FeatureGroup label="Only in reference (A)" features={onlyInA} color="text-rose-700" />
+      )}
+      {onlyInB.length > 0 && (
+        <FeatureGroup label="Only in compare (B)" features={onlyInB} color="text-emerald-700" />
+      )}
+      {fuzzy.length > 0 && (
+        <FeatureGroup label="Shifted (matched by name+type)" pairs={fuzzy} color="text-amber-700" />
+      )}
+    </div>
+  );
+}
+
+function FeatureGroup({ label, features = [], pairs = [], color = "text-zinc-700" }) {
+  return (
+    <div className="mt-1">
+      <div className={`text-[10px] uppercase tracking-wider ${color}`}>{label}</div>
+      <ul className="font-mono text-[11px] text-zinc-700 max-h-24 overflow-auto">
+        {features.slice(0, 10).map((f, i) => (
+          <li key={i}>{f.name} ({f.type}, {f.start + 1}–{f.end})</li>
+        ))}
+        {pairs.slice(0, 10).map((p, i) => (
+          <li key={i}>
+            {p.a.name}: {p.a.start + 1}–{p.a.end} → {p.b.start + 1}–{p.b.end}
+          </li>
+        ))}
+        {(features.length > 10 || pairs.length > 10) && (
+          <li className="text-zinc-500 text-[10px]">+{(features.length || pairs.length) - 10} more</li>
+        )}
+      </ul>
     </div>
   );
 }
