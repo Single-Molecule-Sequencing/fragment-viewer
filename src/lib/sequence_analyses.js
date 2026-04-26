@@ -107,6 +107,21 @@ const STANDARD_CODON = {
 };
 
 /**
+ * Translate a DNA sequence into a protein string using the standard
+ * code. Bases not in {A,C,G,T} produce 'X'. Trailing partial codon
+ * is dropped.
+ */
+export function translateDna(dna) {
+  const seq = (dna || "").toUpperCase();
+  const out = [];
+  for (let i = 0; i + 3 <= seq.length; i += 3) {
+    out.push(STANDARD_CODON[seq.substring(i, i + 3)] || "X");
+  }
+  return out.join("");
+}
+
+
+/**
  * Find all open reading frames (ATG → stop) ≥ minLengthAa codons long
  * across all 6 frames (3 forward, 3 reverse). Each ORF is returned as
  * 0-based half-open coordinates on the input sequence.
