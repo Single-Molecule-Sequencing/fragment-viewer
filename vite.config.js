@@ -11,6 +11,18 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+    // Split vendor + per-tab chunks so the main bundle isn't a single
+    // ~500 KB blob. Caching wins on revisits + faster initial paint.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom"],
+          recharts: ["recharts"],
+          icons: ["lucide-react"],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 800,
   },
   test: {
     environment: "node",

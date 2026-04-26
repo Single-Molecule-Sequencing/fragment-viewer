@@ -39,6 +39,8 @@ import {
   overallGc,
   findPrimerMatches,
   parseMultiFasta,
+  translateDna,
+  reverseComplement,
 } from "../lib/sequence_analyses.js";
 import { detectIssues, summarizeIssues } from "../lib/sanger_issues.js";
 import { SangerReportModal } from "../components/sanger_report_modal.jsx";
@@ -524,6 +526,8 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
               qCutoff={qCutoff}
               active={active}
               onPick={setActive}
+              primers={primers}
+              referenceSeq={reference}
             />
           )}
           {multiReadAnalysis && Object.keys(samples).length > 0 && (
@@ -1638,6 +1642,7 @@ function RestrictionSitesSection({ seq }) {
 
 function ORFSection({ seq }) {
   const orfs = useMemo(() => findOrfs(seq, { minLengthAa: 50 }), [seq]);
+  const [expanded, setExpanded] = useState(null); // index into orfs of the expanded row
   if (orfs.length === 0) {
     return (
       <div className="border border-zinc-100 rounded p-2">
@@ -1649,27 +1654,66 @@ function ORFSection({ seq }) {
   return (
     <div className="border border-zinc-100 rounded p-2">
       <div className="font-medium text-zinc-800 mb-1">
-        Open reading frames (≥50 aa) <span className="text-zinc-500">— {orfs.length} found, longest {orfs[0].lengthAa} aa</span>
+        Open reading frames (≥50 aa) <span className="text-zinc-500">— {orfs.length} found, longest {orfs[0].lengthAa} aa · click a row to translate</span>
       </div>
       <table className="w-full">
         <thead className="text-[10px] uppercase tracking-wider text-zinc-500">
-          <tr><Th>Length (aa)</Th><Th>Strand</Th><Th>Frame</Th><Th>Position</Th></tr>
+          <tr><Th>Length (aa)</Th><Th>Strand</Th><Th>Frame</Th><Th>Position</Th><Th></Th></tr>
         </thead>
         <tbody>
-          {orfs.slice(0, 10).map((o, i) => (
-            <tr key={i} className="border-t border-zinc-100">
-              <Td className="font-mono">{o.lengthAa}</Td>
-              <Td>{o.strand === 1 ? "+" : "−"}</Td>
-              <Td className="font-mono">{o.frame}</Td>
-              <Td className="font-mono">{o.start}–{o.end}</Td>
-            </tr>
-          ))}
+          {orfs.slice(0, 10).map((o, i) => {
+            const isOpen = expanded === i;
+            // Translate the ORF: take the substring (reverse-complemented if
+            // strand=-1) and pass to translateDna. The ORF starts at the ATG
+            // codon and ends just past the stop, so translation includes both.
+            const orfDna = (() => {
+              const sub = seq.substring(o.start, o.end);
+              return o.strand === 1 ? sub : reverseComplement(sub);
+            })();
+            const protein = isOpen ? translateDna(orfDna) : "";
+            return (
+              <FragmentRows
+                key={i}
+                isOpen={isOpen}
+                onToggle={() => setExpanded(isOpen ? null : i)}
+                orf={o}
+                protein={protein}
+              />
+            );
+          })}
           {orfs.length > 10 && (
-            <tr><Td colSpan={4} className="text-zinc-500 text-[10px]">+{orfs.length - 10} smaller ORFs not shown</Td></tr>
+            <tr><Td colSpan={5} className="text-zinc-500 text-[10px]">+{orfs.length - 10} smaller ORFs not shown</Td></tr>
           )}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function FragmentRows({ isOpen, onToggle, orf, protein }) {
+  return (
+    <>
+      <tr
+        className={`border-t border-zinc-100 cursor-pointer hover:bg-zinc-50 ${isOpen ? "bg-indigo-50" : ""}`}
+        onClick={onToggle}
+      >
+        <Td className="font-mono">{orf.lengthAa}</Td>
+        <Td>{orf.strand === 1 ? "+" : "−"}</Td>
+        <Td className="font-mono">{orf.frame}</Td>
+        <Td className="font-mono">{orf.start}–{orf.end}</Td>
+        <Td className="text-[10px] text-zinc-500">{isOpen ? "▼" : "▶"}</Td>
+      </tr>
+      {isOpen && (
+        <tr>
+          <Td colSpan={5} className="bg-indigo-50/40">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Translation (standard code)</div>
+            <div className="font-mono text-[11px] break-all whitespace-pre-wrap leading-relaxed">
+              {protein}
+            </div>
+          </Td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -1688,7 +1732,7 @@ function ORFSection({ seq }) {
 // Drag-to-brush selects a reference x-range to zoom; double-click resets.
 // Zoom is shared across all tracks (one stacked view = one reference axis).
 
-function StackedReadsPanel({ samples, reads, refLen, qCutoff, active, onPick }) {
+function StackedReadsPanel({ samples, reads, refLen, qCutoff, active, onPick, primers = [], referenceSeq = "" }) {
   const [zoom, setZoom] = useState(null);  // {start, end} in ref coords
   const [brush, setBrush] = useState(null);
 
@@ -1776,6 +1820,15 @@ function StackedReadsPanel({ samples, reads, refLen, qCutoff, active, onPick }) 
             </g>
           );
         })}
+        {/* Primer markers — overlaid on the reference axis for context */}
+        <PrimerMarkers
+          primers={primers}
+          referenceSeq={referenceSeq}
+          refStart={refStart}
+          refEnd={refEnd}
+          refToPx={refToPx}
+          y={headerH - 1}
+        />
         {/* Per-read tracks */}
         {sortedReads.map((readEntry, i) => {
           const sample = samples[readEntry.name];
@@ -2303,6 +2356,52 @@ function IssueMiniPreview({ sample, issue }) {
         return <path key={base} d={d} stroke={baseColors[base]} strokeWidth={0.6} fill="none" opacity={0.85} />;
       })}
     </svg>
+  );
+}
+
+
+function PrimerMarkers({ primers, referenceSeq, refStart, refEnd, refToPx, y }) {
+  const hits = useMemo(() => {
+    if (!referenceSeq || !primers || primers.length === 0) return [];
+    const out = [];
+    for (let i = 0; i < primers.length; i++) {
+      const matches = findPrimerMatches(primers[i].sequence, referenceSeq, { maxMismatches: 2 });
+      for (const m of matches) {
+        // Only render if at least partly within visible range.
+        if (m.end >= refStart && m.start <= refEnd) {
+          out.push({ ...m, name: primers[i].name, primerIdx: i });
+        }
+      }
+    }
+    return out;
+  }, [primers, referenceSeq, refStart, refEnd]);
+
+  if (hits.length === 0) return null;
+
+  // Color cycle for primers — distinguishable on the gray axis.
+  const palette = ["#7c3aed", "#0891b2", "#16a34a", "#ea580c", "#dc2626", "#db2777", "#ca8a04", "#0d9488"];
+  return (
+    <g>
+      {hits.map((h, i) => {
+        const x0 = refToPx(Math.max(refStart, h.start));
+        const x1 = refToPx(Math.min(refEnd, h.end));
+        const w = Math.max(2, x1 - x0);
+        const color = palette[h.primerIdx % palette.length];
+        const arrowHeight = 6;
+        // Forward primers point right (▶), reverse primers point left (◀).
+        const arrowPath = h.strand === 1
+          ? `M${x0},${y + 1} L${x1 - 3},${y + 1} L${x1},${y + arrowHeight / 2 + 1} L${x1 - 3},${y + arrowHeight + 1} L${x0},${y + arrowHeight + 1} Z`
+          : `M${x1},${y + 1} L${x0 + 3},${y + 1} L${x0},${y + arrowHeight / 2 + 1} L${x0 + 3},${y + arrowHeight + 1} L${x1},${y + arrowHeight + 1} Z`;
+        void w;
+        return (
+          <g key={i}>
+            <path d={arrowPath} fill={color} fillOpacity={0.7} stroke={color} strokeWidth={0.5}>
+              <title>{`${h.name} (${h.strand === 1 ? "+" : "−"}, ${h.start}–${h.end}${h.mismatches > 0 ? `, ${h.mismatches} mm` : ""})`}</title>
+            </path>
+          </g>
+        );
+      })}
+    </g>
   );
 }
 
