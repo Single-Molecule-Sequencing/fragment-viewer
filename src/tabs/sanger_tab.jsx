@@ -44,6 +44,7 @@ import {
 } from "../lib/sequence_analyses.js";
 import { detectIssues, summarizeIssues } from "../lib/sanger_issues.js";
 import { diffSnapgene } from "../lib/snapgene_diff.js";
+import { generateDemoSample, demoReferenceSequence } from "../lib/sanger_demo.js";
 import { SangerReportModal } from "../components/sanger_report_modal.jsx";
 import { SANGER_BASE_COLORS, VERDICT_STYLE } from "./sanger/_shared.jsx";
 import { IssuesPanel } from "./sanger/issues_panel.jsx";
@@ -161,6 +162,16 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
     for (const f of e.target.files || []) ingestFile(f);
     e.target.value = "";
   };
+
+  // ----- Demo loader -------------------------------------------------
+  const handleLoadDemo = useCallback(() => {
+    const demo = generateDemoSample();
+    setSamples(prev => ({ ...prev, [demo.sampleName]: demo }));
+    setActive(demo.sampleName);
+    setReference(demoReferenceSequence());
+    setReferenceLabel("V059 demo reference (226 bp, in-memory)");
+    setReferenceTopology({ isCircular: false, topologyByte: 0 });
+  }, []);
 
   // ----- Active sample analysis --------------------------------------
   const activeSample = active ? samples[active] : null;
@@ -419,6 +430,7 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
           samples={samples}
           active={active}
           onPick={setActive}
+          onLoadDemo={handleLoadDemo}
         />
 
         <div className="col-span-9 space-y-4">
@@ -628,12 +640,21 @@ function DropZone({ onFile, onPickFiles, children }) {
 // Sample list
 // ----------------------------------------------------------------------
 
-function SampleList({ samples, active, onPick, className = "" }) {
+function SampleList({ samples, active, onPick, onLoadDemo, className = "" }) {
   const names = Object.keys(samples).sort();
   if (names.length === 0) {
     return (
-      <div className={`${className} rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-500`}>
-        No samples yet. Drop one or more <code>.ab1</code> files.
+      <div className={`${className} rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-500 space-y-2`}>
+        <div>No samples yet. Drop one or more <code>.ab1</code> files.</div>
+        {onLoadDemo && (
+          <button
+            onClick={onLoadDemo}
+            className="w-full px-3 py-1.5 rounded bg-indigo-600 text-white text-xs hover:bg-indigo-700"
+            title="Synthesize a 226 bp demo Sanger sample (no network) and load a matching reference"
+          >
+            Load V059 demo
+          </button>
+        )}
       </div>
     );
   }
