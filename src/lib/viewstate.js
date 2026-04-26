@@ -89,7 +89,7 @@ export function decodeViewState(hash) {
 // Validity is constrained: only known tabs, only http/https refs, only
 // non-empty sample ids.
 
-const KNOWN_TABS = new Set(["trace", "peakid", "cutpred", "autoclass", "compare", "heatmap", "sanger"]);
+const KNOWN_TABS = new Set(["trace", "peakid", "cutpred", "autoclass", "compare", "heatmap", "sanger", "registry"]);
 
 export function parseUrlParams(searchString) {
   // Accept either a leading "?" or just the query body.

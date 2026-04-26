@@ -129,9 +129,11 @@ import { AutoClassifyTab } from "./tabs/auto_classify_tab.jsx";
 import { PeakIdTab, PeakSpeciesPopover, SampleSummaryCard } from "./tabs/peak_id_tab.jsx";
 import { TraceTab } from "./tabs/trace_tab.jsx";
 import { SangerTab } from "./tabs/sanger_tab.jsx";
+import { LabRegistryTab } from "./tabs/lab_registry_tab.jsx";
 export {
   HeatmapTab, CompareTab, CutPredictionTab, OverhangChart, AutoClassifyTab,
   PeakIdTab, PeakSpeciesPopover, SampleSummaryCard, TraceTab, SangerTab,
+  LabRegistryTab,
 };
 
 
@@ -513,6 +515,7 @@ export default function FragmentViewer() {
             {tab === "compare" && <CompareTab samples={samples} cfg={cfg} results={results} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} />}
             {tab === "heatmap" && <HeatmapTab samples={samples} componentSizes={componentSizes} constructSeq={constructSeq} targetStart={targetStart} targetEnd={targetEnd} palette={palette} />}
             {tab === "sanger"  && <SangerTab initialRefUrl={initialUrlParams.ref} initialActiveSample={initialUrlParams.sample} />}
+            {tab === "registry" && <LabRegistryTab />}
           </div>
         </main>
       </div>
