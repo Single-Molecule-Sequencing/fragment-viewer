@@ -41,6 +41,7 @@ import {
   parseMultiFasta,
 } from "../lib/sequence_analyses.js";
 import { detectIssues, summarizeIssues } from "../lib/sanger_issues.js";
+import { SangerReportModal } from "../components/sanger_report_modal.jsx";
 import { downloadBlob } from "../lib/export.js";
 
 // Sanger dye-channel convention. Different from CE (B/G/Y/R for fluorophore
@@ -92,6 +93,8 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
   // Loaded primers: array of {name, sequence}. Populated via the
   // "Load primers" picker on the PrimerMappingPanel.
   const [primers, setPrimers] = useState([]);
+  // Sanger PDF report modal.
+  const [reportOpen, setReportOpen] = useState(false);
 
   const fileInputRef = useRef(null);
 
@@ -448,8 +451,23 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
             onExportAllFasta={handleExportAllFasta}
             onExportTrimmedDna={handleExportTrimmedDna}
             onExportAnnotatedRefDna={handleExportAnnotatedRefDna}
+            onOpenReport={() => setReportOpen(true)}
             onResetZoom={resetZoom}
             zoomActive={!!(active && zoomBySample[active])}
+          />
+
+          <SangerReportModal
+            open={reportOpen}
+            onClose={() => setReportOpen(false)}
+            generatedAt={useMemo(() => new Date(), [reportOpen])}
+            reference={reference}
+            referenceLabel={referenceLabel}
+            qCutoff={qCutoff}
+            samples={samples}
+            multiReadAnalysis={multiReadAnalysis}
+            activeSample={activeSample}
+            activeScore={score}
+            issues={issues}
           />
 
           <ChromatogramPanel
@@ -703,7 +721,7 @@ function PasteReferenceModal({ onClose, onApply }) {
 function ControlsBar({
   qCutoff, setQCutoff, score, samples, hasReference,
   onExportCsv, onExportSvg, onExportTrimmedFasta, onExportAllFasta,
-  onExportTrimmedDna, onExportAnnotatedRefDna,
+  onExportTrimmedDna, onExportAnnotatedRefDna, onOpenReport,
   onResetZoom, zoomActive,
 }) {
   const sampleCount = Object.keys(samples || {}).length;
@@ -754,6 +772,11 @@ function ControlsBar({
           </ExportBtn>
           <ExportBtn onClick={onExportSvg} disabled={!score} title="Current chromatogram as SVG (Illustrator-editable)">
             SVG
+          </ExportBtn>
+        </ExportGroup>
+        <ExportGroup label="Report">
+          <ExportBtn onClick={onOpenReport} disabled={sampleCount === 0} title="Multi-page report: verification table, consensus, issues, mismatches. Print or save as PDF / Markdown.">
+            Build report
           </ExportBtn>
         </ExportGroup>
       </div>
