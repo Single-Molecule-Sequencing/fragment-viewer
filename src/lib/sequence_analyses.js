@@ -202,3 +202,72 @@ export function overallGc(sequence) {
   }
   return count / sequence.length;
 }
+
+
+// ----------------------------------------------------------------------
+// Primer mapping
+// ----------------------------------------------------------------------
+//
+// Find a primer (typically 18–25 nt) on a target sequence with up to
+// `maxMismatches` mismatches. Searches both strands. Returns 0-based
+// half-open ranges with strand and mismatch count.
+//
+// Naive O(N*M) scan; fine for primer ≈ 20 nt against constructs of
+// ≤50 kb. For very long targets use a more efficient algorithm.
+
+/**
+ * @param {string} primer
+ * @param {string} target
+ * @param {{maxMismatches?: number}} opts
+ * @returns {Array<{start: number, end: number, strand: 1|-1, mismatches: number}>}
+ */
+export function findPrimerMatches(primer, target, opts = {}) {
+  const maxMm = opts.maxMismatches ?? 2;
+  const p = primer.toUpperCase();
+  const t = target.toUpperCase();
+  if (!p || !t) return [];
+  const out = [];
+  scanStrand(p, t, 1, maxMm, out);
+  // Reverse-complement the primer and scan again as the reverse-strand
+  // primer landing on the target.
+  const pRc = reverseComplement(p);
+  if (pRc !== p) scanStrand(pRc, t, -1, maxMm, out);
+  return out.sort((a, b) => a.start - b.start);
+}
+
+function scanStrand(primer, target, strand, maxMm, out) {
+  const m = primer.length;
+  const n = target.length;
+  for (let i = 0; i + m <= n; i++) {
+    let mm = 0;
+    for (let k = 0; k < m && mm <= maxMm; k++) {
+      if (target.charCodeAt(i + k) !== primer.charCodeAt(k)) mm++;
+    }
+    if (mm <= maxMm) {
+      out.push({ start: i, end: i + m, strand, mismatches: mm });
+    }
+  }
+}
+
+
+/**
+ * Parse a multi-record FASTA string into an array of {name, sequence}.
+ * Tolerates blank lines and CR/LF endings. Sequence is upper-cased and
+ * stripped of whitespace.
+ */
+export function parseMultiFasta(text) {
+  if (!text) return [];
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let cur = null;
+  for (const line of lines) {
+    if (line.startsWith(">")) {
+      if (cur && cur.sequence) out.push(cur);
+      cur = { name: line.slice(1).trim() || `record_${out.length + 1}`, sequence: "" };
+    } else if (cur) {
+      cur.sequence += line.trim().toUpperCase();
+    }
+  }
+  if (cur && cur.sequence) out.push(cur);
+  return out;
+}

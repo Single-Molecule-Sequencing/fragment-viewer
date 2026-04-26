@@ -156,6 +156,47 @@ describe("gcComposition + overallGc", () => {
   });
 });
 
+describe("findPrimerMatches", () => {
+  it("finds an exact forward primer match", async () => {
+    const { findPrimerMatches } = await import("../src/lib/sequence_analyses.js");
+    // ACGTACGT first occurs at target[3:11].
+    const target = "AAAACGTACGTAAA";
+    const matches = findPrimerMatches("ACGTACGT", target, { maxMismatches: 0 });
+    expect(matches.find(m => m.start === 3 && m.strand === 1 && m.mismatches === 0)).toBeDefined();
+  });
+  it("finds a reverse-strand primer match", async () => {
+    const { findPrimerMatches } = await import("../src/lib/sequence_analyses.js");
+    // Primer ACGT — RC = ACGT (palindrome). Use AAAACC (RC=GGTTTT)
+    // primer = AAAACC; target contains GGTTTT.
+    const target = "NNNNNNGGTTTTNNNN";
+    const matches = findPrimerMatches("AAAACC", target, { maxMismatches: 0 });
+    expect(matches.find(m => m.strand === -1)).toBeDefined();
+  });
+  it("tolerates up to maxMismatches", async () => {
+    const { findPrimerMatches } = await import("../src/lib/sequence_analyses.js");
+    // Primer ACGTAC; target has ACGTGC (1 mm) at pos 5.
+    const target = "NNNNNACGTGCNNNNN";
+    const matches = findPrimerMatches("ACGTAC", target, { maxMismatches: 1 });
+    expect(matches.find(m => m.start === 5 && m.mismatches === 1)).toBeDefined();
+  });
+});
+
+describe("parseMultiFasta", () => {
+  it("parses two records", async () => {
+    const { parseMultiFasta } = await import("../src/lib/sequence_analyses.js");
+    const text = ">PS1 forward\nACGTACGT\nACGT\n>PS2 reverse\nGGGGCCCC";
+    const out = parseMultiFasta(text);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ name: "PS1 forward", sequence: "ACGTACGTACGT" });
+    expect(out[1]).toMatchObject({ name: "PS2 reverse", sequence: "GGGGCCCC" });
+  });
+  it("ignores trailing blank lines and CR endings", async () => {
+    const { parseMultiFasta } = await import("../src/lib/sequence_analyses.js");
+    const out = parseMultiFasta(">a\r\nACGT\r\n\r\n>b\r\nTGCA\r\n");
+    expect(out).toHaveLength(2);
+  });
+});
+
 describe("ENZYME_CATALOG sanity", () => {
   it("has BsaI and BsmBI as Type-IIS Golden Gate enzymes", () => {
     const bsa = ENZYME_CATALOG.find(e => e.name === "BsaI");
