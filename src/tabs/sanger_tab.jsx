@@ -446,6 +446,16 @@ export function SangerTab({ initialRefUrl, initialActiveSample } = {}) {
               onPick={setActive}
             />
           )}
+          {multiReadAnalysis && Object.keys(samples).length > 1 && (
+            <StackedReadsPanel
+              samples={samples}
+              reads={multiReadAnalysis.reads}
+              refLen={reference.length}
+              qCutoff={qCutoff}
+              active={active}
+              onPick={setActive}
+            />
+          )}
           {multiReadAnalysis && Object.keys(samples).length > 0 && (
             <ConsensusPanel
               consensus={multiReadAnalysis.consensus}
@@ -1578,6 +1588,278 @@ function ORFSection({ seq }) {
     </div>
   );
 }
+
+// ----------------------------------------------------------------------
+// StackedReadsPanel — multi-read mini-chromatograms on a shared reference axis
+// ----------------------------------------------------------------------
+//
+// Each loaded read is one horizontal track positioned on the reference axis
+// at its [targetStart, targetEnd] alignment range. Within the track, a
+// compact 4-channel chromatogram is rendered by mapping reference positions
+// back through the alignment to trace-data-point coordinates.
+//
+// Mismatch positions get vertical markers. Click a track to focus that
+// sample in the main chromatogram + analyses above.
+//
+// Drag-to-brush selects a reference x-range to zoom; double-click resets.
+// Zoom is shared across all tracks (one stacked view = one reference axis).
+
+function StackedReadsPanel({ samples, reads, refLen, qCutoff, active, onPick }) {
+  const [zoom, setZoom] = useState(null);  // {start, end} in ref coords
+  const [brush, setBrush] = useState(null);
+
+  const W = 1200;
+  const TRACK_H = 56;
+  const padX = 30;
+  const headerH = 18;
+  const trackGap = 4;
+  const plotW = W - 2 * padX;
+  const sortedReads = useMemo(
+    () => [...reads].sort((a, b) => (a.score?.targetStart ?? 0) - (b.score?.targetStart ?? 0)),
+    [reads],
+  );
+  const H = headerH + sortedReads.length * (TRACK_H + trackGap) + 24;
+
+  const refStart = Math.max(0, Math.floor(zoom?.start ?? 0));
+  const refEnd = Math.min(refLen, Math.ceil(zoom?.end ?? refLen));
+  const refSpan = Math.max(1, refEnd - refStart);
+  const refToPx = (r) => padX + ((r - refStart) / refSpan) * plotW;
+
+  // ----- Brush + zoom interaction --------------------------------------
+  const cssXToRef = (svgEl, clientX) => {
+    if (!svgEl) return null;
+    const r = svgEl.getBoundingClientRect();
+    const cssLeft = r.left + (padX / W) * r.width;
+    const cssWidth = (plotW / W) * r.width;
+    const t = (clientX - cssLeft) / cssWidth;
+    const tClamped = Math.max(0, Math.min(1, t));
+    return refStart + tClamped * refSpan;
+  };
+  const onMouseDown = (e) => {
+    if (e.button !== 0) return;
+    const r = cssXToRef(e.currentTarget, e.clientX);
+    if (r == null) return;
+    setBrush({ x0: r, x1: r });
+  };
+  const onMouseMove = (e) => {
+    if (!brush) return;
+    const r = cssXToRef(e.currentTarget, e.clientX);
+    if (r == null) return;
+    setBrush({ x0: brush.x0, x1: r });
+  };
+  const onMouseUp = () => {
+    if (!brush) return;
+    const lo = Math.min(brush.x0, brush.x1);
+    const hi = Math.max(brush.x0, brush.x1);
+    setBrush(null);
+    if (hi - lo >= 10) setZoom({ start: Math.round(lo), end: Math.round(hi) });
+  };
+  const onMouseLeave = () => setBrush(null);
+  const onDoubleClick = () => setZoom(null);
+  const onWheel = (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 0.85 : 1.15;
+    const center = cssXToRef(e.currentTarget, e.clientX);
+    if (center == null) return;
+    const newSpan = Math.max(10, refSpan * factor);
+    const newStart = Math.max(0, center - newSpan * ((center - refStart) / refSpan));
+    const newEnd = Math.min(refLen, newStart + newSpan);
+    if (newStart <= 0 && newEnd >= refLen) setZoom(null);
+    else setZoom({ start: Math.round(newStart), end: Math.round(newEnd) });
+  };
+
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white p-3 text-xs overflow-x-auto">
+      <div className="font-medium text-zinc-800 mb-1 flex items-center justify-between">
+        <span>Stacked reads view ({sortedReads.length} reads on shared reference axis)</span>
+        <span className="font-mono text-[10px] text-zinc-500">
+          ref {refStart}–{refEnd}{zoom ? <span className="ml-2 text-indigo-600">zoomed</span> : null}
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none"
+        onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave} onDoubleClick={onDoubleClick} onWheel={onWheel}
+        style={{ cursor: brush ? "ew-resize" : "crosshair", userSelect: "none" }}
+      >
+        {/* Reference axis ticks at top */}
+        {[0, 0.25, 0.5, 0.75, 1.0].map(f => {
+          const r = Math.round(refStart + f * refSpan);
+          return (
+            <g key={f}>
+              <line x1={refToPx(r)} x2={refToPx(r)} y1={headerH - 4} y2={headerH} stroke="#9ca3af" />
+              <text x={refToPx(r)} y={headerH - 6} textAnchor="middle" fontSize={9} fill="#6b7280">{r}</text>
+            </g>
+          );
+        })}
+        {/* Per-read tracks */}
+        {sortedReads.map((readEntry, i) => {
+          const sample = samples[readEntry.name];
+          if (!sample) return null;
+          const yTop = headerH + i * (TRACK_H + trackGap);
+          return (
+            <ReadTrack
+              key={readEntry.name}
+              y={yTop} h={TRACK_H} W={W} padX={padX} plotW={plotW}
+              refStart={refStart} refEnd={refEnd} refSpan={refSpan}
+              refToPx={refToPx}
+              sample={sample}
+              score={readEntry.score}
+              qCutoff={qCutoff}
+              isActive={readEntry.name === active}
+              onClick={() => onPick(readEntry.name)}
+            />
+          );
+        })}
+        {/* Brush selection */}
+        {brush && Math.abs(brush.x1 - brush.x0) > 1 && (
+          <rect
+            x={Math.min(refToPx(brush.x0), refToPx(brush.x1))}
+            y={headerH}
+            width={Math.abs(refToPx(brush.x1) - refToPx(brush.x0))}
+            height={H - headerH - 24}
+            fill="#6366f1" fillOpacity={0.15}
+            stroke="#6366f1" strokeOpacity={0.5}
+          />
+        )}
+      </svg>
+      <div className="mt-1 text-[10px] text-zinc-500">
+        Drag to brush-zoom · scroll to zoom · double-click to reset · click a track to focus its chromatogram
+      </div>
+    </div>
+  );
+}
+
+function ReadTrack({
+  y, h, W, padX, plotW, refStart, refEnd, refSpan, refToPx,
+  sample, score, qCutoff, isActive, onClick,
+}) {
+  // 1. Determine the read's overlap with the visible reference window.
+  if (!score || !score.length) {
+    return null;
+  }
+  const tStart = Math.max(refStart, score.targetStart);
+  const tEnd = Math.min(refEnd, score.targetEnd);
+  if (tEnd <= tStart) {
+    // Read doesn't overlap visible window; render a thin placeholder.
+    return (
+      <g>
+        <rect x={padX} y={y + h / 2 - 1} width={plotW} height={2} fill="#e5e7eb" />
+        <text x={padX - 4} y={y + h / 2 + 3} fontSize={9} textAnchor="end" fill="#9ca3af">{sample.sampleName}</text>
+      </g>
+    );
+  }
+
+  // 2. Walk the alignment to build refPos → traceX map for the visible
+  //    portion of this read. trim is needed because the alignment was
+  //    computed on Mott-trimmed basecalls; `peakLocations` is in raw
+  //    untrimmed-basecall index space, so we add `trim.start`.
+  const trim = mottTrim(sample.qScores, qCutoff);
+  const peakLocs = sample.peakLocations;
+  const t = score.alignedTarget;
+  const q = score.alignedQuery;
+  const refTraces = [];  // [{refPos, traceX, qIdxInTrim}]
+  let tPos = score.targetStart;
+  let qPos = score.queryStart;  // 0-based position in the trimmed read
+  for (let k = 0; k < t.length; k++) {
+    const tc = t[k];
+    const qc = q[k];
+    if (tc === "-") { qPos++; continue; }
+    if (qc !== "-" && tPos >= tStart && tPos < tEnd) {
+      const traceX = peakLocs[trim.start + qPos];
+      if (traceX != null) refTraces.push({ refPos: tPos, traceX, qIdxInTrim: qPos });
+    }
+    if (tc !== "-") tPos++;
+    if (qc !== "-") qPos++;
+  }
+
+  // 3. Compute y-scaling for this track from visible trace values.
+  const traceLen = sample.traces?.A?.length || 0;
+  let maxVal = 100;
+  for (const { traceX } of refTraces) {
+    for (const base of ["A", "C", "G", "T"]) {
+      const tr = sample.traces[base];
+      if (!tr) continue;
+      const v = tr[Math.round(traceX)];
+      if (v > maxVal) maxVal = v;
+    }
+  }
+  const tracePlotTop = y + 14;
+  const tracePlotH = h - 22;
+  const yToPx = (v) => tracePlotTop + (1 - v / maxVal) * tracePlotH;
+
+  // 4. Build polylines per channel and mismatch markers.
+  const channelPaths = ["G", "A", "T", "C"].map(base => {
+    const tr = sample.traces[base];
+    if (!tr) return null;
+    let d = "";
+    for (let i = 0; i < refTraces.length; i++) {
+      const { refPos, traceX } = refTraces[i];
+      const x = refToPx(refPos);
+      const v = tr[Math.round(traceX)] ?? 0;
+      d += `${i === 0 ? "M" : "L"}${x.toFixed(1)},${yToPx(v).toFixed(1)} `;
+    }
+    return { base, d };
+  }).filter(Boolean);
+
+  // Mismatch positions in reference space.
+  const mismatches = [];
+  let tp = score.targetStart;
+  for (let k = 0; k < t.length; k++) {
+    const tc = t[k]; const qc = q[k];
+    if (tc !== "-" && qc !== "-" && tc !== qc && tp >= tStart && tp < tEnd) {
+      mismatches.push(tp);
+    }
+    if (tc !== "-") tp++;
+  }
+
+  void traceLen;
+
+  const verdictColor = score.verdict === "pass" ? "#16a34a"
+    : score.verdict === "warn" ? "#f59e0b" : "#e11d48";
+
+  return (
+    <g onClick={onClick} style={{ cursor: "pointer" }}>
+      {/* Track background */}
+      <rect
+        x={padX} y={y}
+        width={plotW} height={h}
+        fill={isActive ? "#eef2ff" : "white"}
+        stroke="#e5e7eb"
+      />
+      {/* Verdict bar on the left edge */}
+      <rect x={padX} y={y} width={3} height={h} fill={verdictColor} />
+      {/* Sample name */}
+      <text x={padX - 4} y={y + 12} fontSize={9} textAnchor="end" fill={isActive ? "#1e3a8a" : "#374151"}
+            fontFamily="monospace" fontWeight={isActive ? 700 : 400}>
+        {sample.sampleName}
+      </text>
+      {/* Aligned-range bracket on the reference axis */}
+      <rect
+        x={refToPx(Math.max(refStart, score.targetStart))}
+        y={y + 1} width={Math.max(2, refToPx(Math.min(refEnd, score.targetEnd)) - refToPx(Math.max(refStart, score.targetStart)))}
+        height={3} fill={verdictColor} fillOpacity={0.4}
+      />
+      {/* Mismatch markers */}
+      {mismatches.map((p, i) => (
+        <line key={i}
+          x1={refToPx(p)} x2={refToPx(p)}
+          y1={tracePlotTop - 2} y2={tracePlotTop + tracePlotH + 1}
+          stroke="#f43f5e" strokeWidth={1} strokeDasharray="2 2" opacity={0.6}
+        />
+      ))}
+      {/* Channel polylines */}
+      {channelPaths.map(({ base, d }) => (
+        <path key={base} d={d} stroke={SANGER_BASE_COLORS[base]} strokeWidth={0.8} fill="none" opacity={0.85} />
+      ))}
+      {/* Identity readout */}
+      <text x={W - padX + 2} y={y + 12} fontSize={9} textAnchor="start" fill={verdictColor} fontFamily="monospace">
+        {(score.identity * 100).toFixed(1)}%
+      </text>
+    </g>
+  );
+}
+
 
 function GCSection({ seq }) {
   const overall = overallGc(seq);
