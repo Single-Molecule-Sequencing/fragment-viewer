@@ -14,6 +14,7 @@ describe("parseUrlParams", () => {
     expect(parseUrlParams("?tab=trace")).toEqual({ tab: "trace" });
     expect(parseUrlParams("?tab=sanger")).toEqual({ tab: "sanger" });
     expect(parseUrlParams("?tab=heatmap")).toEqual({ tab: "heatmap" });
+    expect(parseUrlParams("?tab=registry")).toEqual({ tab: "registry" });
   });
 
   it("rejects unknown tab values silently", () => {
