@@ -1,0 +1,76 @@
+# Starter schema for the lab registry — see DATA_ARCHITECTURE_PROPOSAL.md.
+# Three top-level files would mirror this shape, but each focused on one
+# entity type (constructs.yaml / primers.yaml / runs.yaml). Combined here
+# for one-glance schema review.
+
+schema_version: 1
+
+# ----------------------------------------------------------------------
+# Constructs: every named DNA construct in the lab
+# ----------------------------------------------------------------------
+constructs:
+  - id: V0_10a_7443_7594_CYP2D6
+    aliases: ["V0 10a", "10a"]
+    project: cyp2d6_golden_gate
+    kind: assembly
+    expected_length: 7594
+    parent_design:
+      drive_path: "Wet Lab/Golden Gate Cloning/CYP2D6 Golden Gate Cloning/Sanger Sequencing/V0 10a_7 30 2025/Sanger Results Alligned V0 10a 7443_7594 CYP2D6 ASSEMBLED.dna"
+      sha256: ""    # FILLED BY INDEXER
+    components:
+      - construct_id: V059_backbone
+      - construct_id: 7443_7594_PCR_A
+      - construct_id: 7443_7594_PCR_B
+    primer_set: ps1_to_ps6_v0_10a
+    operator: isaac-farnum
+    build_date: 2025-07-30
+    status: verified    # designed | ordered | assembled | sequenced | verified | failed
+    verification_run: V0_10a_sanger_2025_07_30
+    notes: |
+      First V0 assembly that passed clean Sanger across all 6 primers.
+
+# ----------------------------------------------------------------------
+# Primers: every primer ever ordered + reusable primer-set bundles
+# ----------------------------------------------------------------------
+primers:
+  - id: PS1_V0_10a
+    aliases: ["10a-PS1"]
+    sequence: ACGTACGTACGTACGTACGT
+    length: 20
+    tm_celsius: 58.4    # FILLED BY INDEXER
+    purpose: sanger    # sanger | pcr | golden_gate_oligo
+    ordered_in: "Sanger Sequencing Order 1_7 30 2025.xlsx"
+    order_date: 2025-07-28
+    primer_set: ps1_to_ps6_v0_10a
+
+primer_sets:
+  - id: ps1_to_ps6_v0_10a
+    purpose: "Sanger verification of V0_10a_7443_7594_CYP2D6"
+    members: [PS1_V0_10a, PS2_V0_10a, PS3_V0_10a, PS4_V0_10a, PS5_V0_10a, PS6_V0_10a]
+
+# ----------------------------------------------------------------------
+# Runs: every Sanger / CE / etc run + the construct(s) sequenced
+# ----------------------------------------------------------------------
+runs:
+  - id: V0_10a_sanger_2025_07_30
+    kind: sanger    # sanger | ce | nanopore | illumina
+    construct_id: V0_10a_7443_7594_CYP2D6
+    primer_set: ps1_to_ps6_v0_10a
+    operator: isaac-farnum
+    submitted: 2025-07-30
+    received: 2025-08-01
+    drive_dir: "Wet Lab/Golden Gate Cloning/CYP2D6 Golden Gate Cloning/Sanger Sequencing/V0 10a_7 30 2025/"
+    files:    # FILLED BY INDEXER walking drive_dir
+      - { path: "10a-PS1-Premixed.ab1", primer: PS1_V0_10a, sha256: "" }
+      - { path: "10a-PS2-Premixed.ab1", primer: PS2_V0_10a, sha256: "" }
+    verification:    # FILLED BY INDEXER running golden-gate QC
+      reads_loaded: 0
+      reads_passed: 0
+      reads_warned: 0
+      reads_failed: 0
+      consensus_identity: 0.0
+      coverage_pct: 0.0
+      issues_high: 0
+      issues_medium: 0
+      report_url: ""
+    status: pending
